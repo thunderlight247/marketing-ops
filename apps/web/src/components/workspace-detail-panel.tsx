@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/config";
+import { WorkspaceContentSection } from "@/components/workspace-content-section";
 import {
   deleteWorkspace,
   fetchWorkspaceDetail,
@@ -402,6 +403,8 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           </div>
         </form>
       </section>
+
+      <WorkspaceContentSection workspaceId={workspace.id} />
 
       <section
         aria-labelledby="danger-zone-heading"

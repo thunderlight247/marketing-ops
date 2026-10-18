@@ -593,10 +593,31 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   POST → DELETE 204 → GET 404, `workspace.deleted` audit row with cleared workspace link,
   demo workspaces intact. `make check` exit 0 with zero test-row leakage after the fix.
 
-**Next action:** rest of Milestone 2 --- content and integrations sections per the
-roadmap (workspaces detail already has facts + brand). Content section next: list/create
-content items per workspace on the API and dashboard. Revisit auth deferral only when the
-deployment model is set (Milestone 13).
+**Milestone 2 fourth increment (implemented 2026-10-18) --- workspace-scoped content section:**
+
+- API: `GET /api/v1/workspaces/{id}/content` (returns all content items scoped to `{id}`;
+  404 if workspace does not exist) and `POST /api/v1/workspaces/{id}/content` (creates draft
+  content item; title required ≤ 200 chars, kind required from `blog_article`, `social_post`,
+  `snippet`, optional slug validated against `slugPattern`; status forced to 'draft' at
+  domain boundary; returns 201 Created; duplicate slug in workspace returns 409 Conflict;
+  writes `content.created` audit event).
+- Router: CORS preflight allowed methods expanded to `GET, POST, PUT, PATCH, DELETE, OPTIONS`.
+- Web: `apps/web/src/lib/content.ts` (helpers `fetchWorkspaceContent`, `createWorkspaceContent`,
+  `validateContentInput`, `formatContentKind`, `formatContentStatus` with typed states) and
+  14 unit tests in `src/lib/content.test.ts` (Vitest suite now 62/62 passing).
+- Web UI: `WorkspaceContentSection` component embedded in `/workspaces/[id]` (shows content items,
+  kind tags, draft badges, formatted dates, empty state, and new draft creation form with
+  inline error and server error alerts). `/content` route upgraded from placeholder to
+  `ContentDashboard` with an active workspace selector that renders the workspace's scoped
+  content drafts.
+- Live verification: live curl checks against real PostgreSQL database on `:8081`:
+  empty content list 200, draft creation 201, duplicate slug 409, bad kind 400, unknown
+  workspace 404, cross-workspace isolation verified (workspace B cannot see workspace A's
+  drafts). Test rows cleaned up cleanly; full `make check` exit 0; `make web-build` exit 0 (10/10 routes).
+
+**Next action:** rest of Milestone 2 --- workspace-specific integrations section (list and
+connect integrations per workspace on detail page and `/integrations` route), followed by
+Milestone 3 capability checks.
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

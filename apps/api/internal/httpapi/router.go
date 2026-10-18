@@ -37,6 +37,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/brand", putWorkspaceBrandHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}", patchWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", deleteWorkspaceHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/content", listWorkspaceContentHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content", createWorkspaceContentHandler(d.Workspaces))
 
 	// Outermost first: recover -> log -> security headers -> CORS -> routes.
 	return recoverer(d.Logger)(
@@ -147,7 +149,7 @@ func cors(allowed []string) func(http.Handler) http.Handler {
 				isPreflight := r.Method == http.MethodOptions &&
 					r.Header.Get("Access-Control-Request-Method") != ""
 				if isPreflight {
-					w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 					w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 					w.Header().Set("Access-Control-Max-Age", "600")
 					w.WriteHeader(http.StatusNoContent)

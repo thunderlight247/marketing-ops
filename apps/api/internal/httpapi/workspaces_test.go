@@ -19,18 +19,22 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // fakeWorkspaceStore records calls and answers from canned data.
 type fakeWorkspaceStore struct {
-	listResult    []store.Workspace
-	listErr       error
-	insertErr     error
-	inserted      []store.Workspace
-	byID          map[string]store.Workspace
-	brand         *store.BrandProfile // nil means the workspace has none
-	upsertErr     error
-	upsertedBrand *store.BrandProfile
-	updateErr     error
-	updated       []store.Workspace
-	deleted       []string
-	auditEvents   []store.AuditEvent
+	listResult        []store.Workspace
+	listErr           error
+	insertErr         error
+	inserted          []store.Workspace
+	byID              map[string]store.Workspace
+	brand             *store.BrandProfile // nil means the workspace has none
+	upsertErr         error
+	upsertedBrand     *store.BrandProfile
+	updateErr         error
+	updated           []store.Workspace
+	deleted           []string
+	auditEvents       []store.AuditEvent
+	listContentResult []store.ContentItem
+	listContentErr    error
+	insertContentErr  error
+	insertedContent   []store.ContentItem
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
@@ -92,6 +96,25 @@ func (f *fakeWorkspaceStore) InsertWorkspace(ctx context.Context, w store.Worksp
 		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}, nil
+}
+
+func (f *fakeWorkspaceStore) ListContentItems(ctx context.Context, workspaceID string) ([]store.ContentItem, error) {
+	if f.listContentErr != nil {
+		return nil, f.listContentErr
+	}
+	return f.listContentResult, nil
+}
+
+func (f *fakeWorkspaceStore) InsertContentItem(ctx context.Context, item store.ContentItem) (store.ContentItem, error) {
+	if f.insertContentErr != nil {
+		return store.ContentItem{}, f.insertContentErr
+	}
+	item.ID = "33333333-3333-3333-3333-333333333333"
+	item.CreatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	item.UpdatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	item.Status = "draft"
+	f.insertedContent = append(f.insertedContent, item)
+	return item, nil
 }
 
 func workspacesRouter() http.Handler {

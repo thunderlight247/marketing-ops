@@ -23,6 +23,8 @@ type WorkspaceStore interface {
 	DeleteWorkspace(ctx context.Context, id string) error
 	GetBrandProfile(ctx context.Context, workspaceID string) (store.BrandProfile, error)
 	UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error)
+	ListContentItems(ctx context.Context, workspaceID string) ([]store.ContentItem, error)
+	InsertContentItem(ctx context.Context, item store.ContentItem) (store.ContentItem, error)
 	AddAuditEvent(ctx context.Context, e store.AuditEvent) error
 }
 

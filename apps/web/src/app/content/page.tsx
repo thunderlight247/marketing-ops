@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { PlaceholderPage } from "@/components/placeholder-page";
+import { ContentDashboard } from "@/components/content-dashboard";
 
 export const metadata: Metadata = { title: "Content" };
 
 export default function ContentPage() {
-  return <PlaceholderPage section="content" />;
+  return <ContentDashboard />;
 }
