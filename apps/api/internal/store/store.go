@@ -29,8 +29,10 @@ type Workspace struct {
 
 // Sentinel errors so callers do not need the driver package to compare results.
 var (
-	ErrNotFound  = errors.New("record not found")
-	ErrSlugTaken = errors.New("workspace slug already used")
+	ErrNotFound          = errors.New("record not found")
+	ErrSlugTaken         = errors.New("workspace slug already used")
+	ErrInvalidCapability = errors.New("unknown capability or status value")
+	ErrInvalidStatus     = errors.New("unknown lifecycle status value")
 )
 
 // Store is the repository target. It wraps a pgx pool so the process shares one.
@@ -40,6 +42,10 @@ type Store struct {
 
 // New wraps an existing pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+// Pool exposes the shared pool for callers that need queries the typed
+// repositories do not cover yet (tests, ad-hoc operator tooling).
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 // ---- Workspace repository -------------------------------------------------
 

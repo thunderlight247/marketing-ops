@@ -501,14 +501,36 @@ make check                        # all format/lint/type/test checks green
 - `Makefile`: `api-test` now sources `apps/api/.env`, so `make check` runs the integration
   tests against the local Docker PostgreSQL when it is up.
 
-**Verified:** `make migrate-up` applied 0002 + 0003; `make check` entirely green with store
-integration tests passing against the Docker database; `go test ./internal/store` still
-passes (skips) with no DATABASE_URL set.
+**Milestone 1 second increment (implemented 2026-10-18) --- the remaining repositories:**
 
-**Next action (rest of Milestone 1):** remaining repositories (brand profiles,
-integrations + capabilities, versions/approvals mechanics as data layer), ownership
-relationships documented, and any leftover M1 acceptance checks --- then Milestone 2
-(dashboard workspaces UI).
+- `internal/store/brands.go`: workspace-scoped brand profile get/upsert.
+- `internal/store/integrations.go`: scoped integration create/list/get, lifecycle status
+  updates, deletes; capability upsert/list (validates value pairs in code before SQL);
+  encrypted credential set put/get/delete (ciphertext + key_version only, never plaintext).
+- `internal/store/workflow.go`: content versions inserted as numbered snapshots per item
+  (order and reads joined through `content_items` for scoping); record approval
+  only when item+version+workspace all match (cross-workspace or cross-item approval is
+  impossible at the SQL level); secret-free audit events with per-workspace listing.
+- `internal/store/publishing.go`: publishing job creation guarded by joins through the
+  owning item + version + workspace integration (so unapproved/mismatched or
+  cross-workspace job creation cannot happen at this layer), idempotency key lookup,
+  published artifact recording (waiting Milestone 9 for the workflow that drives them).
+- `internal/secretcipher`: AES-256-GCM encrypt/decrypt with hex-encoded 32-byte key from
+  env (D17), nonce-per-message, errors deliberately non-distinguishing, key loading
+  validated in unit tests (no database needed).
+- `internal/store` now has 8 integration tests: workspace lifecycle, cross-workspace
+  isolation (content), integrations scoped to workspace, capabilities + credential
+  roundtrip, version numbering, approval guards, audit scoping, and publishing job
+  scoping/idempotency/artifacts. All pass against the Docker database.
+
+**Verified:** `make migrate-up` applied 0002 + 0003; both increments confirmed by
+`make check` exit 0 (all Go packages including store integration tests and secretcipher
+unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL.
+
+**Next action:** Milestone 1 is essentially delivered. Remaining M1 polish before M2:
+expose a small operator read API for workspaces on the Go side (list/get endpoints on
+`/api/v1/workspaces`, header-only CORS from the dashboard) so Milestone 2 dashboard UI
+has real data. Then Milestone 2 --- workspace management in the dashboard.
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;
