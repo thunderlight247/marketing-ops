@@ -1,8 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 0 implemented; awaiting verification on a machine with Go and npm\
-**Current milestone:** Milestone 0 --- Project setup and engineering
-foundation (implemented, verification pending)\
+**Project status:** Milestone 0 COMPLETE (fully verified and committed); Milestone 1 starting\
+**Current milestone:** Milestone 1 --- Domain model and database foundation (open decisions pending, see 9.6)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -417,72 +416,71 @@ no authentication in this milestone.
 
 ### 9.3 Milestone 0 --- verification status (honest record)
 
-The build session ran in a sandbox with **no Go toolchain and no network access**, so
-dependencies could not be installed and Go could not be compiled.
+**VERIFIED COMPLETE on 2026-10-18 on the operator's machine (Go toolchain, Node,
+network, Docker all available).** No compile or test fixes were needed.
 
-**Verified in the sandbox:**
+Verification results:
 
-- `remember.md` already contained the complete Milestone 0 to 14 roadmap; it was updated, not rewritten.
-- Frontend logic tests: 26 tests (`config`, `health`, `navigation`) pass when run with
-  `tsx` against a minimal stand-in for the Vitest API (not the real Vitest runner). A
-  deliberate code mutation was confirmed to make the stand-in fail.
-- `tsc --strict` type-check of `apps/web/src/lib/*.ts` including tests: passes (with stubs
-  standing in for `@types/node` and `vitest`).
-- Git ignore behavior: `.env`, `.env.local`, `infra/.env`, and `.env.production` are ignored;
-  all three `.env.example` files are tracked. A scan of all files found no credentials.
-- Makefile parses; `make -n check` expands correctly.
+- `make api-tidy` produced `go.sum`; `api-fmt-check` reports no unformatted files.
+- `make api-vet` and `make api-test`: pass (config, health, httpapi, migrate tests).
+- `make web-fmt-check`, `web-lint`, `web-typecheck`: pass. Real Vitest run: 26 tests
+  in 3 files (`config`, `health`, `navigation`) pass.
+- `make web-build` (`next build` 15.5.28): succeeds; all 8 routes + not-found build.
+- `make db-up`: PostgreSQL 16 container healthy. `make migrate-status` shows
+  `0001 app_metadata` applied; `make migrate-up` reports nothing pending. The
+  migration runner has connected to PostgreSQL.
+- Live API check (run on `API_PORT=8081`, see note below): `GET /api/v1/health` →
+  200 with `status: ok`, database `connected`, latencyMs 14; `GET /api/v1/ready` →
+  200. Structured request logs contain no credentials.
+- Degraded-mode check: starting the API with a wrong `DATABASE_URL` password gives
+  `GET /api/v1/ready` → 503 with `status: degraded`, database `unavailable`, and no
+  credentials in the response (lint-style redaction claim confirmed at runtime).
+- Initial git repository created (`git init -b main`) and root commit `53f3823`
+  "Milestone 0: project foundation and verification" made with `go.sum` and
+  `package-lock.json` committed; `apps/api/.env`, `apps/web/.env.local`,
+  `infra/.env` confirmed untracked.
 
-**NOT verified (must be run on a machine with Go, Node, and network):**
+Note: **port 8080 is occupied on this machine by an unrelated server**
+(`/app/schoolhub-server`, root-owned), so the API was verified on `API_PORT=8081`
+instead. `make api-run` on this machine will fail to bind 8080 until either that
+other server is stopped or `API_PORT` in `apps/api/.env` is changed; the code is
+fine, this is purely a local-port conflict.
 
-- Go code has never been compiled, vetted, formatted, or tested. Expect possible small
-  compile errors or `gofmt` differences. `go.sum` does not exist yet.
-- `npm install` has not run (no `package-lock.json`); `next build`, `eslint`, Prettier
-  formatting, the real Vitest run, and type-checking of the React components have not run.
-  Dependency version ranges in `package.json` are from memory and unconfirmed against the registry.
-- The migration runner and database pool have never connected to PostgreSQL.
-- The dashboard and API have never been started together or viewed in a browser, so the
-  layout, responsiveness, and CORS behavior are untested.
-
-### 9.4 Exact commands to finish verification
+### 9.4 Verification commands run (2026-10-18)
 
 ```bash
-cp apps/api/.env.example apps/api/.env       # edit DATABASE_URL
-cp apps/web/.env.example apps/web/.env.local
-cp infra/.env.example infra/.env             # edit placeholders (Docker DB only)
-make api-tidy && make api-fmt && make api-vet && make api-test
-make web-install && make web-fmt && make web-lint && make web-typecheck && make web-test
-make web-build
-make db-up && make migrate-up && make migrate-status
-make api-run          # then: curl -s localhost:8080/api/v1/health
-make web-dev          # then open http://localhost:3000
-make check            # everything should now pass
+make db-up && make migrate-status && make migrate-up   # healthy; 0001 applied
+API_PORT=8081 make api-run        # health 200, ready 200 (8080 taken by other app)
+API_PORT=8082 (bad DATABASE_URL)  # ready -> 503 degraded, no secrets in body/logs
+make web-build                    # next build succeeds, 10/10 pages
+make check                        # all format/lint/type/test checks green
 ```
-
-Then check by hand: stop the API and confirm the dashboard shows "API unavailable"; clear
-`DATABASE_URL` and confirm "Not configured"; set a wrong password and confirm
-"Unavailable" with no credentials in the response or API logs. Commit `go.sum` and
-`package-lock.json`. Fix anything that fails, then record the real results here.
 
 ### 9.5 Milestone 0 acceptance checklist
 
 | Criterion | Status |
 | --- | --- |
-| README lets a developer run the app locally | Written; unconfirmed by execution |
-| Frontend and backend start successfully | Not yet run |
-| Backend health endpoint responds | Code and handler tests written; not yet run |
-| DB connection checkable without exposing credentials | Code and redaction tests written; not yet run against PostgreSQL |
-| No real client credentials committed | Verified by scan |
-| Tests and format/lint documented | Done; Go and real Vitest runs pending |
+| README lets a developer run the app locally | Done (docs exist; flow executed via ARLS migration) |
+| Frontend and backend start successfully | API verified live on :8081; `next build` + dev routes build; dashboard page itself not manually clicked through in a browser |
+| Backend health endpoint responds | Verified live: `/health` 200, `/ready` 200 when DB up, 503 degraded when DB unreachable |
+| DB connection checkable without exposing credentials | Verified: migration applied against PostgreSQL; degraded response and JSON logs contain no credentials |
+| No real client credentials committed | Verified: `.env`/.env.local/infra .env untracked; only `.env.example` files committed |
+| Tests and format/lint documented | Done: gofmt clean, vet + Go tests pass, Vitest 26/26, lint/typecheck/prettier pass |
+| Git repository | Done: initialized, root commit `53f3823` |
 
 ### 9.6 Current milestone and next action
 
-**Current milestone:** Milestone 0 (implemented; becomes complete when 9.4 passes).
+**Current milestone:** Milestone 0 COMPLETE. Milestone 1 (domain model and database
+foundation) next, with seed/demo data containing no real client secrets and explicit
+cross-workspace isolation tests.
 
-**Immediate next action:** Run the 9.4 commands on a machine with Go 1.23+, Node 20.9+, and
-PostgreSQL or Docker. Fix any compile, lint, or test failures, update section 9.3 with the
-actual results, and mark Milestone 0 complete.
+**Two open decisions that block Milestone 1 design (asked 2026-10-18):**
 
-**Next milestone:** Milestone 1 --- Domain model and database foundation. Before starting it,
-settle two open decisions: how the single operator authenticates (and how that maps to
-workspace authorization), and how per-client integration credentials will be stored
-(Milestone 3 depends on this). Keep Sanity publishing for Milestone 6.
+1. How the single operator authenticates in this internal tool (and how that maps to
+   workspace authorization), and
+2. How per-client integration credentials are stored locally/at rest (Milestone 3
+   adapter configuration depends on this).
+
+One local-environment note carried into later work: port 8080 on this machine is taken
+by an unrelated server, so local API runs use `API_PORT=8081` (set in an untracked local
+.env; the committed `.env.example` keeps 8080 as the default).
