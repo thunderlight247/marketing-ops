@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 0 COMPLETE (verified, committed); Milestone 1 first increment in progress\
-**Current milestone:** Milestone 1 --- Domain model and database foundation (decisions settled; schema + store landed)\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 started (workspaces API + UI live)\
+**Current milestone:** Milestone 2 --- Initial dashboard and workspace management (first increment landed; brand-profile editing next)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -527,10 +527,28 @@ make check                        # all format/lint/type/test checks green
 `make check` exit 0 (all Go packages including store integration tests and secretcipher
 unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL.
 
-**Next action:** Milestone 1 is essentially delivered. Remaining M1 polish before M2:
-expose a small operator read API for workspaces on the Go side (list/get endpoints on
-`/api/v1/workspaces`, header-only CORS from the dashboard) so Milestone 2 dashboard UI
-has real data. Then Milestone 2 --- workspace management in the dashboard.
+**Milestone 2 first increment (implemented 2026-10-18) --- workspaces API and dashboard UI:**
+
+- API: `GET /api/v1/workspaces` (list active workspaces) and `POST /api/v1/workspaces`
+  (create; slug/name/websiteUrl validated server-side: slug pattern, name ≤ 120 chars,
+  8 KB body cap, trailing-slash trim; 201/400/409/500 mapped from store sentinels;
+  501 when no database is configured).
+- `httpapi.Deps` gains an optional `Workspaces WorkspaceStore` (interface, fake-tested);
+  `cmd/api/main.go` builds the store from the pool when configured.
+- Web: `src/lib/workspaces.ts` (parse/validate/fetch/create, never-throw states) with
+  Vitest tests; `src/components/workspaces-panel.tsx` client panel (list, refresh,
+  create form with inline validation + error states); Workspaces page now renders real
+  data instead of a placeholder route.
+- Live verification against the Docker DB, all as designed: `GET` returned the two demo
+  workspaces, `POST` created 201, duplicate slug 409, invalid slug 400. Test rows left
+  in the demo database by earlier failing test runs were cleaned up by hand; integration
+  test cleanups verified to leave only the two demo workspaces after a full
+  `make check`.
+- Verified: `make check` exit 0 (Go vet, all Go packages, web 37/37 Vitest tests).
+
+**Next action:** Milestone 2 --- workspace detail page (brand profile view/edit with a
+workspaces detail API), then content and integrations sections per the roadmap; revisit
+auth deferral only when the deployment model is set (Milestone 13).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

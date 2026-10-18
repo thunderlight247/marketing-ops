@@ -22,6 +22,7 @@ type Deps struct {
 	Health         HealthChecker
 	Logger         *slog.Logger
 	AllowedOrigins []string
+	Workspaces     WorkspaceStore // optional; nil disables the workspaces routes
 }
 
 // NewRouter returns the API handler with middleware applied.
@@ -29,6 +30,9 @@ func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", healthHandler(d.Health))
 	mux.HandleFunc("GET /api/v1/ready", readyHandler(d.Health))
+	// Workspaces handlers nil-check their store and answer 501 when absent.
+	mux.HandleFunc("GET /api/v1/workspaces", listWorkspacesHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces", createWorkspaceHandler(d.Workspaces))
 
 	// Outermost first: recover -> log -> security headers -> CORS -> routes.
 	return recoverer(d.Logger)(
@@ -63,6 +67,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONError answers with a fixed, non-internal error message.
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
 
 // statusRecorder captures the response status for logging.

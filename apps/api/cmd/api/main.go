@@ -16,6 +16,7 @@ import (
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
+	"marketingops/api/internal/store"
 )
 
 // version is overridden at build time:
@@ -45,6 +46,7 @@ func run() error {
 
 	// Leave dbPinger as a nil interface when no database is configured.
 	var dbPinger health.Pinger
+	var workspaceStore httpapi.WorkspaceStore
 	if cfg.DatabaseConfigured() {
 		pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -52,6 +54,7 @@ func run() error {
 		}
 		defer pool.Close()
 		dbPinger = pool
+		workspaceStore = store.New(pool)
 	} else {
 		logger.Warn("DATABASE_URL is not set; running without a database")
 	}
@@ -71,6 +74,7 @@ func run() error {
 			Health:         healthService,
 			Logger:         logger,
 			AllowedOrigins: cfg.AllowedOrigins,
+			Workspaces:     workspaceStore,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
