@@ -25,6 +25,16 @@ type WorkspaceStore interface {
 	UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error)
 	ListContentItems(ctx context.Context, workspaceID string) ([]store.ContentItem, error)
 	InsertContentItem(ctx context.Context, item store.ContentItem) (store.ContentItem, error)
+	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
+	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)
+	GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error)
+	SetIntegrationStatus(ctx context.Context, workspaceID, id, status string) error
+	DeleteIntegration(ctx context.Context, workspaceID, id string) error
+	UpsertCapability(ctx context.Context, integrationID string, c store.IntegrationCapability) error
+	ListCapabilities(ctx context.Context, integrationID string) ([]store.IntegrationCapability, error)
+	PutCredentialSet(ctx context.Context, c store.CredentialSet) error
+	GetCredentialSet(ctx context.Context, integrationID string) (store.CredentialSet, error)
+	DeleteCredentialSet(ctx context.Context, integrationID string) error
 	AddAuditEvent(ctx context.Context, e store.AuditEvent) error
 }
 

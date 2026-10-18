@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"marketingops/api/internal/health"
+	"marketingops/api/internal/integration"
 )
 
 // HealthChecker is implemented by *health.Service.
@@ -19,14 +20,20 @@ type HealthChecker interface {
 
 // Deps are the collaborators the router needs.
 type Deps struct {
-	Health         HealthChecker
-	Logger         *slog.Logger
-	AllowedOrigins []string
-	Workspaces     WorkspaceStore // optional; nil disables the workspaces routes
+	Health               HealthChecker
+	Logger               *slog.Logger
+	AllowedOrigins       []string
+	Workspaces           WorkspaceStore // optional; nil disables the workspaces routes
+	Integrations         *integration.Registry
+	CredentialKey        []byte
+	CredentialKeyVersion int
 }
 
 // NewRouter returns the API handler with middleware applied.
 func NewRouter(d Deps) http.Handler {
+	if d.Integrations == nil {
+		d.Integrations = integration.NewDefaultRegistry()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", healthHandler(d.Health))
 	mux.HandleFunc("GET /api/v1/ready", readyHandler(d.Health))
@@ -39,6 +46,14 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", deleteWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content", listWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content", createWorkspaceContentHandler(d.Workspaces))
+	// Integrations handlers
+	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations", listWorkspaceIntegrationsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations", createWorkspaceIntegrationHandler(d.Workspaces, d.Integrations))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations/{integrationId}", getWorkspaceIntegrationHandler(d.Workspaces))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/integrations/{integrationId}/credentials", putIntegrationCredentialsHandler(d.Workspaces, d.Integrations, d.CredentialKey, d.CredentialKeyVersion))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations/{integrationId}/check", checkIntegrationCapabilitiesHandler(d.Workspaces, d.Integrations, d.CredentialKey))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/integrations/{integrationId}", deleteWorkspaceIntegrationHandler(d.Workspaces))
 
 	// Outermost first: recover -> log -> security headers -> CORS -> routes.
 	return recoverer(d.Logger)(

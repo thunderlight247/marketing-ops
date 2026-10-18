@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"marketingops/api/internal/secretcipher"
 )
 
 // Environment is the deployment mode of the API process.
@@ -27,13 +30,15 @@ const (
 // DatabaseURL may contain credentials. Do not log it or print it directly;
 // use DatabaseTarget, String, or LogValue instead.
 type Config struct {
-	Env             Environment
-	Port            int
-	LogLevel        slog.Level
-	DatabaseURL     string
-	AllowedOrigins  []string
-	ShutdownTimeout time.Duration
-	HealthTimeout   time.Duration
+	Env                  Environment
+	Port                 int
+	LogLevel             slog.Level
+	DatabaseURL          string
+	AllowedOrigins       []string
+	ShutdownTimeout      time.Duration
+	HealthTimeout        time.Duration
+	CredentialKey        []byte
+	CredentialKeyVersion int
 }
 
 // Load reads configuration using getenv (usually os.Getenv). All problems are
@@ -100,12 +105,29 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	cfg.CredentialKeyVersion = 1
+	credKeyRaw := strings.TrimSpace(getenv("CREDENTIAL_ENCRYPTION_KEY"))
+	if credKeyRaw != "" {
+		key, err := secretcipher.LoadKey(credKeyRaw)
+		if err != nil {
+			add("CREDENTIAL_ENCRYPTION_KEY is invalid: must be 64 hex characters (32 bytes)")
+		} else {
+			cfg.CredentialKey = key
+		}
+	} else if cfg.Env != EnvProduction {
+		// Deterministic development fallback so local development and tests work out of the box.
+		cfg.CredentialKey = bytes.Repeat([]byte{0x42}, secretcipher.KeyLength)
+	}
+
 	if cfg.Env == EnvProduction {
 		if dbRaw == "" {
 			add("DATABASE_URL is required when APP_ENV=production")
 		}
 		if originsRaw == "" {
 			add("CORS_ALLOWED_ORIGINS is required when APP_ENV=production")
+		}
+		if len(cfg.CredentialKey) == 0 {
+			add("CREDENTIAL_ENCRYPTION_KEY is required when APP_ENV=production")
 		}
 	}
 
@@ -194,5 +216,6 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("database_configured", c.DatabaseConfigured()),
 		slog.String("database_target", c.DatabaseTarget()),
 		slog.Any("allowed_origins", c.AllowedOrigins),
+		slog.Bool("credential_key_configured", len(c.CredentialKey) > 0),
 	)
 }

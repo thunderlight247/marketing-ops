@@ -16,6 +16,7 @@ import (
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
+	"marketingops/api/internal/integration"
 	"marketingops/api/internal/store"
 )
 
@@ -71,10 +72,13 @@ func run() error {
 	srv := &http.Server{
 		Addr: cfg.Addr(),
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Health:         healthService,
-			Logger:         logger,
-			AllowedOrigins: cfg.AllowedOrigins,
-			Workspaces:     workspaceStore,
+			Health:               healthService,
+			Logger:               logger,
+			AllowedOrigins:       cfg.AllowedOrigins,
+			Workspaces:           workspaceStore,
+			Integrations:         integration.NewDefaultRegistry(),
+			CredentialKey:        cfg.CredentialKey,
+			CredentialKeyVersion: cfg.CredentialKeyVersion,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

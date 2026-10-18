@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 started (workspaces API + UI live)\
-**Current milestone:** Milestone 2 --- Initial dashboard and workspace management (first increment landed; brand-profile editing next)\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks)\
+**Current milestone:** Milestone 4 --- Content planning and AI-assisted drafting\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -615,9 +615,49 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   workspace 404, cross-workspace isolation verified (workspace B cannot see workspace A's
   drafts). Test rows cleaned up cleanly; full `make check` exit 0; `make web-build` exit 0 (10/10 routes).
 
-**Next action:** rest of Milestone 2 --- workspace-specific integrations section (list and
-connect integrations per workspace on detail page and `/integrations` route), followed by
-Milestone 3 capability checks.
+**Milestone 3 (implemented 2026-10-18) --- integration registry, capability checks, and encrypted credentials:**
+
+- `apps/api/internal/integration`: Adapter interface, CapabilityReport model (7 canonical capabilities:
+  `read_content`, `create_draft`, `publish`, `update_content`, `schedule`, `analytics`, `lead_intake`),
+  lifecycle status model (`unconfigured`, `connected`, `limited`, `error`, `disconnected`),
+  and Registry with built-in adapters:
+  - `SanityAdapter` (`sanity`): pilot for Nutrition Guide Next.js+Sanity blog. Inspects `projectId` and `dataset`.
+    Supports public read without token (status `limited`), supports draft/publish write mutations when token is present (status `connected`).
+    Explains clearly why `schedule`, `analytics`, and `lead_intake` are unsupported.
+  - `GenericAPIAdapter` (`generic_api`): custom client REST API. Validates baseUrl, supports mutations with auth key/token.
+  - `ManualExportAdapter` (`manual_export`): checklist workflow for non-automated sites.
+  - Unit tests covering registry and all 3 adapters.
+- Config: `CREDENTIAL_ENCRYPTION_KEY` loaded as 32-byte AES-GCM key (64 hex characters) from environment.
+  Deterministic fallback used in non-production environments for zero-friction local development; strictly
+  required when `APP_ENV=production`. Logs redact the key and only report `credential_key_configured: true`.
+- API endpoints in `apps/api/internal/httpapi/workspace_integrations.go`:
+  - `GET /api/v1/integrations/adapters`: lists available adapter descriptors.
+  - `GET /api/v1/workspaces/{id}/integrations`: lists integrations scoped to workspace with capability statuses and `hasCredentials: bool`.
+  - `POST /api/v1/workspaces/{id}/integrations`: creates integration with validated adapter kind, initializes default capabilities, and logs `integration.created` audit event.
+  - `GET /api/v1/workspaces/{id}/integrations/{integrationId}`: returns single integration details.
+  - `PUT /api/v1/workspaces/{id}/integrations/{integrationId}/credentials`: receives secret credentials, encrypts them at rest with `secretcipher.Encrypt` (AES-256-GCM), triggers read-only capability check, updates status and capabilities in DB, logs `integration.credentials_updated` audit event with secrets redacted, returns updated integration without leaking secrets.
+  - `POST /api/v1/workspaces/{id}/integrations/{integrationId}/check`: executes read-only capability check on demand, updates status and capability rows, logs `integration.checked` audit event, returns safe diagnostic.
+  - `DELETE /api/v1/workspaces/{id}/integrations/{integrationId}`: disconnects integration and logs `integration.deleted` audit event.
+- Web: `apps/web/src/lib/integrations.ts` (API client helpers with typed results) and 16 unit tests in
+  `src/lib/integrations.test.ts` (Vitest suite now 78/78 passing).
+- UI: `WorkspaceIntegrationsSection` embedded in `/workspaces/[id]` detail page and `/integrations` route
+  upgraded from placeholder to `IntegrationsDashboard` with workspace selector. Displays connection status badges,
+  credentials pill, 7-capability matrix with tooltips/explanations for why each capability is supported or unavailable,
+  "Run check" button, secure credentials drawer, and "+ Connect integration" form.
+- Live verification: verified live against real PostgreSQL container on `:8081`:
+  - Adapter listing (200), creation of Sanity integration (201).
+  - Capability check before token returned `limited` with public read supported and write unsupported (200).
+  - Credential saving stored ciphertext in PostgreSQL, token NOT leaked in JSON response body (200).
+  - Capability check after token returned `connected` with draft & publish write capabilities supported (200).
+  - Integration deletion succeeded (204). Test audit events cleaned up.
+- All acceptance criteria for Milestone 3 satisfied:
+  - UI shows what each integration supports and why capabilities are unavailable.
+  - Checks are strictly read-only and never expose secrets.
+  - New adapters implement `Adapter` and register via `Registry.Register` without touching core workflow code.
+- Verification checks: `make check` exit 0 (vet, Go tests, Prettier, ESLint, typecheck, 78 Vitest tests); `make web-build` exit 0 (10/10 routes).
+
+**Next action:** Milestone 4 --- Content planning and AI-assisted drafting (content calendar records, briefs,
+AI provider abstraction with server-side keys, and workspace-guided article/post drafting).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

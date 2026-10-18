@@ -19,22 +19,29 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // fakeWorkspaceStore records calls and answers from canned data.
 type fakeWorkspaceStore struct {
-	listResult        []store.Workspace
-	listErr           error
-	insertErr         error
-	inserted          []store.Workspace
-	byID              map[string]store.Workspace
-	brand             *store.BrandProfile // nil means the workspace has none
-	upsertErr         error
-	upsertedBrand     *store.BrandProfile
-	updateErr         error
-	updated           []store.Workspace
-	deleted           []string
-	auditEvents       []store.AuditEvent
-	listContentResult []store.ContentItem
-	listContentErr    error
-	insertContentErr  error
-	insertedContent   []store.ContentItem
+	listResult             []store.Workspace
+	listErr                error
+	insertErr              error
+	inserted               []store.Workspace
+	byID                   map[string]store.Workspace
+	brand                  *store.BrandProfile // nil means the workspace has none
+	upsertErr              error
+	upsertedBrand          *store.BrandProfile
+	updateErr              error
+	updated                []store.Workspace
+	deleted                []string
+	auditEvents            []store.AuditEvent
+	listContentResult      []store.ContentItem
+	listContentErr         error
+	insertContentErr       error
+	insertedContent        []store.ContentItem
+	listIntegrationsResult []store.Integration
+	listIntegrationsErr    error
+	insertIntegrationErr   error
+	insertedIntegrations   []store.Integration
+	integrationsByID       map[string]store.Integration
+	capabilitiesByInID     map[string][]store.IntegrationCapability
+	credentialSetsByInID   map[string]store.CredentialSet
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
@@ -115,6 +122,112 @@ func (f *fakeWorkspaceStore) InsertContentItem(ctx context.Context, item store.C
 	item.Status = "draft"
 	f.insertedContent = append(f.insertedContent, item)
 	return item, nil
+}
+
+func (f *fakeWorkspaceStore) ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error) {
+	if f.listIntegrationsErr != nil {
+		return nil, f.listIntegrationsErr
+	}
+	return f.listIntegrationsResult, nil
+}
+
+func (f *fakeWorkspaceStore) InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error) {
+	if f.insertIntegrationErr != nil {
+		return store.Integration{}, f.insertIntegrationErr
+	}
+	in.ID = "44444444-4444-4444-4444-444444444444"
+	in.CreatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	in.UpdatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	f.insertedIntegrations = append(f.insertedIntegrations, in)
+	if f.integrationsByID == nil {
+		f.integrationsByID = make(map[string]store.Integration)
+	}
+	f.integrationsByID[in.ID] = in
+	return in, nil
+}
+
+func (f *fakeWorkspaceStore) GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error) {
+	in, ok := f.integrationsByID[id]
+	if !ok || in.WorkspaceID != workspaceID {
+		return store.Integration{}, store.ErrNotFound
+	}
+	return in, nil
+}
+
+func (f *fakeWorkspaceStore) SetIntegrationStatus(ctx context.Context, workspaceID, id, status string) error {
+	in, ok := f.integrationsByID[id]
+	if !ok || in.WorkspaceID != workspaceID {
+		return store.ErrNotFound
+	}
+	in.Status = status
+	f.integrationsByID[id] = in
+	return nil
+}
+
+func (f *fakeWorkspaceStore) DeleteIntegration(ctx context.Context, workspaceID, id string) error {
+	in, ok := f.integrationsByID[id]
+	if !ok || in.WorkspaceID != workspaceID {
+		return store.ErrNotFound
+	}
+	delete(f.integrationsByID, id)
+	return nil
+}
+
+func (f *fakeWorkspaceStore) UpsertCapability(ctx context.Context, integrationID string, c store.IntegrationCapability) error {
+	if f.capabilitiesByInID == nil {
+		f.capabilitiesByInID = make(map[string][]store.IntegrationCapability)
+	}
+	list := f.capabilitiesByInID[integrationID]
+	found := false
+	for i, existing := range list {
+		if existing.Capability == c.Capability {
+			list[i] = c
+			found = true
+			break
+		}
+	}
+	if !found {
+		list = append(list, c)
+	}
+	f.capabilitiesByInID[integrationID] = list
+	return nil
+}
+
+func (f *fakeWorkspaceStore) ListCapabilities(ctx context.Context, integrationID string) ([]store.IntegrationCapability, error) {
+	if f.capabilitiesByInID == nil {
+		return nil, nil
+	}
+	return f.capabilitiesByInID[integrationID], nil
+}
+
+func (f *fakeWorkspaceStore) PutCredentialSet(ctx context.Context, c store.CredentialSet) error {
+	if f.credentialSetsByInID == nil {
+		f.credentialSetsByInID = make(map[string]store.CredentialSet)
+	}
+	f.credentialSetsByInID[c.IntegrationID] = c
+	return nil
+}
+
+func (f *fakeWorkspaceStore) GetCredentialSet(ctx context.Context, integrationID string) (store.CredentialSet, error) {
+	if f.credentialSetsByInID == nil {
+		return store.CredentialSet{}, store.ErrNotFound
+	}
+	c, ok := f.credentialSetsByInID[integrationID]
+	if !ok {
+		return store.CredentialSet{}, store.ErrNotFound
+	}
+	return c, nil
+}
+
+func (f *fakeWorkspaceStore) DeleteCredentialSet(ctx context.Context, integrationID string) error {
+	if f.credentialSetsByInID == nil {
+		return store.ErrNotFound
+	}
+	if _, ok := f.credentialSetsByInID[integrationID]; !ok {
+		return store.ErrNotFound
+	}
+	delete(f.credentialSetsByInID, integrationID)
+	return nil
 }
 
 func workspacesRouter() http.Handler {
