@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 0 COMPLETE (fully verified and committed); Milestone 1 starting\
-**Current milestone:** Milestone 1 --- Domain model and database foundation (open decisions pending, see 9.6)\
+**Project status:** Milestone 0 COMPLETE (verified, committed); Milestone 1 first increment in progress\
+**Current milestone:** Milestone 1 --- Domain model and database foundation (decisions settled; schema + store landed)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -470,17 +470,46 @@ make check                        # all format/lint/type/test checks green
 
 ### 9.6 Current milestone and next action
 
-**Current milestone:** Milestone 0 COMPLETE. Milestone 1 (domain model and database
-foundation) next, with seed/demo data containing no real client secrets and explicit
-cross-workspace isolation tests.
+**Current milestone:** Milestone 1 --- domain model and database foundation.
 
-**Two open decisions that block Milestone 1 design (asked 2026-10-18):**
+**Deferred decisions settled (2026-10-18, recorded as D16/D17 in `docs/decisions.md`):**
 
-1. How the single operator authenticates in this internal tool (and how that maps to
-   workspace authorization), and
-2. How per-client integration credentials are stored locally/at rest (Milestone 3
-   adapter configuration depends on this).
+1. Operator authentication: none for now; middleware stays the single choke point so a
+   login layer can wrap requests later without touching handlers (revisit in Milestone 13).
+2. Client integration credentials: encrypted at rest in PostgreSQL (AES-GCM ciphertext
+   without the nonce, key from env, `key_version` column for rotation). Plaintext is the
+   failure mode; the key never enters the database.
 
-One local-environment note carried into later work: port 8080 on this machine is taken
-by an unrelated server, so local API runs use `API_PORT=8081` (set in an untracked local
-.env; the committed `.env.example` keeps 8080 as the default).
+**Milestone 1 first increment (implemented 2026-10-18):**
+
+- `apps/api/migrations/0002_domain.sql`: full core schema --- operators, workspaces,
+  brand_profiles, integrations, integration_capabilities, integration_credential_sets
+  (ciphertext bytes + key_version), content_items, content_versions, approvals,
+  publishing_jobs (idempotency_key unique), published_artifacts, audit_events. Status and
+  kind columns are text with CHECK constraints; every client-owned table carries
+  `workspace_id` with a foreign key and index.
+- `apps/api/migrations/0003_seed_demo.sql`: two clearly-labelled demo workspaces
+  (`demo-studio`, `demo-cafe`) with sample brand profiles; no real client names, no secrets.
+- `apps/api/internal/store`: repository foundation (pgx pool wrapper). Workspace-scoped
+  content queries filter on `workspace_id` in SQL. Sentinel errors `ErrNotFound` and
+  `ErrSlugTaken` returned to callers instead of driver errors.
+- `apps/api/internal/store/store_test.go`: integration tests that self-apply migrations and
+  skip when no database is configured. Tests cover workspace lifecycle plus the
+  **cross-workspace isolation acceptance test**: workspace B cannot list or read workspace
+  A's content even with a valid item id; deleting a workspace cascades its content away.
+  Also verifies new content items must start as drafts.
+- `Makefile`: `api-test` now sources `apps/api/.env`, so `make check` runs the integration
+  tests against the local Docker PostgreSQL when it is up.
+
+**Verified:** `make migrate-up` applied 0002 + 0003; `make check` entirely green with store
+integration tests passing against the Docker database; `go test ./internal/store` still
+passes (skips) with no DATABASE_URL set.
+
+**Next action (rest of Milestone 1):** remaining repositories (brand profiles,
+integrations + capabilities, versions/approvals mechanics as data layer), ownership
+relationships documented, and any leftover M1 acceptance checks --- then Milestone 2
+(dashboard workspaces UI).
+
+Local-environment note carried forward: port 8080 on this machine is occupied by an
+unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;
+the committed `.env.example` keeps 8080 as the default.

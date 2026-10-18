@@ -16,6 +16,7 @@ internal/health/      status report logic, no HTTP code
 internal/httpapi/     routes, thin handlers, middleware (recover, log, headers, CORS)
 internal/database/    pgx connection pool
 internal/migrate/     forward-only SQL migration runner
+internal/store/       data-access layer; every client-owned query is workspace-scoped
 migrations/           embedded SQL files
 ```
 

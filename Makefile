@@ -28,8 +28,8 @@ api-tidy: ## Resolve Go dependencies (creates go.sum)
 	cd $(API_DIR) && go mod tidy
 api-run: ## Run the API (reads apps/api/.env)
 	cd $(API_DIR) && $(LOAD_API_ENV) && go run ./cmd/api
-api-test: ## Run Go tests
-	cd $(API_DIR) && go test ./...
+api-test: ## Run Go tests (integration tests run if apps/api/.env has DATABASE_URL)
+	cd $(API_DIR) && $(LOAD_API_ENV) && go test ./...
 api-vet: ## Run go vet
 	cd $(API_DIR) && go vet ./...
 api-fmt: ## Format Go code
