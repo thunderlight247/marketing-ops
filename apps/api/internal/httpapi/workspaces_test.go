@@ -15,7 +15,9 @@ import (
 )
 
 // testLogger keeps middleware happy without printing anything.
-var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil)) // fakeWorkspaceStore records calls and answers from canned data.
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+// fakeWorkspaceStore records calls and answers from canned data.
 type fakeWorkspaceStore struct {
 	listResult    []store.Workspace
 	listErr       error
@@ -25,6 +27,10 @@ type fakeWorkspaceStore struct {
 	brand         *store.BrandProfile // nil means the workspace has none
 	upsertErr     error
 	upsertedBrand *store.BrandProfile
+	updateErr     error
+	updated       []store.Workspace
+	deleted       []string
+	auditEvents   []store.AuditEvent
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
@@ -37,6 +43,25 @@ func (f *fakeWorkspaceStore) GetWorkspaceByID(ctx context.Context, id string) (s
 		return store.Workspace{}, store.ErrNotFound
 	}
 	return w, nil
+}
+
+func (f *fakeWorkspaceStore) UpdateWorkspace(ctx context.Context, w store.Workspace) (store.Workspace, error) {
+	if f.updateErr != nil {
+		return store.Workspace{}, f.updateErr
+	}
+	w.CreatedAt, w.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	f.updated = append(f.updated, w)
+	return w, nil
+}
+
+func (f *fakeWorkspaceStore) DeleteWorkspace(ctx context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
+func (f *fakeWorkspaceStore) AddAuditEvent(ctx context.Context, e store.AuditEvent) error {
+	f.auditEvents = append(f.auditEvents, e)
+	return nil
 }
 
 func (f *fakeWorkspaceStore) GetBrandProfile(ctx context.Context, workspaceID string) (store.BrandProfile, error) {
@@ -264,6 +289,114 @@ func TestWorkspaceBrandUpsertRejects(t *testing.T) {
 		`{"prohibitedClaims":`+listJSON+`}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("101 list items must be 400, got %d", rec.Code)
+	}
+}
+
+func TestPatchWorkspaceEndpoint(t *testing.T) {
+	router, fake := detailRouterWith(t)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	rec := doJSON(t, router, "PATCH", "/api/v1/workspaces/"+id,
+		`{"name":" Demo Studio Renamed ","status":"archived"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	saved := fake.updated[0]
+	if saved.Name != "Demo Studio Renamed" || saved.Status != "archived" {
+		t.Errorf("patch not applied: %+v", saved)
+	}
+	if len(fake.auditEvents) != 1 || fake.auditEvents[0].Action != "workspace.updated" {
+		t.Errorf("audit row missing for patch: %+v", fake.auditEvents)
+	}
+	if !strings.Contains(rec.Body.String(), `"name":"Demo Studio Renamed"`) {
+		t.Errorf("response missing renamed workspace: %s", rec.Body.String())
+	}
+
+	// Omitted fields keep their current values.
+	fake.updated = nil
+	rec = doJSON(t, router, "PATCH", "/api/v1/workspaces/"+id, `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if fake.updated[0].Status != "active" || fake.updated[0].Name != "Demo Studio" {
+		t.Errorf("empty patch must keep current values: %+v", fake.updated[0])
+	}
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"empty name", `{"name":"   "}`, "name cannot be empty"},
+		{"bad status", `{"status":"closed"}`, "status must be active or archived"},
+		{"not json", `nope`, "not valid JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSON(t, router, "PATCH", "/api/v1/workspaces/"+id, tc.body)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("got %d body=%s, want 400 containing %q", rec.Code, rec.Body.String(), tc.want)
+			}
+		})
+	}
+
+	// Unknown workspace is 404.
+	rec = doJSON(t, router, "PATCH", "/api/v1/workspaces/00000000-0000-0000-0000-000000000000", `{"name":"x"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown workspace must be 404, got %d", rec.Code)
+	}
+
+	// Store-level validation errors are 400 without internal detail.
+	errRouter := NewRouter(Deps{Logger: testLogger, Workspaces: &fakeWorkspaceStore{
+		byID:      map[string]store.Workspace{id: {}},
+		updateErr: store.ErrNameRequired,
+	}})
+	rec = doJSON(t, errRouter, "PATCH", "/api/v1/workspaces/"+id, `{"name":"x"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("ErrNameRequired must be 400, got %d", rec.Code)
+	}
+
+	// Server errors are 500 without leaking internals.
+	boom := NewRouter(Deps{Logger: testLogger, Workspaces: &fakeWorkspaceStore{
+		byID:      map[string]store.Workspace{id: {}},
+		updateErr: errors.New("secret-detail"),
+	}})
+	rec = doJSON(t, boom, "PATCH", "/api/v1/workspaces/"+id, `{"name":"x"}`)
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "secret") {
+		t.Errorf("internal errors must be 500 without detail, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteWorkspaceEndpoint(t *testing.T) {
+	router, fake := detailRouterWith(t)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	// Missing or wrong confirmation is refused.
+	rec := doJSON(t, router, http.MethodDelete, "/api/v1/workspaces/"+id, `{}`)
+	if rec.Code != http.StatusBadRequest || len(fake.deleted) != 0 {
+		t.Errorf("delete without confirmation must be 400, got %d", rec.Code)
+	}
+	rec = doJSON(t, router, http.MethodDelete, "/api/v1/workspaces/"+id, `{"confirmSlug":"wrong"}`)
+	if rec.Code != http.StatusBadRequest || len(fake.deleted) != 0 {
+		t.Errorf("wrong confirmation must be 400, got %d", rec.Code)
+	}
+
+	// Correct confirmation deletes and audits.
+	rec = doJSON(t, router, http.MethodDelete, "/api/v1/workspaces/"+id, `{"confirmSlug":"demo-studio"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(fake.deleted) != 1 || fake.deleted[0] != id {
+		t.Errorf("DeleteWorkspace not called correctly: %v", fake.deleted)
+	}
+	last := fake.auditEvents[len(fake.auditEvents)-1]
+	if last.Action != "workspace.deleted" || last.WorkspaceID != nil {
+		t.Errorf("deletion audit row wrong: %+v", last)
+	}
+	if last.Details["slug"] != "demo-studio" {
+		t.Errorf("deletion audit must carry the slug: %+v", last.Details)
+	}
+
+	// Unknown workspace is 404 and audits nothing.
+	auditCount := len(fake.auditEvents)
+	rec = doJSON(t, router, http.MethodDelete, "/api/v1/workspaces/00000000-0000-0000-0000-000000000000", `{}`)
+	if rec.Code != http.StatusNotFound || len(fake.auditEvents) != auditCount {
+		t.Errorf("unknown workspace must be 404 with no audit rows, got %d", rec.Code)
 	}
 }
 

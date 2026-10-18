@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,7 +92,13 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertWorkspace: %v", err)
 	}
-	t.Cleanup(func() { _ = s.DeleteWorkspace(ctx, w.ID) })
+	t.Cleanup(func() {
+		// A failing cleanup means the test leaked rows (and the demo database
+		// gets polluted), so surface it rather than ignore it.
+		if err := s.DeleteWorkspace(ctx, w.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			t.Errorf("workspace cleanup failed for %s: %v", w.Slug, err)
+		}
+	})
 
 	if w.Status != "active" {
 		t.Errorf("new workspaces must be active, got %q", w.Status)

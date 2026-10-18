@@ -359,6 +359,70 @@ func TestBrandProfileUpsertWithOmittedCollections(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFactsEditingAndAudit(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	ws := uniqueWorkspace(t, s, "facts")
+
+	// Edit facts without touching the immutable slug.
+	updated, err := s.UpdateWorkspace(ctx, Workspace{
+		ID: ws.ID, Slug: "", Name: "Renamed Studio", Status: "archived",
+	})
+	if err != nil {
+		t.Fatalf("UpdateWorkspace: %v", err)
+	}
+	if updated.Slug != ws.Slug || updated.Name != "Renamed Studio" || updated.Status != "archived" {
+		t.Errorf("update produced wrong row: %+v", updated)
+	}
+	if !updated.UpdatedAt.After(ws.UpdatedAt) {
+		t.Errorf("updated_at must move forward: %s -> %s", ws.UpdatedAt, updated.UpdatedAt)
+	}
+
+	// An empty name is refused by the store itself, too.
+	if _, err := s.UpdateWorkspace(ctx, Workspace{ID: ws.ID, Name: "   "}); err != ErrNameRequired {
+		t.Errorf("blank name must be ErrNameRequired, got %v", err)
+	}
+	// Unknown workspace is ErrNotFound.
+	if _, err := s.UpdateWorkspace(ctx, Workspace{ID: "00000000-0000-0000-0000-000000000000", Name: "x"}); err != ErrNotFound {
+		t.Errorf("unknown id must be ErrNotFound, got %v", err)
+	}
+
+	// Audit rows land and list by workspace; the deletion audit survives cascade
+	// with a cleared workspace link.
+	if err := s.AddAuditEvent(ctx, AuditEvent{
+		WorkspaceID: ptr(ws.ID), Action: "workspace.updated",
+		EntityType: "workspace", EntityID: ptr(ws.ID), Details: map[string]any{},
+	}); err != nil {
+		t.Fatalf("AddAuditEvent: %v", err)
+	}
+	if events, err := s.ListAuditEvents(ctx, ws.ID, 10); err != nil || len(events) != 1 {
+		t.Fatalf("ListAuditEvents: n=%d err=%v", len(events), err)
+	}
+	if err := s.AddAuditEvent(ctx, AuditEvent{
+		WorkspaceID: nil, Action: "workspace.deleted",
+		EntityType: "workspace", EntityID: ptr(ws.ID),
+		Details: map[string]any{"slug": ws.Slug},
+	}); err != nil {
+		t.Fatalf("AddAuditEvent(null workspace): %v", err)
+	}
+	if err := s.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatalf("DeleteWorkspace: %v", err)
+	}
+	// After deletion the scoped list misses the workspace rows... but the
+	// workspace-scoped query can no longer be addressed at all. So verify the
+	// deletion audit row survived by its entity id via a direct pool query.
+	var survived int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM audit_events WHERE action = 'workspace.deleted'
+		 AND workspace_id IS NULL AND entity_id = $1`, ws.ID).Scan(&survived); err != nil {
+		t.Fatalf("audit survival check: %v", err)
+	}
+	if survived != 1 {
+		t.Errorf("deletion audit row must survive the cascade, found %d", survived)
+	}
+}
+
 func seedOperator(t *testing.T, s *Store) string {
 	t.Helper()
 	ctx := context.Background()

@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,6 +32,7 @@ type Workspace struct {
 var (
 	ErrNotFound          = errors.New("record not found")
 	ErrSlugTaken         = errors.New("workspace slug already used")
+	ErrNameRequired      = errors.New("workspace name is required")
 	ErrInvalidCapability = errors.New("unknown capability or status value")
 	ErrInvalidStatus     = errors.New("unknown lifecycle status value")
 )
@@ -80,6 +82,19 @@ func (s *Store) GetWorkspaceBySlug(ctx context.Context, slug string) (Workspace,
 	return out, mapNotFound(err)
 }
 
+// UpdateWorkspace rewrites the editable facts of one workspace (everything
+// except its immutable id and slug).
+func (s *Store) UpdateWorkspace(ctx context.Context, w Workspace) (Workspace, error) {
+	if strings.TrimSpace(w.Name) == "" {
+		return Workspace{}, ErrNameRequired
+	}
+	out, err := scanWorkspace(s.pool.QueryRow(ctx,
+		`UPDATE workspaces SET name = $2, website_url = $3, status = $4, updated_at = now()
+		 WHERE id = $1 RETURNING `+workspaceColumns,
+		w.ID, w.Name, w.WebsiteURL, w.Status))
+	return out, mapNotFound(err)
+}
+
 // ListWorkspaces returns every active workspace, ordered by name.
 func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	rows, err := s.pool.Query(ctx,
@@ -100,15 +115,34 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 }
 
 // DeleteWorkspace removes a workspace and, by cascade, all of its client data.
+//
+// Published artifacts must be removed explicitly inside this transaction: their
+// FK to integrations has no ON DELETE action (an integration disconnect is a
+// RESTRICT, preserving the historical record), so the plain cascade would fail
+// whenever a workspace has ever published anything.
 func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful commit
+
+	// Artifacts whose publishing job belongs to this workspace.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM published_artifacts pa
+		 USING publishing_jobs pj
+		 JOIN content_items ci ON ci.id = pj.content_item_id
+		 WHERE pa.publishing_job_id = pj.id AND ci.workspace_id = $1`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func scanWorkspace(row pgx.Row) (Workspace, error) {

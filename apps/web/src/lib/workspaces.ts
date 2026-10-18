@@ -40,6 +40,35 @@ export type SaveBrandResult =
   | { kind: "rejected"; message: string }
   | { kind: "unavailable"; reason: string };
 
+export type WorkspaceFactsInput = {
+  name: string;
+  websiteUrl: string | null;
+  status: "active" | "archived";
+};
+
+export type WorkspaceFactsResult =
+  | { kind: "saved"; workspace: Workspace }
+  | { kind: "rejected"; message: string }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "missing"; reason: string };
+
+export type DeleteWorkspaceResult =
+  | { kind: "deleted" }
+  | { kind: "rejected"; message: string }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "missing"; reason: string };
+
+/** Client-side facts validation mirroring the API's rules. */
+export function validateWorkspaceFacts(input: WorkspaceFactsInput): string[] {
+  const problems: string[] = [];
+  if (input.name.trim().length === 0) problems.push("A name is required.");
+  else if (input.name.trim().length > 120) problems.push("Names are at most 120 characters.");
+  if (!"active/archived".split("/").includes(input.status)) {
+    problems.push("The status must be active or archived.");
+  }
+  return problems;
+}
+
 export type WorkspacesState =
   | { kind: "loading" }
   | { kind: "unavailable"; reason: string }
@@ -190,6 +219,82 @@ export async function fetchWorkspaceDetail(
       };
     }
     return { kind: "loaded", workspace, brand };
+  } catch {
+    return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function urlencodeId(id: string): string {
+  return encodeURIComponent(id);
+}
+
+/** PATCHes the editable facts of one workspace. */
+export async function updateWorkspaceFacts(
+  baseUrl: string,
+  id: string,
+  input: WorkspaceFactsInput,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 6000,
+): Promise<WorkspaceFactsResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${urlencodeId(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      cache: "no-store",
+      body: JSON.stringify({
+        name: input.name.trim(),
+        websiteUrl: input.websiteUrl?.trim() || null,
+        status: input.status,
+      }),
+    });
+    if (response.status === 404) {
+      return { kind: "missing", reason: await readErrorResponse(response) };
+    }
+    if (!response.ok) {
+      return { kind: "rejected", message: await readErrorResponse(response) };
+    }
+    const workspace = parseWorkspace(await response.json());
+    if (!workspace) {
+      return { kind: "unavailable", reason: "The API answered, but the body was not a workspace." };
+    }
+    return { kind: "saved", workspace };
+  } catch {
+    return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** DELETEs a workspace; confirmSlug must match the workspace slug. */
+export async function deleteWorkspace(
+  baseUrl: string,
+  id: string,
+  confirmSlug: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 8000,
+): Promise<DeleteWorkspaceResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${urlencodeId(id)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      cache: "no-store",
+      body: JSON.stringify({ confirmSlug }),
+    });
+    if (response.status === 404) {
+      return { kind: "missing", reason: await readErrorResponse(response) };
+    }
+    if (response.status === 204) {
+      return { kind: "deleted" };
+    }
+    return { kind: "rejected", message: await readErrorResponse(response) };
   } catch {
     return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
   } finally {

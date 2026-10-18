@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   createWorkspace,
+  deleteWorkspace,
   fetchWorkspaceDetail,
   fetchWorkspaces,
   parseWorkspace,
   parseWorkspaces,
   saveBrandProfile,
+  updateWorkspaceFacts,
+  validateWorkspaceFacts,
   validateWorkspaceInput,
   type Workspace,
 } from "./workspaces";
@@ -215,6 +218,96 @@ describe("saveBrandProfile", () => {
     expect(rejected).toEqual({ kind: "rejected", message: "businessDescription is too long" });
 
     const offline = await saveBrandProfile("http://api.test", "abc", input, async () => {
+      throw new TypeError("offline");
+    });
+    expect(offline).toEqual({
+      kind: "unavailable",
+      reason: "Could not reach the API at http://api.test.",
+    });
+  });
+});
+
+describe("validateWorkspaceFacts", () => {
+  it("accepts a normal facts edit", () => {
+    expect(
+      validateWorkspaceFacts({
+        name: "Demo Studio",
+        websiteUrl: "https://x.example",
+        status: "active",
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports empty names and bad statuses", () => {
+    expect(validateWorkspaceFacts({ name: "   ", websiteUrl: null, status: "archived" })).toContain(
+      "A name is required.",
+    );
+    expect(
+      validateWorkspaceFacts({ name: "Demo", websiteUrl: null, status: "closed" as "active" }),
+    ).toContain("The status must be active or archived.");
+    expect(
+      validateWorkspaceFacts({ name: "a".repeat(121), websiteUrl: null, status: "active" }).length,
+    ).toBe(1);
+  });
+});
+
+describe("updateWorkspaceFacts", () => {
+  const input = {
+    name: "Demo Studio",
+    websiteUrl: "https://demo-studio.example",
+    status: "active" as const,
+  };
+
+  it("PATCHes JSON and returns the saved workspace", async () => {
+    let captured: RequestInit | undefined;
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+      captured = init;
+      return jsonResponse(200, validWorkspace);
+    };
+    const result = await updateWorkspaceFacts("http://api.test", "abc", input, fetchImpl);
+    expect(result).toEqual({ kind: "saved", workspace: validWorkspace });
+    expect(captured?.method).toBe("PATCH");
+    expect(JSON.parse(String(captured?.body))).toEqual(input);
+  });
+
+  it("maps 404 to missing, other errors to rejected", async () => {
+    const missing = await updateWorkspaceFacts("http://api.test", "abc", input, async () =>
+      jsonResponse(404, { error: "no such workspace" }),
+    );
+    expect(missing).toEqual({ kind: "missing", reason: "no such workspace" });
+    const rejected = await updateWorkspaceFacts("http://api.test", "abc", input, async () =>
+      jsonResponse(400, { error: "status must be active or archived" }),
+    );
+    expect(rejected).toEqual({ kind: "rejected", message: "status must be active or archived" });
+  });
+});
+
+describe("deleteWorkspace", () => {
+  it("sends the confirmation slug and returns deleted on 204", async () => {
+    let captured: RequestInit | undefined;
+    const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+      captured = init;
+      return new Response(null, { status: 204 });
+    };
+    const result = await deleteWorkspace("http://api.test", "abc", "demo-studio", fetchImpl);
+    expect(result).toEqual({ kind: "deleted" });
+    expect(captured?.method).toBe("DELETE");
+    expect(JSON.parse(String(captured?.body))).toEqual({ confirmSlug: "demo-studio" });
+  });
+
+  it("maps refusal, missing workspace, and network failure", async () => {
+    const refused = await deleteWorkspace("http://api.test", "abc", "wrong", async () =>
+      jsonResponse(400, { error: "confirmSlug must match this workspace's slug" }),
+    );
+    expect(refused).toEqual({
+      kind: "rejected",
+      message: "confirmSlug must match this workspace's slug",
+    });
+    const missing = await deleteWorkspace("http://api.test", "abc", "demo-studio", async () =>
+      jsonResponse(404, { error: "no such workspace" }),
+    );
+    expect(missing).toEqual({ kind: "missing", reason: "no such workspace" });
+    const offline = await deleteWorkspace("http://api.test", "abc", "demo-studio", async () => {
       throw new TypeError("offline");
     });
     expect(offline).toEqual({

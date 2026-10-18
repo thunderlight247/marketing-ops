@@ -566,9 +566,37 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   PUT 200 with trimmed values and blank→null, read-back 200, unknown id 404); demo data
   restored afterwards; `make check` exit 0 (web now 42/42 tests).
 
-**Next action:** rest of Milestone 2 --- edit workspace facts (name/website/status) and a
-delete-with-confirm path, then content and integrations sections per the roadmap;
-revisit auth deferral only when the deployment model is set (Milestone 13).
+**Milestone 2 third increment (implemented 2026-10-18) --- workspace facts editing and guarded delete:**
+
+- API: `PATCH /api/v1/workspaces/{id}` edits name/websiteUrl/status (omitted fields keep
+  current values, blank-website nulls it, bad names/statuses are 400, store-level
+  `ErrNameRequired` maps to 400, unknown id 404). `DELETE /api/v1/workspaces/{id}` requires
+  a body `{"confirmSlug": "<workspace-slug>"}` --- wrong/missing/blank confirmations are
+  refused with 400; success is 204 with no body.
+- Both actions record `audit_events` (`workspace.updated`, `workspace.deleted`). Audit
+  failures are logged as a warning class and do not mask the request result. The deletion
+  event carries a null workspace_id (the FK is ON DELETE SET NULL, so the deletion trail
+  survives the cascade) plus the slug in details.
+- Store fix found by live checks: `published_artifacts.integration_id` has no ON DELETE
+  action (intentional --- disconnecting an integration must not erase its historical
+  artifacts), so a workspace with any published artifact could never be deleted. Now,
+  `DeleteWorkspace` runs in one transaction: artifacts belonging to the workspace's jobs
+  are deleted explicitly, then the workspace cascades. Previously every store test run
+  leaked its workspaces into the demo database for this reason; test cleanups now assert
+  successful deletion instead of ignoring errors.
+- Web: facts editor (name/website/status) and a red danger-zone card that requires typing
+  the workspace slug before "Delete workspace forever" lights up; after deleting it
+  navigates back to the list. Helper functions `updateWorkspaceFacts`/`deleteWorkspace`/
+  `validateWorkspaceFacts` with modeled results and unit tests (web now 48/48).
+- Verified live: PATCH rename applied (+fresh updatedAt, demo data restored afterwards),
+  bad status 400, wrong confirmSlug 400 twice (demo data untouched), throwaway workspace
+  POST → DELETE 204 → GET 404, `workspace.deleted` audit row with cleared workspace link,
+  demo workspaces intact. `make check` exit 0 with zero test-row leakage after the fix.
+
+**Next action:** rest of Milestone 2 --- content and integrations sections per the
+roadmap (workspaces detail already has facts + brand). Content section next: list/create
+content items per workspace on the API and dashboard. Revisit auth deferral only when the
+deployment model is set (Milestone 13).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

@@ -35,6 +35,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces", createWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}", getWorkspaceDetailHandler(d.Workspaces))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/brand", putWorkspaceBrandHandler(d.Workspaces))
+	mux.HandleFunc("PATCH /api/v1/workspaces/{id}", patchWorkspaceHandler(d.Workspaces))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", deleteWorkspaceHandler(d.Workspaces))
 
 	// Outermost first: recover -> log -> security headers -> CORS -> routes.
 	return recoverer(d.Logger)(

@@ -19,8 +19,11 @@ type WorkspaceStore interface {
 	ListWorkspaces(ctx context.Context) ([]store.Workspace, error)
 	InsertWorkspace(ctx context.Context, w store.Workspace) (store.Workspace, error)
 	GetWorkspaceByID(ctx context.Context, id string) (store.Workspace, error)
+	UpdateWorkspace(ctx context.Context, w store.Workspace) (store.Workspace, error)
+	DeleteWorkspace(ctx context.Context, id string) error
 	GetBrandProfile(ctx context.Context, workspaceID string) (store.BrandProfile, error)
 	UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error)
+	AddAuditEvent(ctx context.Context, e store.AuditEvent) error
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`)
