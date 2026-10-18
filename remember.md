@@ -546,9 +546,29 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   `make check`.
 - Verified: `make check` exit 0 (Go vet, all Go packages, web 37/37 Vitest tests).
 
-**Next action:** Milestone 2 --- workspace detail page (brand profile view/edit with a
-workspaces detail API), then content and integrations sections per the roadmap; revisit
-auth deferral only when the deployment model is set (Milestone 13).
+**Milestone 2 second increment (implemented 2026-10-18) --- workspace detail and brand profile:**
+
+- API: `GET /api/v1/workspaces/{id}` (workspace + brand profile, brand `null` when never
+  saved; 404 for unknown ids) and `PUT /api/v1/workspaces/{id}/brand` (upsert; text fields
+  trimmed, blank → null, 20k char and list-size caps, 32 KB body cap). The
+  `WorkspaceStore` interface grows accordingly; router registers the sub-routes.
+- A live check caught a real bug the fake-backed tests could not: omitting `rules`/
+  string lists reached PostgreSQL as SQL NULL and violated NOT NULL defaults. Fixed at
+  the store boundary (nil → empty map/slice), with a store integration test covering
+  exactly that case plus the scoped brand read and the "no profile yet" behavior.
+- Web: `fetchWorkspaceDetail`/`saveBrandProfile` helpers with modeled states (loaded /
+  missing / unavailable; saved / rejected / unavailable) and unit tests; the
+  `/workspaces/[id]` page renders workspace facts and a full brand-profile editor
+  (description, audience, services, tone, prohibited claims and CTAs as line lists)
+  with loading, not-found, error, and "last saved" states; workspace names in the list
+  are links to their detail page.
+- Verified: live curl round-trip on the real database (detail 200 with seeded brand,
+  PUT 200 with trimmed values and blank→null, read-back 200, unknown id 404); demo data
+  restored afterwards; `make check` exit 0 (web now 42/42 tests).
+
+**Next action:** rest of Milestone 2 --- edit workspace facts (name/website/status) and a
+delete-with-confirm path, then content and integrations sections per the roadmap;
+revisit auth deferral only when the deployment model is set (Milestone 13).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

@@ -33,6 +33,8 @@ func NewRouter(d Deps) http.Handler {
 	// Workspaces handlers nil-check their store and answer 501 when absent.
 	mux.HandleFunc("GET /api/v1/workspaces", listWorkspacesHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces", createWorkspaceHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}", getWorkspaceDetailHandler(d.Workspaces))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/brand", putWorkspaceBrandHandler(d.Workspaces))
 
 	// Outermost first: recover -> log -> security headers -> CORS -> routes.
 	return recoverer(d.Logger)(

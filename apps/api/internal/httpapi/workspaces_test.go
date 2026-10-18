@@ -15,18 +15,45 @@ import (
 )
 
 // testLogger keeps middleware happy without printing anything.
-var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
-
-// fakeWorkspaceStore records calls and answers from canned data.
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil)) // fakeWorkspaceStore records calls and answers from canned data.
 type fakeWorkspaceStore struct {
-	listResult []store.Workspace
-	listErr    error
-	insertErr  error
-	inserted   []store.Workspace
+	listResult    []store.Workspace
+	listErr       error
+	insertErr     error
+	inserted      []store.Workspace
+	byID          map[string]store.Workspace
+	brand         *store.BrandProfile // nil means the workspace has none
+	upsertErr     error
+	upsertedBrand *store.BrandProfile
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
 	return f.listResult, f.listErr
+}
+
+func (f *fakeWorkspaceStore) GetWorkspaceByID(ctx context.Context, id string) (store.Workspace, error) {
+	w, ok := f.byID[id]
+	if !ok {
+		return store.Workspace{}, store.ErrNotFound
+	}
+	return w, nil
+}
+
+func (f *fakeWorkspaceStore) GetBrandProfile(ctx context.Context, workspaceID string) (store.BrandProfile, error) {
+	if f.brand == nil {
+		return store.BrandProfile{}, store.ErrNotFound
+	}
+	return *f.brand, nil
+}
+
+func (f *fakeWorkspaceStore) UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error) {
+	if f.upsertErr != nil {
+		return store.BrandProfile{}, f.upsertErr
+	}
+	b.UpdatedAt = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	saved := b
+	f.upsertedBrand = &saved
+	return b, nil
 }
 
 func (f *fakeWorkspaceStore) InsertWorkspace(ctx context.Context, w store.Workspace) (store.Workspace, error) {
@@ -132,6 +159,111 @@ func TestCreateWorkspaceValidation(t *testing.T) {
 				t.Errorf("body = %s, want to contain %q", rec.Body.String(), tc.wantErr)
 			}
 		})
+	}
+}
+
+func detailRouterWith(t *testing.T) (http.Handler, *fakeWorkspaceStore) {
+	t.Helper()
+	store := &fakeWorkspaceStore{
+		byID: map[string]store.Workspace{
+			"11111111-1111-1111-1111-111111111111": {
+				ID: "11111111-1111-1111-1111-111111111111", Slug: "demo-studio",
+				Name: "Demo Studio", Status: "active",
+				CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	router := NewRouter(Deps{Logger: testLogger, Workspaces: store})
+	return router, store
+}
+
+func TestWorkspaceDetailEndpoint(t *testing.T) {
+	router, _ := detailRouterWith(t)
+
+	rec := doJSON(t, router, http.MethodGet,
+		"/api/v1/workspaces/11111111-1111-1111-1111-111111111111", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"brand":null`) {
+		t.Errorf("an empty brand must be JSON null: %s", body)
+	}
+	if !strings.Contains(body, `"slug":"demo-studio"`) {
+		t.Errorf("workspace missing from detail: %s", body)
+	}
+
+	// Unknown workspace is a 404, not 500.
+	rec = doJSON(t, router, http.MethodGet, "/api/v1/workspaces/00000000-0000-0000-0000-000000000000", "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown workspace must be 404, got %d", rec.Code)
+	}
+}
+
+func TestWorkspaceBrandUpsert(t *testing.T) {
+	router, fake := detailRouterWith(t)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/workspaces/"+id+"/brand",
+		`{"businessDescription":" Coffee, baked. ","tone":"  ","prohibitedClaims":["  miracle cure ","", "prices"],"callsToAction":["Book now"],"rules":{"voice":"warm"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	saved := fake.upsertedBrand
+	if saved == nil {
+		t.Fatal("brand was not saved")
+	}
+	if saved.WorkspaceID != id {
+		t.Errorf("saved profile points at workspace %q", saved.WorkspaceID)
+	}
+	if saved.BusinessDescription == nil || *saved.BusinessDescription != "Coffee, baked." {
+		t.Errorf("businessDescription not trimmed: %+v", saved.BusinessDescription)
+	}
+	// A whitespace-only text field becomes null rather than an empty string.
+	if saved.Tone != nil {
+		t.Errorf("blank tone must become null, got %q", *saved.Tone)
+	}
+	if len(saved.ProhibitedClaims) != 2 || saved.ProhibitedClaims[0] != "miracle cure" {
+		t.Errorf("prohibitedClaims not cleaned: %+v", saved.ProhibitedClaims)
+	}
+	if len(saved.CallsToAction) != 1 || saved.CallsToAction[0] != "Book now" {
+		t.Errorf("callsToAction not cleaned: %+v", saved.CallsToAction)
+	}
+	if saved.Rules["voice"] != "warm" {
+		t.Errorf("rules not stored: %+v", saved.Rules)
+	}
+	if !strings.Contains(rec.Body.String(), `"businessDescription":"Coffee, baked."`) {
+		t.Errorf("response misses the saved values: %s", rec.Body.String())
+	}
+}
+
+func TestWorkspaceBrandUpsertRejects(t *testing.T) {
+	router, _ := detailRouterWith(t)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	// Unknown workspace is 404.
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/workspaces/00000000-0000-0000-0000-000000000000/brand", `{}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown workspace must be 404, got %d", rec.Code)
+	}
+	// Longer than 20k text field is 400.
+	long := strings.Repeat("a", 20_001)
+	rec = doJSON(t, router, http.MethodPut, "/api/v1/workspaces/"+id+"/brand",
+		`{"businessDescription":"`+long+`"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "too long") {
+		t.Errorf("20001-char field must be 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	// Too many list items is 400.
+	many := make([]string, 0, 101)
+	for i := 0; i < 101; i++ {
+		many = append(many, "claim")
+	}
+	listJSON := `["` + strings.Join(append(many, "")[:101], `","`) + `"]`
+	rec = doJSON(t, router, http.MethodPut, "/api/v1/workspaces/"+id+"/brand",
+		`{"prohibitedClaims":`+listJSON+`}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("101 list items must be 400, got %d", rec.Code)
 	}
 }
 

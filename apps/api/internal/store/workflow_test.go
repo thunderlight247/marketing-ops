@@ -320,6 +320,45 @@ func TestPublishingJobsAreWorkspaceScopedAndKeyed(t *testing.T) {
 	_ = wsB
 }
 
+func TestBrandProfileUpsertWithOmittedCollections(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	ws := uniqueWorkspace(t, s, "brand")
+
+	// A save that omits rules and lists entirely must not write SQL NULL.
+	saved, err := s.UpsertBrandProfile(ctx, BrandProfile{
+		WorkspaceID:         ws.ID,
+		BusinessDescription: ptrStr("Coffee, baked."),
+	})
+	if err != nil {
+		t.Fatalf("UpsertBrandProfile with nil rules/lists: %v", err)
+	}
+	if saved.Rules == nil || len(saved.Rules) != 0 {
+		t.Errorf("rules must come back as an empty map, got %+v", saved.Rules)
+	}
+	if saved.ProhibitedClaims == nil || len(saved.ProhibitedClaims) != 0 {
+		t.Errorf("prohibitedClaims must come back as an empty slice, got %+v", saved.ProhibitedClaims)
+	}
+	if saved.BusinessDescription == nil || *saved.BusinessDescription != "Coffee, baked." {
+		t.Errorf("text field mismatch: %+v", saved.BusinessDescription)
+	}
+
+	// Reading it back through the scoped getter returns the same shape.
+	loaded, err := s.GetBrandProfile(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetBrandProfile: %v", err)
+	}
+	if loaded.Rules == nil || loaded.ProhibitedClaims == nil || loaded.CallsToAction == nil {
+		t.Errorf("loaded profile has empty collections as nil: %+v", loaded)
+	}
+	// A workspace without a brand gets ErrNotFound.
+	ws2 := uniqueWorkspace(t, s, "brandless")
+	if _, err := s.GetBrandProfile(ctx, ws2.ID); err != ErrNotFound {
+		t.Errorf("missing brand must be ErrNotFound, got %v", err)
+	}
+}
+
 func seedOperator(t *testing.T, s *Store) string {
 	t.Helper()
 	ctx := context.Background()

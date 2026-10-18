@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { getApiBaseUrl } from "@/lib/config";
@@ -18,7 +19,14 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
       {workspaces.map((workspace) => (
         <li key={workspace.id} className="flex flex-wrap items-baseline justify-between gap-2 py-3">
           <div className="min-w-0">
-            <p className="truncate font-medium text-slate-900">{workspace.name}</p>
+            <p className="truncate font-medium text-slate-900">
+              <Link
+                href={`/workspaces/${encodeURIComponent(workspace.id)}`}
+                className="underline-offset-2 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+              >
+                {workspace.name}
+              </Link>
+            </p>
             <p className="mt-0.5 text-sm text-slate-600">
               <code className="rounded bg-slate-100 px-1 font-mono text-xs">{workspace.slug}</code>
               {workspace.websiteUrl ? (

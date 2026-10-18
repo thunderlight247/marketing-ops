@@ -8,6 +8,38 @@ export interface Workspace {
   updatedAt: string;
 }
 
+export interface BrandProfile {
+  businessDescription: string | null;
+  audience: string | null;
+  services: string | null;
+  tone: string | null;
+  rules: Record<string, unknown>;
+  prohibitedClaims: string[];
+  callsToAction: string[];
+  updatedAt: string;
+}
+
+export type WorkspaceDetailState =
+  | { kind: "loading" }
+  | { kind: "missing"; reason: string }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "loaded"; workspace: Workspace; brand: BrandProfile | null };
+
+export type SaveBrandInput = {
+  businessDescription: string | null;
+  audience: string | null;
+  services: string | null;
+  tone: string | null;
+  rules: Record<string, unknown>;
+  prohibitedClaims: string[];
+  callsToAction: string[];
+};
+
+export type SaveBrandResult =
+  | { kind: "saved"; brand: BrandProfile }
+  | { kind: "rejected"; message: string }
+  | { kind: "unavailable"; reason: string };
+
 export type WorkspacesState =
   | { kind: "loading" }
   | { kind: "unavailable"; reason: string }
@@ -83,6 +115,125 @@ async function readErrorResponse(response: Response): Promise<string> {
     // fall through to the generic message
   }
   return `The API answered with HTTP ${response.status}.`;
+}
+
+function parseBrand(data: unknown): BrandProfile | null {
+  if (!isRecord(data)) return null;
+  const strings = ["businessDescription", "audience", "services", "tone"] as const;
+  for (const key of strings) {
+    const value = data[key];
+    if (value !== null && typeof value !== "string") return null;
+  }
+  if (!isRecord(data.rules)) return null;
+  if (data.prohibitedClaims !== null && !Array.isArray(data.prohibitedClaims)) return null;
+  if (data.callsToAction !== null && !Array.isArray(data.callsToAction)) return null;
+  for (const key of ["prohibitedClaims", "callsToAction"] as const) {
+    if (data[key] === null) return null;
+    if (!Array.isArray(data[key]) || !data[key].every((item) => typeof item === "string"))
+      return null;
+  }
+  if (typeof data.updatedAt !== "string" || data.updatedAt.length === 0) return null;
+  return {
+    businessDescription: data.businessDescription as string | null,
+    audience: data.audience as string | null,
+    services: data.services as string | null,
+    tone: data.tone as string | null,
+    rules: data.rules as Record<string, unknown>,
+    prohibitedClaims: data.prohibitedClaims as string[],
+    callsToAction: data.callsToAction as string[],
+    updatedAt: data.updatedAt as string,
+  };
+}
+
+/**
+ * Fetches GET {baseUrl}/api/v1/workspaces/{id}. 404s become a "missing"
+ * state; other failures become "unavailable"; malformed bodies too.
+ */
+export async function fetchWorkspaceDetail(
+  baseUrl: string,
+  id: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 4000,
+): Promise<WorkspaceDetailState> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${encodeURIComponent(id)}`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (response.status === 404) {
+      return { kind: "missing", reason: await readErrorResponse(response) };
+    }
+    if (!response.ok) {
+      return { kind: "unavailable", reason: await readErrorResponse(response) };
+    }
+    const body = (await response.json()) as unknown;
+    if (!isRecord(body)) {
+      return {
+        kind: "unavailable",
+        reason: "The API answered, but the body was not a workspace detail.",
+      };
+    }
+    const workspace = parseWorkspace(body.workspace);
+    if (!workspace) {
+      return {
+        kind: "unavailable",
+        reason: "The API answered, but the body was not a workspace detail.",
+      };
+    }
+    const brand = body.brand === null ? null : parseBrand(body.brand);
+    if (body.brand !== null && !brand) {
+      return {
+        kind: "unavailable",
+        reason: "The API answered, but the brand profile was malformed.",
+      };
+    }
+    return { kind: "loaded", workspace, brand };
+  } catch {
+    return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** PUTs the brand profile for one workspace. */
+export async function saveBrandProfile(
+  baseUrl: string,
+  id: string,
+  input: SaveBrandInput,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 6000,
+): Promise<SaveBrandResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(
+      `${baseUrl}/api/v1/workspaces/${encodeURIComponent(id)}/brand`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        cache: "no-store",
+        body: JSON.stringify(input),
+      },
+    );
+    if (!response.ok) {
+      return { kind: "rejected", message: await readErrorResponse(response) };
+    }
+    const brand = parseBrand(await response.json());
+    if (!brand) {
+      return {
+        kind: "unavailable",
+        reason: "The API answered, but the body was not a brand profile.",
+      };
+    }
+    return { kind: "saved", brand };
+  } catch {
+    return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

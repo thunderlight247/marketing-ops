@@ -38,6 +38,17 @@ func (s *Store) GetBrandProfile(ctx context.Context, workspaceID string) (BrandP
 
 // UpsertBrandProfile creates or replaces the brand profile of one workspace.
 func (s *Store) UpsertBrandProfile(ctx context.Context, b BrandProfile) (BrandProfile, error) {
+	// JSON rules and string lists must not be written as SQL NULL: the columns
+	// are NOT NULL with '{}' defaults, so an omitted field means empty.
+	if b.Rules == nil {
+		b.Rules = map[string]any{}
+	}
+	if b.ProhibitedClaims == nil {
+		b.ProhibitedClaims = []string{}
+	}
+	if b.CallsToAction == nil {
+		b.CallsToAction = []string{}
+	}
 	row := s.pool.QueryRow(ctx,
 		`INSERT INTO brand_profiles (workspace_id, business_description, audience, services, tone, rules,
 			prohibited_claims, calls_to_action)

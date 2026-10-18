@@ -14,10 +14,13 @@ import (
 )
 
 // WorkspaceStore is what the workspace handlers need. *store.Store implements
-// it; tests use fakes.
+// all of it; tests use fakes, so new methods must also be added to the fakes.
 type WorkspaceStore interface {
 	ListWorkspaces(ctx context.Context) ([]store.Workspace, error)
 	InsertWorkspace(ctx context.Context, w store.Workspace) (store.Workspace, error)
+	GetWorkspaceByID(ctx context.Context, id string) (store.Workspace, error)
+	GetBrandProfile(ctx context.Context, workspaceID string) (store.BrandProfile, error)
+	UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error)
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`)
