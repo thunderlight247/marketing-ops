@@ -1,6 +1,6 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 complete (drafting + versioned editing + AI provider abstraction and generation; OpenRouter adapter active once the operator sets OPENROUTER_API_KEY)\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o)\
 **Current milestone:** Milestone 5 --- Review, versioning, and approval workflow\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
@@ -729,9 +729,19 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   route registration; restarting from a fresh binary fixed it (no code problem).
 - Verified: `make check` exit 0 (all Go packages incl. aiprovider/config/httpapi tests; web
   prettier/eslint/tsc + 93 Vitest tests).
-- **To enable real generation:** put `OPENROUTER_API_KEY=<key>` in `apps/api/.env` (optionally
-  `AI_MODEL=...`); with a key present the OpenRouter adapter activates automatically and the
-  stub is bypassed.
+- **Real-provider verification (2026-10-19, key from the operator in apps/api/.env, not in
+  chat or git):** with `AI_MODEL=openai/gpt-4o` the OpenRouter adapter drafts live:
+  blog_article "The Story Behind Our Ginger Tea at Demo Cafe" (2040-char body, 7.6s) and
+  social_post "Weekend Specials at Demo Cafe Tasting Bar" (with facebook/instagram/twitter
+  channelCopy, 3.9s) --- both stored as draft items + version 1 with provider/model/duration/
+  reply-hash metadata, both audited, and both kept in the demo workspace as the first real
+  drafts for the operator to review in the UI. Log scan: zero key fragments.
+- **Real-bug found by the real call:** OpenRouter refuses requests whose max_tokens budget
+  exceeds the key's remaining credits (HTTP 402 "can only afford 4000"); the adapter did not
+  set max_tokens, so OpenRouter assumed the model maximum (16384). Fixed at the adapter: an
+  explicit `max_tokens` (default 4000, `OpenRouter.MaxTokens` override) is always sent. Any
+  key whose balance later runs out still surfaces as the safe 502 "the model provider refused
+  the request" message.
 
 **Next action:** Milestone 5 --- review, versioning, and approval workflow (lifecycle transitions,
 approval records, approval invalidation on edit, preview before approval, audit events).

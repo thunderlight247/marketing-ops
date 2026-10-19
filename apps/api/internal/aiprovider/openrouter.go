@@ -22,9 +22,24 @@ type OpenRouter struct {
 	Model  string
 	Base   string // default https://openrouter.ai/api/v1; override in tests
 	Client *http.Client
+	// MaxTokens caps the completion size. OpenRouter charges against a
+	// token budget even before generation; without a cap it assumes the
+	// model maximum, which fails with HTTP 402 on low-credit keys.
+	MaxTokens int
 }
 
 func (o OpenRouter) Name() string { return "openrouter" }
+
+// effectiveMaxTokens: an explicit cap, or a default that covers a full
+// article with room to spare while fitting typical pay-as-you-go budgets.
+const defaultMaxTokens = 4000
+
+func effectiveMaxTokens(configured int) int {
+	if configured > 0 && configured < 64000 {
+		return configured
+	}
+	return defaultMaxTokens
+}
 
 // draftPayload is the JSON structure the model is asked to answer with.
 type draftPayload struct {
@@ -57,7 +72,8 @@ func (o OpenRouter) Generate(ctx context.Context, req GenerateRequest) (Generate
 	started := time.Now()
 
 	payload := map[string]any{
-		"model": o.Model,
+		"model":      o.Model,
+		"max_tokens": effectiveMaxTokens(o.MaxTokens),
 		"messages": []map[string]any{
 			{"role": "system", "content": buildSystemPrompt(req)},
 			{"role": "user", "content": buildUserPrompt(req)},
