@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o)\
-**Current milestone:** Milestone 5 --- Review, versioning, and approval workflow\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o); Milestone 5 first increment complete (approval workflow + publishing guard)\
+**Current milestone:** Milestone 5 --- Review, versioning, and approval workflow (preview + polish remaining)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -743,8 +743,46 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   key whose balance later runs out still surfaces as the safe 502 "the model provider refused
   the request" message.
 
-**Next action:** Milestone 5 --- review, versioning, and approval workflow (lifecycle transitions,
-approval records, approval invalidation on edit, preview before approval, audit events).
+**Milestone 5 first increment (implemented 2026-10-19) --- approval workflow, lifecycle transitions, and the publishing guard:**
+
+- Central lifecycle: `contentStatusTransitions` map in `internal/store/approvals.go` is the single
+  definition (draft→review/approved/rejected; review→approved/rejected/draft; approved→draft via
+  invalidation; rejected→draft/review). Queued/publishing/published/failed stay reserved for the
+  Milestone 9 scheduler.
+- `store.DecideApproval` (one transaction, row-locked): validates the decision (approve/reject),
+  requires the item to be in draft/review, targets the implicit newest version (older snapshots
+  can never regain approval after an edit), records the guarded approval row (duplicate decision
+  → `ErrAlreadyDecided`), and flips the item status (`ErrInvalidStatus` when the transition is
+  not allowed; `ErrVersionNotLatest` when no version exists). `ListApprovalsByItem` returns the
+  per-item decision history.
+- Approval invalidation: `SaveContentDraft` now accepts draft **and** approved/rejected items;
+  editing an approved item resets it to `draft` and stores a new version, so stale approvals
+  cannot survive an edit. The PATCH handler records a `content.approval_invalidated` audit row
+  when the previous status was approved.
+- Publishing guard (M5 acceptance): `InsertPublishingJob` now verifies at the store layer that
+  the targeted version carries an `approved` decision **and** is still the item's newest version;
+  unapproved or superseded (changed) content returns `ErrNotApproved`. Tested for both cases.
+- `store.EnsureOperator`: resolves (or seeds) the single operator row for decision attribution in
+  unauthenticated mode (D16); becomes the session identity in Milestone 13.
+- API: `POST /api/v1/workspaces/{id}/content/{itemId}/decision` (approve/reject + optional note,
+  200/400/404/409 mapped, audit `content.approval_approve_recorded` / `content.approval_reject_recorded`)
+  and `GET /api/v1/workspaces/{id}/content/{itemId}/history` (all versions + their decisions).
+- Web: the draft editor now has a Decision panel (Approve/Reject with optional note, note until
+  now only relevant for reject), a "your edits invalidated the approval" banner after editing an
+  approved item, an approved-status status banner, and a version-history section pairing each
+  snapshot with its decision badge and note. Lib helpers `fetchContentHistory` /
+  `decideContentApproval` with typed results; Vitest suite 98/98.
+- Live verification on the real demo draft: approve → 200 (status approved, decidedAt recorded),
+  re-decide → 409, edit → status back to draft with version 2, history shows v1 approved + v2
+  undecided, audit trail `content.approval_approve_recorded` + `content.approval_invalidated` +
+  `content.updated` all present. Test residue removed afterwards (the generated draft restored to
+  its original single version with the real content intact).
+- Verified: `make check` exit 0 (all Go packages incl. new store approval-lifecycle + central
+  transition tests and handler tests; web prettier/eslint/tsc + 98 Vitest tests).
+
+**Next action:** Milestone 5 second increment --- preview before approval (rendered draft view)
+and any remaining polish for the review flow; then Milestone 6 (the first real publishing
+adapter: Sanity for Nutrition Guide).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

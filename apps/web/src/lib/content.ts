@@ -563,3 +563,165 @@ export async function generateWorkspaceContent(
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
   }
 }
+
+export type ApprovalDecision = "approve" | "reject";
+
+export interface ApprovalRecord {
+  id: string;
+  contentItemId: string;
+  contentVersionId: string;
+  decision: "approved" | "rejected";
+  note: string | null;
+  decidedAt: string;
+}
+
+export interface ContentHistory {
+  versions: ContentVersion[];
+  approvals: Record<string, ApprovalRecord>; // keyed by version id
+}
+
+export type ContentHistoryState =
+  | { kind: "loading" }
+  | { kind: "missing"; message: string }
+  | { kind: "unavailable"; message: string }
+  | { kind: "loaded"; history: ContentHistory };
+
+export type DecideResult =
+  | { kind: "decided"; item: ContentItem; decision: ApprovalRecord }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "conflict"; message: string }
+  | { kind: "unavailable"; message: string };
+
+function approvalUrl(baseUrl: string, workspaceId: string, itemId: string, suffix: string): string {
+  return itemUrl(baseUrl, workspaceId, itemId) + suffix;
+}
+
+/**
+ * GET /content/{itemId}/history: every version with its decision (if any).
+ * Never throws.
+ */
+export async function fetchContentHistory(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ContentHistoryState> {
+  try {
+    const res = await fetchImpl(approvalUrl(baseUrl, workspaceId, itemId, "/history"), {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 404) {
+      return { kind: "missing", message: "Workspace or content item not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as { versions?: unknown };
+    if (!Array.isArray(data.versions)) {
+      return { kind: "unavailable", message: "Server returned malformed history." };
+    }
+    const history: ContentHistory = { versions: [], approvals: {} };
+    for (const raw of data.versions) {
+      const praise = raw as Record<string, unknown>;
+      const version = parseContentVersion(praise);
+      if (!version) {
+        return { kind: "unavailable", message: "Server returned malformed history entries." };
+      }
+      history.versions.push(version);
+      if (
+        praise.decision !== null &&
+        typeof praise.decision === "object" &&
+        praise.decision !== null
+      ) {
+        const d = praise.decision as Record<string, unknown>;
+        const record: ApprovalRecord = {
+          id: String(d.id ?? ""),
+          contentItemId: String(d.contentItemId ?? ""),
+          contentVersionId: String(d.contentVersionId ?? ""),
+          decision: d.decision === "rejected" ? "rejected" : "approved",
+          note: typeof d.note === "string" ? d.note : null,
+          decidedAt: String(d.decidedAt ?? ""),
+        };
+        history.approvals[version.id] = record;
+      }
+    }
+    return { kind: "loaded", history };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+/**
+ * POSTs approve/reject for the item's newest version. The server records the
+ * decision, moves the status, and audits it. Never throws.
+ */
+export async function decideContentApproval(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  decision: ApprovalDecision,
+  note?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<DecideResult> {
+  const trimmedNote = (note ?? "").trim();
+  if (trimmedNote && Array.from(trimmedNote).length > 2000) {
+    return { kind: "rejected", problems: ["note is too long (max 2000 characters)"] };
+  }
+  const payload: Record<string, unknown> = { decision };
+  if (trimmedNote) payload.note = trimmedNote;
+
+  try {
+    const res = await fetchImpl(approvalUrl(baseUrl, workspaceId, itemId, "/decision"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "conflict",
+        message: body?.error ?? "This decision is not allowed right now.",
+      };
+    }
+    if (res.status === 400) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "rejected",
+        problems: body?.error ? body.error.split("; ") : ["The decision was refused."],
+      };
+    }
+    if (res.status === 404) {
+      return { kind: "unavailable", message: "Workspace or content item not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    const item = parseContentItem(data);
+    const rawDecision = data.decision as Record<string, unknown> | null;
+    if (!item || !rawDecision || typeof rawDecision.id !== "string") {
+      return { kind: "unavailable", message: "Server returned a malformed decision." };
+    }
+    const record: ApprovalRecord = {
+      id: rawDecision.id,
+      contentItemId: String(rawDecision.contentItemId ?? item.id),
+      contentVersionId: String(rawDecision.contentVersionId ?? ""),
+      decision: rawDecision.decision === "rejected" ? "rejected" : "approved",
+      note: typeof rawDecision.note === "string" ? rawDecision.note : null,
+      decidedAt: String(rawDecision.decidedAt ?? ""),
+    };
+    return { kind: "decided", item, decision: record };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}

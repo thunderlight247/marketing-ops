@@ -36,6 +36,9 @@ var (
 	ErrInvalidCapability = errors.New("unknown capability or status value")
 	ErrInvalidStatus     = errors.New("unknown lifecycle status value")
 	ErrNotEditable       = errors.New("content item is not editable in its current status")
+	ErrVersionNotLatest  = errors.New("approval must target the newest version of the item")
+	ErrAlreadyDecided    = errors.New("that version already has an approval decision")
+	ErrNotApproved       = errors.New("the content version is not approved")
 )
 
 // Store is the repository target. It wraps a pgx pool so the process shares one.

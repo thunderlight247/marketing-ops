@@ -116,12 +116,23 @@ type Approval struct {
 	DecidedAt        time.Time
 }
 
+// rowQuerier is satisfied by both *pgxpool.Pool and pgx.Tx.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // RecordApproval stores an approval or rejection of one exact version of one
 // content item. The insert only succeeds when the version is a snapshot of
 // that item in that workspace, so approval rows cannot be forged across the
 // isolation boundary.
 func (s *Store) RecordApproval(ctx context.Context, workspaceID, itemID, versionID, decision, operatorID string, note *string) (Approval, error) {
-	row := s.pool.QueryRow(ctx,
+	return recordApprovalInsert(ctx, s.pool, workspaceID, itemID, versionID, decision, operatorID, note)
+}
+
+// recordApprovalInsert performs the guarded insert on any query carrier
+// (pool for standalone writes, a tx for multi-step flows).
+func recordApprovalInsert(ctx context.Context, q rowQuerier, workspaceID, itemID, versionID, decision, operatorID string, note *string) (Approval, error) {
+	row := q.QueryRow(ctx,
 		`INSERT INTO approvals (content_item_id, content_version_id, decision, operator_id, note)
 		 SELECT cv.content_item_id, cv.id, $4, $5, $6
 		 FROM content_versions cv

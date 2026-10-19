@@ -28,6 +28,10 @@ type Deps struct {
 	CredentialKey        []byte
 	CredentialKeyVersion int
 
+	// Operators resolves the acting operator in single-operator mode (D16);
+	// nil makes the decision route answer 501 alongside the store check.
+	Operators OperatorProvider
+
 	// AIGenerator drafts content; nil makes the generate route answer 501.
 	AIGenerator     ContentGenerator
 	GenerateTimeout time.Duration
@@ -52,6 +56,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content", createWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}", getWorkspaceContentItemHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}", updateWorkspaceContentItemHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/history", getWorkspaceContentHistoryHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/decision", decideWorkspaceContentHandler(d.Workspaces, d.Operators))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/generate", generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))

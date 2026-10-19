@@ -221,6 +221,28 @@ func TestUpdateWorkspaceContentItem(t *testing.T) {
 		}
 	})
 
+	t.Run("editing an approved item records the invalidation audit", func(t *testing.T) {
+		item := draftItem(itemID, wsID)
+		item.Status = "approved"
+		fake := detailDeps(
+			map[string]store.ContentItem{itemID: item},
+			map[string][]store.ContentVersion{
+				itemID: {{ID: "v1", ContentItemID: itemID, VersionNumber: 1, Title: "Long", Body: "long body"}},
+			})
+		h := NewRouter(Deps{Logger: testLogger, Workspaces: fake})
+		rec := doJSON(t, h, http.MethodPatch, "/api/v1/workspaces/"+wsID+"/content/"+itemID, `{"body":"revised"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		actions := map[string]bool{}
+		for _, event := range fake.auditEvents {
+			actions[event.Action] = true
+		}
+		if !actions["content.updated"] || !actions["content.approval_invalidated"] {
+			t.Fatalf("expected updated + approval_invalidated audits, got %v", actions)
+		}
+	})
+
 	t.Run("conflicts 409 when replacing the slug with a taken one", func(t *testing.T) {
 		fake := detailDeps(map[string]store.ContentItem{itemID: draftItem(itemID, wsID)}, nil)
 		fake.saveDraftErr = store.ErrSlugTaken

@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import {
+  decideContentApproval,
+  fetchContentHistory,
   fetchWorkspaceDraft,
   formatContentKind,
   formatContentStatus,
   saveWorkspaceDraft,
+  type ApprovalDecision,
+  type ContentHistoryState,
   type DraftState,
   type SaveDraftResult,
 } from "@/lib/content";
@@ -48,6 +52,18 @@ export function DraftEditor({
   const [conflict, setConflict] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Approval workflow state
+  const [history, setHistory] = useState<ContentHistoryState>({ kind: "loading" });
+  const [invalidated, setInvalidated] = useState(false);
+  const [deciding, setDeciding] = useState(false);
+  const [decisionNote, setDecisionNote] = useState("");
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  const loadHistory = useCallback(async () => {
+    const result = await fetchContentHistory(apiBaseUrl, workspaceId, itemId);
+    setHistory(result);
+  }, [apiBaseUrl, workspaceId, itemId]);
+
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     const result = await fetchWorkspaceDraft(apiBaseUrl, workspaceId, itemId);
@@ -64,7 +80,8 @@ export function DraftEditor({
         Object.entries(version?.channelCopy ?? {}).map(([name, copy]) => ({ name, copy })),
       );
     }
-  }, [apiBaseUrl, workspaceId, itemId]);
+    void loadHistory();
+  }, [apiBaseUrl, workspaceId, itemId, loadHistory]);
 
   useEffect(() => {
     void load();
@@ -96,6 +113,11 @@ export function DraftEditor({
     setSaving(false);
     if (result.kind === "saved") {
       setFormErrors([]);
+      // Editing approved content invalidates the approval; the server already
+      // reset the status to draft — surface that once here.
+      if (state.kind === "loaded" && state.item.status === "approved") {
+        setInvalidated(true);
+      }
       void load();
     } else if (result.kind === "rejected") {
       setFormErrors(result.problems);
@@ -103,6 +125,27 @@ export function DraftEditor({
       setConflict(result.message);
     } else {
       setServerError(result.message);
+    }
+  }
+
+  async function handleDecide(decision: ApprovalDecision) {
+    setDecisionError(null);
+    setDeciding(true);
+    const result = await decideContentApproval(
+      apiBaseUrl,
+      workspaceId,
+      itemId,
+      decision,
+      decisionNote || undefined,
+    );
+    setDeciding(false);
+    if (result.kind === "decided") {
+      setDecisionNote("");
+      void load();
+    } else if (result.kind === "rejected") {
+      setDecisionError(result.problems.join("; "));
+    } else {
+      setDecisionError(result.message);
     }
   }
 
@@ -181,11 +224,67 @@ export function DraftEditor({
         </p>
       </div>
 
-      {!editable && (
-        <p className="mb-4 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-700/15">
-          Approved or published content is frozen. Editing and re-approval arrive with the approval
-          workflow (Milestone 5).
+      {invalidated && (
+        <p
+          role="status"
+          className="mb-4 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-700/15"
+        >
+          Your edits invalidated the approval. The draft must be approved again before it can
+          publish.
         </p>
+      )}
+
+      {item.status === "approved" && (
+        <p
+          role="status"
+          className="mb-4 rounded-md bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 ring-1 ring-inset ring-emerald-700/15"
+        >
+          This version is approved. Editing it now would reset the draft for re-approval.
+        </p>
+      )}
+
+      {(item.status === "draft" || item.status === "review") && version && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <h3 className="text-sm font-semibold text-slate-800">Decision</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Decide on the newest version (version {version.versionNumber}). Nothing publishes
+            without an approval decision — and publishing support arrives in a later milestone.
+          </p>
+          <input
+            type="text"
+            value={decisionNote}
+            onChange={(e) => setDecisionNote(e.target.value)}
+            maxLength={2000}
+            placeholder="Optional decision note (e.g. why, or rework instructions)"
+            className={`mt-3 ${inputClasses}`}
+          />
+          {decisionError && (
+            <p
+              role="alert"
+              className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+            >
+              {decisionError}
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={deciding}
+              onClick={() => void handleDecide("approve")}
+              className="rounded-md bg-emerald-800 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deciding ? "Recording…" : "Approve version"}
+            </button>
+            <button
+              type="button"
+              disabled={deciding}
+              onClick={() => void handleDecide("reject")}
+              className="rounded-md border border-red-300 px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Reject version
+            </button>
+          </div>
+        </div>
       )}
 
       {formErrors.length > 0 && (
@@ -398,6 +497,75 @@ export function DraftEditor({
           </div>
         </div>
       </form>
+
+      <section
+        aria-labelledby="history-heading"
+        className="mt-6 rounded-lg border border-slate-200 bg-white"
+      >
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 id="history-heading" className="text-base font-semibold">
+            Version history
+          </h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Every save is an immutable snapshot; older versions keep their context for comparison.
+          </p>
+        </div>
+        <div className="px-5">
+          {history.kind === "loading" && (
+            <p className="py-4 text-sm text-slate-500">Loading history…</p>
+          )}
+          {history.kind === "missing" && (
+            <p className="py-4 text-xs text-amber-800">{history.message}</p>
+          )}
+          {history.kind === "unavailable" && (
+            <p className="py-4 text-xs text-red-800">{history.message}</p>
+          )}
+          {history.kind === "loaded" && history.history.versions.length === 0 && (
+            <p className="py-4 text-xs text-slate-500">No versions yet — save the draft once.</p>
+          )}
+          {history.kind === "loaded" && history.history.versions.length > 0 && (
+            <ul className="divide-y divide-slate-100">
+              {[...history.history.versions].reverse().map((entry) => {
+                const decision = history.history.approvals[entry.id];
+                return (
+                  <li key={entry.id} className="py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          Version {entry.versionNumber}
+                          {entry.title !== item.title ? ` — ${entry.title}` : ""}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {new Date(entry.createdAt).toLocaleString()} ·{" "}
+                          {entry.body.length.toLocaleString()} characters
+                        </p>
+                      </div>
+                      {decision ? (
+                        <span
+                          className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
+                            decision.decision === "approved"
+                              ? "bg-emerald-50 text-emerald-900 ring-emerald-700/25"
+                              : "bg-red-50 text-red-900 ring-red-700/25"
+                          }`}
+                        >
+                          {decision.decision === "approved" ? "Approved" : "Rejected"}
+                        </span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                          No decision yet
+                        </span>
+                      )}
+                    </div>
+                    {decision?.note && (
+                      <p className="mt-1 text-xs text-slate-600">Note: {decision.note}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

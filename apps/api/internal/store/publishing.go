@@ -34,10 +34,34 @@ var validJobStatuses = map[string]bool{
 }
 
 // InsertPublishingJob records a publishing job whose approved version belongs
-// to workspaceID. The keyed uniqueness (idempotency_key) plus the join through
-// workspace-scoped tables means a duplicated or cross-workspace request cannot
-// enqueue work for another workspace.
+// to workspaceID.
+//
+// The approval gate lives here (Milestone 5 acceptance): the targeted version
+// must carry an 'approved' decision AND still be the item's newest version.
+// A never-approved version, or one superseded by an edit after approval,
+// returns ErrNotApproved — unapproved or changed content cannot be published.
+// The keyed uniqueness (idempotency_key) plus the join through workspace-
+// scoped tables means a duplicated or cross-workspace request cannot enqueue
+// work for another workspace.
 func (s *Store) InsertPublishingJob(ctx context.Context, workspaceID string, j PublishingJob) (PublishingJob, error) {
+	var approved int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*)
+		 FROM approvals a
+		 JOIN content_versions cv ON cv.id = a.content_version_id
+		 JOIN content_items ci ON ci.id = cv.content_item_id
+		 WHERE ci.id = $1 AND ci.workspace_id = $2 AND cv.id = $3
+			AND a.decision = 'approved'
+			AND cv.version_number = (
+				SELECT max(v2.version_number) FROM content_versions v2
+				WHERE v2.content_item_id = ci.id)`,
+		j.ContentItemID, workspaceID, j.ContentVersionID).Scan(&approved)
+	if err != nil {
+		return PublishingJob{}, err
+	}
+	if approved == 0 {
+		return PublishingJob{}, ErrNotApproved
+	}
 	if j.Status == "" {
 		j.Status = "pending"
 	}

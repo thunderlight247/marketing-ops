@@ -49,6 +49,7 @@ func run() error {
 	// Leave dbPinger as a nil interface when no database is configured.
 	var dbPinger health.Pinger
 	var workspaceStore httpapi.WorkspaceStore
+	var operatorProvider httpapi.OperatorProvider
 	if cfg.DatabaseConfigured() {
 		pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -56,7 +57,9 @@ func run() error {
 		}
 		defer pool.Close()
 		dbPinger = pool
-		workspaceStore = store.New(pool)
+		wsStore := store.New(pool)
+		workspaceStore = wsStore
+		operatorProvider = wsStore
 	} else {
 		logger.Warn("DATABASE_URL is not set; running without a database")
 	}
@@ -89,6 +92,7 @@ func run() error {
 			Integrations:         integration.NewDefaultRegistry(),
 			CredentialKey:        cfg.CredentialKey,
 			CredentialKeyVersion: cfg.CredentialKeyVersion,
+			Operators:            operatorProvider,
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,
 		}),

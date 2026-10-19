@@ -150,6 +150,8 @@ func updateWorkspaceContentItemHandler(ws WorkspaceStore) http.HandlerFunc {
 			return
 		}
 
+		previousStatus := item.Status // "approved" matters for invalidation
+
 		input, problems := buildDraftInput(item, version, patch)
 		if len(problems) > 0 {
 			writeJSONError(w, http.StatusBadRequest, strings.Join(problems, "; "))
@@ -169,6 +171,21 @@ func updateWorkspaceContentItemHandler(ws WorkspaceStore) http.HandlerFunc {
 					"versionNumber": newVersion.VersionNumber,
 				},
 			})
+			// Editing approved content invalidates the approval until it is
+			// re-decided; the status flip to draft is recorded for the trail.
+			if previousStatus == "approved" {
+				audit(r.Context(), ws, store.AuditEvent{
+					WorkspaceID: &workspaceID,
+					Action:      "content.approval_invalidated",
+					EntityType:  "content_item",
+					EntityID:    &updated.ID,
+					Details: map[string]any{
+						"id":            updated.ID,
+						"versionNumber": newVersion.VersionNumber,
+						"reason":        "edited after approval",
+					},
+				})
+			}
 			resp := struct {
 				contentItemJSON
 				Version contentVersionJSON `json:"version"`

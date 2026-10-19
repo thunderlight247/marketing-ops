@@ -39,6 +39,11 @@ type fakeWorkspaceStore struct {
 	contentVersionsByItem map[string][]store.ContentVersion
 	savedDrafts           []savedDraftCall
 	saveDraftErr          error
+	decisionsByItem       map[string][]store.Approval
+	decisionErr           error
+	decisions             []decisionCall
+	fakeOperatorID        string
+	ensureOperatorCalls   int
 
 	listIntegrationsResult []store.Integration
 	listIntegrationsErr    error
@@ -163,9 +168,10 @@ func (f *fakeWorkspaceStore) SaveContentDraft(ctx context.Context, workspaceID, 
 	if !ok || item.WorkspaceID != workspaceID {
 		return store.ContentItem{}, store.ContentVersion{}, store.ErrNotFound
 	}
-	if item.Status != "draft" {
+	if item.Status != "draft" && item.Status != "approved" && item.Status != "rejected" {
 		return store.ContentItem{}, store.ContentVersion{}, store.ErrNotEditable
 	}
+	// Mirrors the real store: editing approved/rejected resets to draft.
 
 	// Apply the planning-record facts like the real store does.
 	if in.Slug != nil {
@@ -183,6 +189,9 @@ func (f *fakeWorkspaceStore) SaveContentDraft(ctx context.Context, workspaceID, 
 		item.PlannedPublishAt = &when
 	}
 	item.Title = in.Title
+	if item.Status != "draft" {
+		item.Status = "draft"
+	}
 	item.UpdatedAt = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	f.contentItemsByID[itemID] = item
 
@@ -200,6 +209,81 @@ func (f *fakeWorkspaceStore) SaveContentDraft(ctx context.Context, workspaceID, 
 	}
 	f.contentVersionsByItem[itemID] = append(f.contentVersionsByItem[itemID], version)
 	return item, version, nil
+}
+
+// decisionCall records one DecideApproval call for assertions.
+type decisionCall struct {
+	WorkspaceID string
+	ItemID      string
+	Decision    string
+	OperatorID  string
+	Note        *string
+}
+
+func (f *fakeWorkspaceStore) DecideApproval(ctx context.Context, workspaceID, itemID string, in store.ApprovalDecisionInput) (store.ContentItem, store.Approval, error) {
+	f.decisions = append(f.decisions, decisionCall{
+		WorkspaceID: workspaceID, ItemID: itemID, Decision: in.Decision,
+		OperatorID: in.OperatorID, Note: in.Note,
+	})
+	if f.decisionErr != nil {
+		return store.ContentItem{}, store.Approval{}, f.decisionErr
+	}
+	item, ok := f.contentItemsByID[itemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.ContentItem{}, store.Approval{}, store.ErrNotFound
+	}
+	versions := f.contentVersionsByItem[itemID]
+	if len(versions) == 0 {
+		return store.ContentItem{}, store.Approval{}, store.ErrVersionNotLatest
+	}
+	if item.Status != "draft" && item.Status != "review" {
+		return store.ContentItem{}, store.Approval{}, store.ErrInvalidStatus
+	}
+	latest := versions[len(versions)-1]
+	for _, past := range f.decisionsByItem[itemID] {
+		if past.ContentVersionID == latest.ID {
+			return store.ContentItem{}, store.Approval{}, store.ErrAlreadyDecided
+		}
+	}
+
+	decision := map[string]string{"approve": "approved", "reject": "rejected"}[in.Decision]
+	item.Status = decision
+	item.UpdatedAt = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	f.contentItemsByID[itemID] = item
+
+	approval := store.Approval{
+		ID:            "66666666-6666-6666-6666-666666666666",
+		ContentItemID: itemID, ContentVersionID: latest.ID,
+		Decision: decision, OperatorID: in.OperatorID, Note: in.Note,
+		DecidedAt: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	}
+	if f.decisionsByItem == nil {
+		f.decisionsByItem = make(map[string][]store.Approval)
+	}
+	f.decisionsByItem[itemID] = append(f.decisionsByItem[itemID], approval)
+	return item, approval, nil
+}
+
+func (f *fakeWorkspaceStore) ListApprovalsByItem(ctx context.Context, workspaceID, itemID string) ([]store.Approval, error) {
+	if item, ok := f.contentItemsByID[itemID]; !ok || item.WorkspaceID != workspaceID {
+		return nil, store.ErrNotFound
+	}
+	return f.decisionsByItem[itemID], nil
+}
+
+func (f *fakeWorkspaceStore) ListContentVersionsInWorkspace(ctx context.Context, workspaceID, itemID string) ([]store.ContentVersion, error) {
+	if item, ok := f.contentItemsByID[itemID]; !ok || item.WorkspaceID != workspaceID {
+		return nil, store.ErrNotFound
+	}
+	return f.contentVersionsByItem[itemID], nil
+}
+
+func (f *fakeWorkspaceStore) EnsureOperator(ctx context.Context) (string, error) {
+	f.ensureOperatorCalls++
+	if f.fakeOperatorID == "" {
+		f.fakeOperatorID = "77777777-7777-7777-7777-777777777777"
+	}
+	return f.fakeOperatorID, nil
 }
 
 func derefString(s *string) string {

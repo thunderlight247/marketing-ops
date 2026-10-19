@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createWorkspaceContent,
+  decideContentApproval,
+  fetchContentHistory,
   fetchWorkspaceContent,
   generateWorkspaceContent,
   fetchWorkspaceDraft,
@@ -556,3 +558,148 @@ const generatedItemFixture = {
     createdAt: "2026-04-01T00:00:00Z",
   },
 };
+
+describe("fetchContentHistory", () => {
+  it("maps 404 to missing", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ status: 404, ok: false });
+    const result = await fetchContentHistory(
+      "http://api.local",
+      "ws",
+      "it",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("missing");
+  });
+
+  it("pairs versions with their decisions", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({
+        versions: [
+          {
+            id: "v1",
+            contentItemId: "it",
+            versionNumber: 1,
+            title: "T",
+            body: "one",
+            excerpt: null,
+            createdAt: "2026-04-01T00:00:00Z",
+          },
+          {
+            id: "v2",
+            contentItemId: "it",
+            versionNumber: 2,
+            title: "T",
+            body: "two",
+            excerpt: null,
+            createdAt: "2026-04-02T00:00:00Z",
+            decision: {
+              id: "a1",
+              contentItemId: "it",
+              contentVersionId: "v2",
+              decision: "approved",
+              note: "ok",
+              decidedAt: "2026-04-02T01:00:00Z",
+            },
+          },
+        ],
+      }),
+    });
+    const result = await fetchContentHistory(
+      "http://api.local",
+      "ws",
+      "it",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("loaded");
+    if (result.kind === "loaded") {
+      expect(result.history.versions).toHaveLength(2);
+      expect(result.history.approvals["v1"]).toBeUndefined();
+      expect(result.history.approvals["v2"]?.decision).toBe("approved");
+      expect(result.history.approvals["v2"]?.note).toBe("ok");
+    }
+  });
+});
+
+describe("decideContentApproval", () => {
+  it("posts the decision and maps the result", async () => {
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(payload.decision).toBe("approve");
+      expect(payload.note).toBe("ship it");
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "it",
+          workspaceId: "ws",
+          kind: "blog_article",
+          status: "approved",
+          title: "T",
+          slug: null,
+          plannedPublishAt: null,
+          createdAt: "2026-04-01T00:00:00Z",
+          updatedAt: "2026-04-02T00:00:00Z",
+          decision: {
+            id: "a1",
+            contentItemId: "it",
+            contentVersionId: "v1",
+            decision: "approved",
+            note: "ship it",
+            decidedAt: "2026-04-02T00:00:00Z",
+          },
+        }),
+      };
+    });
+    const result = await decideContentApproval(
+      "http://api.local",
+      "ws",
+      "it",
+      "approve",
+      "ship it",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("decided");
+    if (result.kind === "decided") {
+      expect(result.item.status).toBe("approved");
+      expect(result.decision.decision).toBe("approved");
+    }
+  });
+
+  it("rejects an oversized note client-side", async () => {
+    const mockFetch = vi.fn();
+    const result = await decideContentApproval(
+      "http://api.local",
+      "ws",
+      "it",
+      "reject",
+      "x".repeat(2001),
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("rejected");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("maps a 409 conflict with the server message", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({
+        error: "the newest version already has a decision; edit the draft to submit it again",
+      }),
+    });
+    const result = await decideContentApproval(
+      "http://api.local",
+      "ws",
+      "it",
+      "approve",
+      undefined,
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("conflict");
+    if (result.kind === "conflict") {
+      expect(result.message).toContain("already has a decision");
+    }
+  });
+});

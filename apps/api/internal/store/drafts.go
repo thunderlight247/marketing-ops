@@ -32,9 +32,11 @@ type ContentDraftInput struct {
 // SaveContentDraft updates the planning record of one item and appends a new
 // immutable version of the brief, in one transaction.
 //
-// The item must be a draft: approved or published content is frozen and its
-// re-approval flow arrives with the approval workflow. The UPDATE joins the
-// scoping in SQL, so a version cannot be attached outside the workspace
+// Drafts stay drafts. Editing an approved or rejected item resets it to draft:
+// the approval (if any) is invalidated because the exact approved text changed,
+// and the re-approval flow is the operator's decision again. Everything else
+// (review/queued/publishing/published/failed) stays frozen. The UPDATE joins
+// the scoping in SQL, so a version cannot be attached across the workspace
 // boundary.
 func (s *Store) SaveContentDraft(ctx context.Context, workspaceID, itemID string, in ContentDraftInput) (ContentItem, ContentVersion, error) {
 	// The item UPDATE keeps every condition in SQL: id, workspace, and the
@@ -58,7 +60,7 @@ func (s *Store) SaveContentDraft(ctx context.Context, workspaceID, itemID string
 		}
 		return ContentItem{}, ContentVersion{}, err
 	}
-	if status != "draft" {
+	if status != "draft" && status != "approved" && status != "rejected" {
 		return ContentItem{}, ContentVersion{}, ErrNotEditable
 	}
 
@@ -115,14 +117,16 @@ func (s *Store) SaveContentDraft(ctx context.Context, workspaceID, itemID string
 		          WHEN $6::boolean THEN NULL
 		          ELSE coalesce($7, ci.planned_publish_at)
 		        END,
+		     status = 'draft',
 		     updated_at = now()
-		 WHERE ci.id = $1 AND ci.workspace_id = $2 AND ci.status = 'draft'
+		 WHERE ci.id = $1 AND ci.workspace_id = $2 AND ci.status = $8
 		 RETURNING `+contentItemColumns,
 		itemID, workspaceID, in.Title,
 		in.Slug != nil && *in.Slug == "", // 4: clear the slug
 		in.Slug,                          // 5: new slug (nil keeps current)
 		in.ClearPlannedPublishAt,         // 6: clear the publish slot
 		in.PlannedPublishAt,              // 7: new slot (nil keeps current)
+		status,                           // 8: the status we locked above
 	)
 	item, err := scanContentItem(itemRow)
 	if err != nil {
