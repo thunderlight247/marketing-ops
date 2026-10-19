@@ -725,3 +725,60 @@ export async function decideContentApproval(
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
   }
 }
+
+export type ManualStatus = "review" | "draft";
+
+export type TransitionStatusResult =
+  | { kind: "moved"; item: ContentItem }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "conflict"; message: string }
+  | { kind: "unavailable"; message: string };
+
+/** POSTs a manual status move (submit for review / back to draft). Never throws. */
+export async function transitionContentStatus(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  status: ManualStatus,
+  fetchImpl: typeof fetch = fetch,
+): Promise<TransitionStatusResult> {
+  if (status !== "review" && status !== "draft") {
+    return { kind: "rejected", problems: ["status must be review or draft"] };
+  }
+  try {
+    const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId) + "/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { kind: "conflict", message: body?.error ?? "That status change is not allowed." };
+    }
+    if (res.status === 400) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "rejected",
+        problems: body?.error ? body.error.split("; ") : ["The status change was refused."],
+      };
+    }
+    if (res.status === 404) {
+      return { kind: "unavailable", message: "Workspace or content item not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const item = parseContentItem(await res.json());
+    if (!item) {
+      return { kind: "unavailable", message: "Server returned a malformed item." };
+    }
+    return { kind: "moved", item };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}

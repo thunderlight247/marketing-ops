@@ -278,6 +278,27 @@ func (f *fakeWorkspaceStore) ListContentVersionsInWorkspace(ctx context.Context,
 	return f.contentVersionsByItem[itemID], nil
 }
 
+func (f *fakeWorkspaceStore) TransitionContentItemStatus(ctx context.Context, workspaceID, itemID, toStatus string) (store.ContentItem, error) {
+	item, ok := f.contentItemsByID[itemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.ContentItem{}, store.ErrNotFound
+	}
+	// Mirror the central map for the API-exposed subset.
+	allowed := map[string]map[string]bool{
+		"draft":    {"review": true, "approved": true, "rejected": true},
+		"review":   {"approved": true, "rejected": true, "draft": true},
+		"approved": {"draft": true},
+		"rejected": {"draft": true, "review": true},
+	}[item.Status]
+	if !allowed[toStatus] || (toStatus != "review" && toStatus != "draft") {
+		return store.ContentItem{}, store.ErrInvalidStatus
+	}
+	item.Status = toStatus
+	item.UpdatedAt = time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	f.contentItemsByID[itemID] = item
+	return item, nil
+}
+
 func (f *fakeWorkspaceStore) EnsureOperator(ctx context.Context) (string, error) {
 	f.ensureOperatorCalls++
 	if f.fakeOperatorID == "" {

@@ -30,6 +30,7 @@ type WorkspaceStore interface {
 	DecideApproval(ctx context.Context, workspaceID, itemID string, in store.ApprovalDecisionInput) (store.ContentItem, store.Approval, error)
 	ListApprovalsByItem(ctx context.Context, workspaceID, itemID string) ([]store.Approval, error)
 	ListContentVersionsInWorkspace(ctx context.Context, workspaceID, itemID string) ([]store.ContentVersion, error)
+	TransitionContentItemStatus(ctx context.Context, workspaceID, itemID, toStatus string) (store.ContentItem, error)
 	EnsureOperator(ctx context.Context) (string, error)
 	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
 	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)

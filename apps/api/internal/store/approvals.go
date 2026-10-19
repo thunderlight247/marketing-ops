@@ -35,6 +35,56 @@ func transitionAllowed(from, to string) bool {
 	return allowed[to]
 }
 
+// apiExposedTransitions is the subset the transport layer may drive directly.
+// Approve/reject decisions go through DecideApproval; queued publishes stay
+// with the Milestone 9 scheduler.
+var apiExposedTransitions = map[string]bool{
+	"review": true,
+	"draft":  true,
+}
+
+// TransitionContentItemStatus moves an item's status through a legal, API-
+// exposed transition, scoped to its workspace. It returns the updated item or
+// ErrInvalidStatus when the move is not legal.
+func (s *Store) TransitionContentItemStatus(ctx context.Context, workspaceID, itemID, toStatus string) (ContentItem, error) {
+	if !apiExposedTransitions[toStatus] {
+		return ContentItem{}, ErrInvalidStatus
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ContentItem{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful commit
+
+	var status string
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM content_items WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
+		itemID, workspaceID,
+	).Scan(&status); err != nil {
+		if err == pgx.ErrNoRows {
+			return ContentItem{}, ErrNotFound
+		}
+		return ContentItem{}, err
+	}
+	if !transitionAllowed(status, toStatus) {
+		return ContentItem{}, ErrInvalidStatus
+	}
+
+	out, err := scanContentItem(tx.QueryRow(ctx,
+		`UPDATE content_items SET status = $3, updated_at = now()
+		 WHERE id = $1 AND workspace_id = $2 AND status = $4
+		 RETURNING `+contentItemColumns,
+		itemID, workspaceID, toStatus, status))
+	if err != nil {
+		return ContentItem{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ContentItem{}, err
+	}
+	return out, nil
+}
+
 // ApprovalDecisionInput is one operator decision about an item's latest
 // version: "approve" or "reject", with an optional free-text note.
 type ApprovalDecisionInput struct {

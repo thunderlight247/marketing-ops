@@ -106,6 +106,70 @@ func TestDecideWorkspaceContent(t *testing.T) {
 	})
 }
 
+func TestTransitionWorkspaceContentStatus(t *testing.T) {
+	wsID := "11111111-1111-1111-1111-111111111111"
+	itemID := "33333333-3333-3333-3333-333333333333"
+	url := "/api/v1/workspaces/" + wsID + "/content/" + itemID + "/status"
+
+	t.Run("returns 501 and 404", func(t *testing.T) {
+		h := NewRouter(Deps{Logger: testLogger})
+		if rec := doJSON(t, h, http.MethodPost, url, `{"status":"review"}`); rec.Code != http.StatusNotImplemented {
+			t.Fatalf("status = %d, want 501", rec.Code)
+		}
+		h2 := NewRouter(Deps{Logger: testLogger, Workspaces: detailDeps(nil, nil)})
+		if rec := doJSON(t, h2, http.MethodPost, url, `{"status":"review"}`); rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("rejects targets outside the exposed subset", func(t *testing.T) {
+		for _, target := range []string{"approved", "published", "queued", "failed"} {
+			h := NewRouter(Deps{Logger: testLogger, Workspaces: detailDeps(
+				map[string]store.ContentItem{itemID: draftItem(itemID, wsID)}, nil)})
+			rec := doJSON(t, h, http.MethodPost, url, `{"status":"`+target+`"}`)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("target %q: status = %d, want 400", target, rec.Code)
+			}
+		}
+	})
+
+	t.Run("submits a draft for review and audits it", func(t *testing.T) {
+		fake := detailDeps(
+			map[string]store.ContentItem{itemID: draftItem(itemID, wsID)},
+			map[string][]store.ContentVersion{
+				itemID: {{ID: "v1", ContentItemID: itemID, VersionNumber: 1, Title: "T", Body: "b"}},
+			})
+		h := NewRouter(Deps{Logger: testLogger, Workspaces: fake})
+		rec := doJSON(t, h, http.MethodPost, url, `{"status":"review"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if resp.Status != "review" {
+			t.Fatalf("status = %q, want review", resp.Status)
+		}
+		if len(fake.auditEvents) != 1 || fake.auditEvents[0].Action != "content.status_changed" {
+			t.Fatalf("expected content.status_changed audit, got %+v", fake.auditEvents)
+		}
+	})
+
+	t.Run("conflicts 409 on an illegal move", func(t *testing.T) {
+		item := draftItem(itemID, wsID)
+		item.Status = "approved"
+		fake := detailDeps(map[string]store.ContentItem{itemID: item}, nil)
+		h := NewRouter(Deps{Logger: testLogger, Workspaces: fake})
+		rec := doJSON(t, h, http.MethodPost, url, `{"status":"review"}`)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", rec.Code)
+		}
+	})
+}
+
 func TestGetWorkspaceContentHistory(t *testing.T) {
 	wsID := "11111111-1111-1111-1111-111111111111"
 	itemID := "33333333-3333-3333-3333-333333333333"

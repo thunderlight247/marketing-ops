@@ -58,6 +58,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}", updateWorkspaceContentItemHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/history", getWorkspaceContentHistoryHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/decision", decideWorkspaceContentHandler(d.Workspaces, d.Operators))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/status", transitionWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/generate", generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))

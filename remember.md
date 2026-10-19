@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o); Milestone 5 first increment complete (approval workflow + publishing guard)\
-**Current milestone:** Milestone 5 --- Review, versioning, and approval workflow (preview + polish remaining)\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o); Milestone 5 COMPLETE (approval workflow, publishing guard, preview, review flow)\
+**Current milestone:** Milestone 6 --- First real publishing adapter: Sanity (Nutrition Guide pilot)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -780,9 +780,30 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
 - Verified: `make check` exit 0 (all Go packages incl. new store approval-lifecycle + central
   transition tests and handler tests; web prettier/eslint/tsc + 98 Vitest tests).
 
-**Next action:** Milestone 5 second increment --- preview before approval (rendered draft view)
-and any remaining polish for the review flow; then Milestone 6 (the first real publishing
-adapter: Sanity for Nutrition Guide).
+**Milestone 5 second increment (implemented 2026-10-19) --- preview before approval and review-flow polish (Milestone 5 COMPLETE):**
+
+- Rendered draft preview: a dependency-free preview parser (`apps/web/src/lib/preview.ts`) turns
+  the markdown-ish AI output into typed blocks (h1/h2/h3, paragraphs with soft-wrap joining,
+  bullet/ordered lists, horizontal rules, inline `**bold**` segments). The draft editor gains an
+  Edit/Preview toggle: Preview renders the CURRENT form values (title, slug, planned slot,
+  excerpt, body, CTA, channel copy) without any markdown library and without ever injecting raw
+  HTML — everything is React text nodes, so crafted body text cannot script the operator.
+  Preview tests plus a parser edge-case suite (unmatched bold markers stay literal).
+- Review-flow transitions: `store.TransitionContentItemStatus` moves an item through the central
+  map enforcing only the API-exposed subset (`review`/`draft`), row-locked and workspace-scoped
+  (`ErrInvalidStatus` otherwise). API `POST /api/v1/workspaces/{id}/content/{itemId}/status` with
+  a `content.status_changed` audit row; Web "Submit for review" (draft) / "Back to draft" (review)
+  buttons in the review-flow panel with a `transitionContentStatus` lib helper.
+- The decision panel copy now distinguishes draft ("submit for review or decide right away") from
+  review ("decide or send back to draft").
+- Live verification: draft→review 200, review→draft 200, review→approved refused 400 (not in the
+  exposed subset), `published` target 400, two `content.status_changed` audit rows recorded and
+  cleaned up, demo draft data intact.
+- Verified: `make check` exit 0 (all Go packages incl. transition store/handler tests; web
+  prettier/eslint/tsc + 105 Vitest tests).
+
+**Next action:** Milestone 6 --- the first real publishing adapter: Sanity for the Nutrition Guide
+pilot (`draft → approval-gated publish`, connection check, artifact recording, credentials).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

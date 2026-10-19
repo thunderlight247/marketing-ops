@@ -139,6 +139,69 @@ func decideWorkspaceContentHandler(ws WorkspaceStore, operators OperatorProvider
 	}
 }
 
+// POST /api/v1/workspaces/{id}/content/{itemId}/status
+//
+// Body: {"status": "review"|"draft"}. Only the two manually-driven moves are
+// exposed; approve/reject decisions go through the decision endpoint and the
+// scheduler owns everything queued/publishing and beyond.
+func transitionWorkspaceContentHandler(ws WorkspaceStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ws == nil {
+			writeJSONError(w, http.StatusNotImplemented, workspaceUnavailable)
+			return
+		}
+		workspaceID, itemID := r.PathValue("id"), r.PathValue("itemId")
+		if _, err := ws.GetWorkspaceByID(r.Context(), workspaceID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeJSONError(w, http.StatusNotFound, "no such workspace")
+			} else {
+				writeJSONError(w, http.StatusInternalServerError, "workspace lookup failed")
+			}
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4*1024+1))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "could not read the request body")
+			return
+		}
+		var req struct {
+			Status *string `json:"status"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "request body is not valid JSON")
+			return
+		}
+		to := strings.ToLower(trim(req.Status))
+		if to != "review" && to != "draft" {
+			writeJSONError(w, http.StatusBadRequest, "status must be review or draft")
+			return
+		}
+
+		item, err := ws.TransitionContentItemStatus(r.Context(), workspaceID, itemID, to)
+		switch {
+		case err == nil:
+			audit(r.Context(), ws, store.AuditEvent{
+				WorkspaceID: &workspaceID,
+				Action:      "content.status_changed",
+				EntityType:  "content_item",
+				EntityID:    &item.ID,
+				Details: map[string]any{
+					"id":     item.ID,
+					"status": item.Status,
+				},
+			})
+			writeJSON(w, http.StatusOK, toContentItemJSON(item))
+		case errors.Is(err, store.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, "no such content item")
+		case errors.Is(err, store.ErrInvalidStatus):
+			writeJSONError(w, http.StatusConflict, "that status change is not allowed from the item's current status")
+		default:
+			writeJSONError(w, http.StatusInternalServerError, "status change failed")
+		}
+	}
+}
+
 // GET /api/v1/workspaces/{id}/content/{itemId}/history returns every version
 // of the item plus its decision records, newest first.
 func getWorkspaceContentHistoryHandler(ws WorkspaceStore) http.HandlerFunc {

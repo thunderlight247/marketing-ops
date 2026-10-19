@@ -9,6 +9,7 @@ import {
   formatContentKind,
   formatContentStatus,
   saveWorkspaceDraft,
+  transitionContentStatus,
   validateContentInput,
   validateDraftInput,
 } from "./content";
@@ -701,5 +702,56 @@ describe("decideContentApproval", () => {
     if (result.kind === "conflict") {
       expect(result.message).toContain("already has a decision");
     }
+  });
+});
+
+describe("transitionContentStatus", () => {
+  it("posts the manual move and maps the item", async () => {
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(payload.status).toBe("review");
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "it",
+          workspaceId: "ws",
+          kind: "blog_article",
+          status: "review",
+          title: "T",
+          slug: null,
+          plannedPublishAt: null,
+          createdAt: "2026-04-01T00:00:00Z",
+          updatedAt: "2026-04-02T00:00:00Z",
+        }),
+      };
+    });
+    const result = await transitionContentStatus(
+      "http://api.local",
+      "ws",
+      "it",
+      "review",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("moved");
+    if (result.kind === "moved") expect(result.item.status).toBe("review");
+  });
+
+  it("maps a 409 conflict", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({
+        error: "that status change is not allowed from the item's current status",
+      }),
+    });
+    const result = await transitionContentStatus(
+      "http://api.local",
+      "ws",
+      "it",
+      "review",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("conflict");
   });
 });
