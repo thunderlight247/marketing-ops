@@ -19,22 +19,27 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // fakeWorkspaceStore records calls and answers from canned data.
 type fakeWorkspaceStore struct {
-	listResult             []store.Workspace
-	listErr                error
-	insertErr              error
-	inserted               []store.Workspace
-	byID                   map[string]store.Workspace
-	brand                  *store.BrandProfile // nil means the workspace has none
-	upsertErr              error
-	upsertedBrand          *store.BrandProfile
-	updateErr              error
-	updated                []store.Workspace
-	deleted                []string
-	auditEvents            []store.AuditEvent
-	listContentResult      []store.ContentItem
-	listContentErr         error
-	insertContentErr       error
-	insertedContent        []store.ContentItem
+	listResult            []store.Workspace
+	listErr               error
+	insertErr             error
+	inserted              []store.Workspace
+	byID                  map[string]store.Workspace
+	brand                 *store.BrandProfile // nil means the workspace has none
+	upsertErr             error
+	upsertedBrand         *store.BrandProfile
+	updateErr             error
+	updated               []store.Workspace
+	deleted               []string
+	auditEvents           []store.AuditEvent
+	listContentResult     []store.ContentItem
+	listContentErr        error
+	insertContentErr      error
+	insertedContent       []store.ContentItem
+	contentItemsByID      map[string]store.ContentItem
+	contentVersionsByItem map[string][]store.ContentVersion
+	savedDrafts           []savedDraftCall
+	saveDraftErr          error
+
 	listIntegrationsResult []store.Integration
 	listIntegrationsErr    error
 	insertIntegrationErr   error
@@ -122,6 +127,82 @@ func (f *fakeWorkspaceStore) InsertContentItem(ctx context.Context, item store.C
 	item.Status = "draft"
 	f.insertedContent = append(f.insertedContent, item)
 	return item, nil
+}
+
+// savedDraftCall records one SaveContentDraft call for assertions.
+type savedDraftCall struct {
+	WorkspaceID string
+	ItemID      string
+	Input       store.ContentDraftInput
+}
+
+func (f *fakeWorkspaceStore) GetContentItemDetail(ctx context.Context, workspaceID, itemID string) (store.ContentItem, *store.ContentVersion, error) {
+	item, ok := f.contentItemsByID[itemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.ContentItem{}, nil, store.ErrNotFound
+	}
+	versions := f.contentVersionsByItem[itemID]
+	if len(versions) == 0 {
+		return item, nil, nil
+	}
+	latest := versions[len(versions)-1]
+	return item, &latest, nil
+}
+
+func (f *fakeWorkspaceStore) SaveContentDraft(ctx context.Context, workspaceID, itemID string, in store.ContentDraftInput) (store.ContentItem, store.ContentVersion, error) {
+	if f.saveDraftErr != nil {
+		return store.ContentItem{}, store.ContentVersion{}, f.saveDraftErr
+	}
+	f.savedDrafts = append(f.savedDrafts, savedDraftCall{WorkspaceID: workspaceID, ItemID: itemID, Input: in})
+
+	item, ok := f.contentItemsByID[itemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.ContentItem{}, store.ContentVersion{}, store.ErrNotFound
+	}
+	if item.Status != "draft" {
+		return store.ContentItem{}, store.ContentVersion{}, store.ErrNotEditable
+	}
+
+	// Apply the planning-record facts like the real store does.
+	if in.Slug != nil {
+		if *in.Slug == "" {
+			item.Slug = nil
+		} else {
+			slug := *in.Slug
+			item.Slug = &slug
+		}
+	}
+	if in.ClearPlannedPublishAt {
+		item.PlannedPublishAt = nil
+	} else if in.PlannedPublishAt != nil {
+		when := *in.PlannedPublishAt
+		item.PlannedPublishAt = &when
+	}
+	item.Title = in.Title
+	item.UpdatedAt = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	f.contentItemsByID[itemID] = item
+
+	version := store.ContentVersion{
+		ID:            "55555555-5555-5555-5555-555555555555",
+		ContentItemID: itemID,
+		VersionNumber: len(f.contentVersionsByItem[itemID]) + 1,
+		Title:         in.Title,
+		Excerpt:       in.Excerpt,
+		Body:          derefString(in.Body),
+		CallToAction:  in.CallToAction,
+		ChannelCopy:   in.ChannelCopy,
+		Metadata:      in.Metadata,
+		CreatedAt:     time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+	}
+	f.contentVersionsByItem[itemID] = append(f.contentVersionsByItem[itemID], version)
+	return item, version, nil
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func (f *fakeWorkspaceStore) ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error) {

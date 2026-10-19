@@ -10,8 +10,44 @@ export interface ContentItem {
   status: ContentStatus;
   title: string;
   slug: string | null;
+  plannedPublishAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ContentVersion {
+  id: string;
+  contentItemId: string;
+  versionNumber: number;
+  title: string;
+  excerpt: string | null;
+  body: string;
+  callToAction?: string | null;
+  channelCopy?: Record<string, string>;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export type DraftState =
+  | { kind: "loading" }
+  | { kind: "missing"; message: string }
+  | { kind: "unavailable"; message: string }
+  | { kind: "loaded"; item: ContentItem; version: ContentVersion | null };
+
+export type SaveDraftResult =
+  | { kind: "saved"; item: ContentItem; version: ContentVersion }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "conflict"; message: string }
+  | { kind: "unavailable"; message: string };
+
+export interface DraftInput {
+  title: string;
+  slug?: string;
+  plannedPublishAt?: string;
+  excerpt?: string;
+  body?: string;
+  callToAction?: string;
+  channelCopy?: Record<string, string>;
 }
 
 export type ContentListState =
@@ -33,6 +69,67 @@ export interface CreateContentInput {
 }
 
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
+
+function clearToUndefined(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** Validates the editable fields of a draft. Same rules as the API. */
+export function validateDraftInput(input: {
+  title?: string;
+  slug?: string;
+  plannedPublishAt?: string;
+  excerpt?: string;
+  body?: string;
+  callToAction?: string;
+  channelCopy?: Record<string, string>;
+}): string[] {
+  const problems: string[] = [];
+
+  const title = (input.title ?? "").trim();
+  if (!title) {
+    problems.push("title cannot be blank");
+  } else if (Array.from(title).length > 200) {
+    problems.push("title is too long (max 200 characters)");
+  }
+
+  const slug = (input.slug ?? "").trim().toLowerCase();
+  if (slug && !SLUG_PATTERN.test(slug)) {
+    problems.push("slug must be lowercase letters, digits, or hyphens");
+  }
+
+  if (input.plannedPublishAt) {
+    const when = new Date(input.plannedPublishAt);
+    if (Number.isNaN(when.getTime())) {
+      problems.push("plannedPublishAt must be a UTC ISO 8601 timestamp");
+    }
+  }
+
+  for (const [name, max] of [
+    ["excerpt", 5000],
+    ["body", 100000],
+    ["callToAction", 5000],
+  ] as const) {
+    const value = (input[name] ?? "").trim();
+    if (Array.from(value).length > max) {
+      problems.push(`${name} is too long (max ${max} characters)`);
+    }
+  }
+
+  const channels = input.channelCopy ?? {};
+  const names = Object.keys(channels);
+  if (names.length > 32) {
+    problems.push("channelCopy has too many channels (max 32)");
+  }
+  for (const name of names) {
+    if (Array.from(channels[name]).length > 5000) {
+      problems.push(`channelCopy for ${name} is too long (max 5000 characters)`);
+    }
+  }
+
+  return problems;
+}
 
 export function validateContentInput(input: {
   kind?: string;
@@ -108,6 +205,9 @@ function parseContentItem(raw: unknown): ContentItem | null {
     typeof c.status !== "string" ||
     typeof c.title !== "string" ||
     (c.slug !== null && typeof c.slug !== "string") ||
+    (c.plannedPublishAt !== null &&
+      c.plannedPublishAt !== undefined &&
+      typeof c.plannedPublishAt !== "string") ||
     typeof c.createdAt !== "string" ||
     typeof c.updatedAt !== "string"
   ) {
@@ -121,8 +221,41 @@ function parseContentItem(raw: unknown): ContentItem | null {
     status: c.status as ContentStatus,
     title: c.title,
     slug: c.slug,
+    plannedPublishAt: (c.plannedPublishAt as string | null | undefined) ?? null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+  };
+}
+
+function parseContentVersion(raw: unknown): ContentVersion | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const v = raw as Record<string, unknown>;
+  if (
+    typeof v.id !== "string" ||
+    typeof v.contentItemId !== "string" ||
+    typeof v.versionNumber !== "number" ||
+    typeof v.title !== "string" ||
+    typeof v.body !== "string" ||
+    (v.excerpt !== null && typeof v.excerpt !== "string") ||
+    typeof v.createdAt !== "string"
+  ) {
+    return null;
+  }
+  const channels = v.channelCopy;
+  if (channels !== undefined && (typeof channels !== "object" || channels === null)) {
+    return null;
+  }
+  return {
+    id: v.id,
+    contentItemId: v.contentItemId,
+    versionNumber: v.versionNumber,
+    title: v.title,
+    excerpt: v.excerpt as string | null,
+    body: v.body,
+    callToAction: (v.callToAction as string | null | undefined) ?? null,
+    channelCopy: channels ? (channels as Record<string, string>) : undefined,
+    metadata: v.metadata as Record<string, unknown> | undefined,
+    createdAt: v.createdAt,
   };
 }
 
@@ -213,6 +346,119 @@ export async function createWorkspaceContent(
       return { kind: "unavailable", message: "Server returned malformed created item." };
     }
     return { kind: "created", item: created };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+function itemUrl(baseUrl: string, workspaceId: string, itemId: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/content/${encodeURIComponent(itemId)}`;
+}
+
+/**
+ * Fetches GET /workspaces/{id}/content/{itemId}: the item plus its newest
+ * brief version (or null before the first save). Never throws.
+ */
+export async function fetchWorkspaceDraft(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<DraftState> {
+  try {
+    const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId), {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 404) {
+      return { kind: "missing", message: "Workspace or content item not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as { version?: unknown };
+    const item = parseContentItem(data);
+    if (!item) {
+      return { kind: "unavailable", message: "Server returned malformed draft detail." };
+    }
+    const version =
+      data.version === null || data.version === undefined
+        ? null
+        : parseContentVersion(data.version);
+    if (data.version !== null && data.version !== undefined && version === null) {
+      return { kind: "unavailable", message: "Server returned malformed draft version." };
+    }
+    return { kind: "loaded", item, version };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+/**
+ * PATCHes the editable draft fields. The API merges them onto the current
+ * item and appends a new immutable version on every save. Never throws.
+ */
+export async function saveWorkspaceDraft(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  input: DraftInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SaveDraftResult> {
+  const problems = validateDraftInput(input);
+  if (problems.length > 0) {
+    return { kind: "rejected", problems };
+  }
+
+  const payload: Record<string, unknown> = {
+    title: input.title.trim(),
+    slug: (input.slug ?? "").trim().toLowerCase(),
+    excerpt: clearToUndefined(input.excerpt) ?? "",
+    body: input.body ?? "",
+    callToAction: clearToUndefined(input.callToAction) ?? "",
+    channelCopy: input.channelCopy ?? {},
+  };
+  const planned = clearToUndefined(input.plannedPublishAt);
+  if (planned) {
+    payload.plannedPublishAt = planned;
+  }
+
+  try {
+    const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "conflict",
+        message: body?.error ?? "The item cannot be saved in its current state.",
+      };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const error = body?.error;
+      if (res.status === 400 && error) {
+        return { kind: "rejected", problems: error.split("; ") };
+      }
+      return {
+        kind: "unavailable",
+        message: error ?? `Failed to save the draft (status ${res.status}).`,
+      };
+    }
+    const data = (await res.json()) as { version?: unknown };
+    const item = parseContentItem(data);
+    const version = parseContentVersion(data.version);
+    if (!item || !version) {
+      return { kind: "unavailable", message: "Server returned malformed saved draft." };
+    }
+    return { kind: "saved", item, version };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };

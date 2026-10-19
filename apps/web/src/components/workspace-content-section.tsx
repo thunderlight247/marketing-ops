@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import {
@@ -268,7 +269,14 @@ export function WorkspaceContentSection({
               <tbody className="divide-y divide-slate-100">
                 {state.items.map((item: ContentItem) => (
                   <tr key={item.id} className="hover:bg-slate-50">
-                    <td className="py-3 pr-4 font-medium text-slate-900">{item.title}</td>
+                    <td className="py-3 pr-4 font-medium text-slate-900">
+                      <Link
+                        href={`/content/${item.workspaceId}/${item.id}`}
+                        className="font-medium text-slate-900 underline-offset-2 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+                      >
+                        {item.title}
+                      </Link>
+                    </td>
                     <td className="py-3 px-4">
                       <span
                         className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${kindBadgeClass(item.kind)}`}

@@ -35,6 +35,7 @@ var (
 	ErrNameRequired      = errors.New("workspace name is required")
 	ErrInvalidCapability = errors.New("unknown capability or status value")
 	ErrInvalidStatus     = errors.New("unknown lifecycle status value")
+	ErrNotEditable       = errors.New("content item is not editable in its current status")
 )
 
 // Store is the repository target. It wraps a pgx pool so the process shares one.

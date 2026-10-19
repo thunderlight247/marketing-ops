@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ---- Content versions --------------------------------------------------------
@@ -15,6 +17,8 @@ type ContentVersion struct {
 	Title         string
 	Excerpt       *string
 	Body          string
+	CallToAction  *string
+	ChannelCopy   map[string]any
 	Metadata      map[string]any
 	CreatedAt     time.Time
 }
@@ -26,18 +30,21 @@ func (s *Store) InsertContentVersion(ctx context.Context, workspaceID string, v 
 	if v.Metadata == nil {
 		v.Metadata = map[string]any{}
 	}
+	if v.ChannelCopy == nil {
+		v.ChannelCopy = map[string]any{}
+	}
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO content_versions (content_item_id, version_number, title, excerpt, body, metadata)
-		 SELECT ci.id, coalesce(max(cv.version_number), 0) + 1, $3, $4, $5, $6
+		`INSERT INTO content_versions (content_item_id, version_number, title, excerpt, body, call_to_action, channel_copy, metadata)
+		 SELECT ci.id, coalesce(max(cv.version_number), 0) + 1, $3, $4, $5, $6, $7, $8
 		 FROM content_items ci
 		 LEFT JOIN content_versions cv ON cv.content_item_id = ci.id
 		 WHERE ci.id = $1 AND ci.workspace_id = $2
 		 GROUP BY ci.id
 		 RETURNING `+contentVersionColumns,
-		v.ContentItemID, workspaceID, v.Title, v.Excerpt, v.Body, v.Metadata)
+		v.ContentItemID, workspaceID, v.Title, v.Excerpt, v.Body, v.CallToAction, v.ChannelCopy, v.Metadata)
 	var out ContentVersion
 	if err := row.Scan(&out.ID, &out.ContentItemID, &out.VersionNumber, &out.Title,
-		&out.Excerpt, &out.Body, &out.Metadata, &out.CreatedAt); err != nil {
+		&out.Excerpt, &out.Body, &out.CallToAction, &out.ChannelCopy, &out.Metadata, &out.CreatedAt); err != nil {
 		return ContentVersion{}, mapNotFound(err)
 	}
 	return out, nil
@@ -47,7 +54,7 @@ func (s *Store) InsertContentVersion(ctx context.Context, workspaceID string, v 
 func (s *Store) ListContentVersionsInWorkspace(ctx context.Context, workspaceID, itemID string) ([]ContentVersion, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT cv.id, cv.content_item_id, cv.version_number, cv.title, cv.excerpt, cv.body,
-			cv.metadata, cv.created_at
+			cv.call_to_action, cv.channel_copy, cv.metadata, cv.created_at
 		 FROM content_versions cv
 		 JOIN content_items ci ON ci.id = cv.content_item_id
 		 WHERE ci.workspace_id = $1 AND cv.content_item_id = $2
@@ -60,7 +67,7 @@ func (s *Store) ListContentVersionsInWorkspace(ctx context.Context, workspaceID,
 	for rows.Next() {
 		var v ContentVersion
 		if err := rows.Scan(&v.ID, &v.ContentItemID, &v.VersionNumber, &v.Title,
-			&v.Excerpt, &v.Body, &v.Metadata, &v.CreatedAt); err != nil {
+			&v.Excerpt, &v.Body, &v.CallToAction, &v.ChannelCopy, &v.Metadata, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -73,19 +80,28 @@ func (s *Store) GetContentVersionInWorkspace(ctx context.Context, workspaceID, v
 	var v ContentVersion
 	err := s.pool.QueryRow(ctx,
 		`SELECT cv.id, cv.content_item_id, cv.version_number, cv.title, cv.excerpt, cv.body,
-			cv.metadata, cv.created_at
+			cv.call_to_action, cv.channel_copy, cv.metadata, cv.created_at
 		 FROM content_versions cv
 		 JOIN content_items ci ON ci.id = cv.content_item_id
 		 WHERE cv.id = $1 AND ci.workspace_id = $2`, versionID, workspaceID,
 	).Scan(&v.ID, &v.ContentItemID, &v.VersionNumber, &v.Title, &v.Excerpt, &v.Body,
-		&v.Metadata, &v.CreatedAt)
+		&v.CallToAction, &v.ChannelCopy, &v.Metadata, &v.CreatedAt)
 	if err != nil {
 		return ContentVersion{}, mapNotFound(err)
 	}
 	return v, nil
 }
 
-const contentVersionColumns = `id, content_item_id, version_number, title, excerpt, body, metadata, created_at`
+const contentVersionColumns = `id, content_item_id, version_number, title, excerpt, body, call_to_action, channel_copy, metadata, created_at`
+
+func scanContentVersion(row pgx.Row) (ContentVersion, error) {
+	var v ContentVersion
+	if err := row.Scan(&v.ID, &v.ContentItemID, &v.VersionNumber, &v.Title,
+		&v.Excerpt, &v.Body, &v.CallToAction, &v.ChannelCopy, &v.Metadata, &v.CreatedAt); err != nil {
+		return ContentVersion{}, err
+	}
+	return v, nil
+}
 
 // ---- Approvals -------------------------------------------------------------
 

@@ -25,6 +25,8 @@ type WorkspaceStore interface {
 	UpsertBrandProfile(ctx context.Context, b store.BrandProfile) (store.BrandProfile, error)
 	ListContentItems(ctx context.Context, workspaceID string) ([]store.ContentItem, error)
 	InsertContentItem(ctx context.Context, item store.ContentItem) (store.ContentItem, error)
+	GetContentItemDetail(ctx context.Context, workspaceID, itemID string) (store.ContentItem, *store.ContentVersion, error)
+	SaveContentDraft(ctx context.Context, workspaceID, itemID string, in store.ContentDraftInput) (store.ContentItem, store.ContentVersion, error)
 	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
 	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)
 	GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error)

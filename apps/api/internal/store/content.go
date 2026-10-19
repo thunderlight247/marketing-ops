@@ -9,17 +9,18 @@ import (
 
 // ContentItem is one piece of planned or published content.
 type ContentItem struct {
-	ID          string
-	WorkspaceID string
-	Kind        string
-	Status      string
-	Title       string
-	Slug        *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID               string
+	WorkspaceID      string
+	Kind             string
+	Status           string
+	Title            string
+	Slug             *string
+	PlannedPublishAt *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
-const contentItemColumns = `id, workspace_id, kind, status, title, slug, created_at, updated_at`
+const contentItemColumns = `id, workspace_id, kind, status, title, slug, planned_publish_at, created_at, updated_at`
 
 // InsertContentItem creates a content item inside one workspace. The item is
 // always a draft; only the approval workflow can change its status.
@@ -69,7 +70,7 @@ func (s *Store) GetContentItemInWorkspace(ctx context.Context, workspaceID, item
 func scanContentItem(row pgx.Row) (ContentItem, error) {
 	var c ContentItem
 	if err := row.Scan(&c.ID, &c.WorkspaceID, &c.Kind, &c.Status, &c.Title,
-		&c.Slug, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.Slug, &c.PlannedPublishAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return ContentItem{}, err
 	}
 	return c, nil

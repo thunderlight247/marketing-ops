@@ -12,26 +12,28 @@ import (
 )
 
 type contentItemJSON struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspaceId"`
-	Kind        string  `json:"kind"`
-	Status      string  `json:"status"`
-	Title       string  `json:"title"`
-	Slug        *string `json:"slug"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
+	ID               string     `json:"id"`
+	WorkspaceID      string     `json:"workspaceId"`
+	Kind             string     `json:"kind"`
+	Status           string     `json:"status"`
+	Title            string     `json:"title"`
+	Slug             *string    `json:"slug"`
+	PlannedPublishAt *time.Time `json:"plannedPublishAt"`
+	CreatedAt        string     `json:"createdAt"`
+	UpdatedAt        string     `json:"updatedAt"`
 }
 
 func toContentItemJSON(c store.ContentItem) contentItemJSON {
 	return contentItemJSON{
-		ID:          c.ID,
-		WorkspaceID: c.WorkspaceID,
-		Kind:        c.Kind,
-		Status:      c.Status,
-		Title:       c.Title,
-		Slug:        c.Slug,
-		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:   c.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:               c.ID,
+		WorkspaceID:      c.WorkspaceID,
+		Kind:             c.Kind,
+		Status:           c.Status,
+		Title:            c.Title,
+		Slug:             c.Slug,
+		PlannedPublishAt: c.PlannedPublishAt,
+		CreatedAt:        c.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:        c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

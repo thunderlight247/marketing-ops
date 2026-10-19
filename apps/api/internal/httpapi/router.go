@@ -46,6 +46,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", deleteWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content", listWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content", createWorkspaceContentHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}", getWorkspaceContentItemHandler(d.Workspaces))
+	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}", updateWorkspaceContentItemHandler(d.Workspaces))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations", listWorkspaceIntegrationsHandler(d.Workspaces))

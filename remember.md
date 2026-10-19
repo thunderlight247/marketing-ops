@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks)\
-**Current milestone:** Milestone 4 --- Content planning and AI-assisted drafting\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 first increment complete (draft brief editing with version history)\
+**Current milestone:** Milestone 4 --- Content planning and AI-assisted drafting (AI provider abstraction and generation remaining)\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -656,8 +656,41 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   - New adapters implement `Adapter` and register via `Registry.Register` without touching core workflow code.
 - Verification checks: `make check` exit 0 (vet, Go tests, Prettier, ESLint, typecheck, 78 Vitest tests); `make web-build` exit 0 (10/10 routes).
 
-**Next action:** Milestone 4 --- Content planning and AI-assisted drafting (content calendar records, briefs,
-AI provider abstraction with server-side keys, and workspace-guided article/post drafting).
+**Milestone 4 first increment (implemented 2026-10-19) --- draft briefs, planning records, and versioned editing:**
+
+- Migration `0004_content_briefs.sql`: `content_versions` gains `call_to_action text` and
+  `channel_copy jsonb NOT NULL DEFAULT '{}'` (CHECK jsonb object); `content_items` gains
+  `planned_publish_at timestamptz` --- the suggested schedule lives on the planning record
+  (calendar input), the brief lives on the immutable version snapshots.
+- Store (`internal/store/drafts.go`): `SaveContentDraft` does the planning-record UPDATE and a
+  new immutable version INSERT in one transaction. A `FOR UPDATE` status check distinguishes
+  `ErrNotFound` (no such item in workspace) from the new `ErrNotEditable` sentinel (item exists
+  but is approved/published --- drafts frozen until the Milestone 5 approval flow). Omitted brief
+  fields carry forward from the newest version; duplicate replacement slugs surface as
+  `ErrSlugTaken`; `InsertContentVersion` normalizes nil map columns to `{}` (the new NOT NULL
+  constraint caught legacy inserts otherwise).
+- API: `GET /api/v1/workspaces/{id}/content/{itemId}` (item + newest version, `version: null`
+  before the first save) and `PATCH /api/v1/workspaces/{id}/content/{itemId}` (merge-on-omit
+  semantics per field: title/slug/plannedPublishAt/excerpt/body/callToAction/channelCopy/
+  metadata; pattern/size/timestamp validation; drafts only; writes `content.updated` audit
+  event with the new version number; 404/400/409/413 mapped deliberately).
+- Web: Draft editor page/strenghtening route `/content/[workspaceId]/[itemId]` with a client
+  `DraftEditor` (title, slug, UTC datetime-local suggested publish time, excerpt, body, CTA,
+  add/remove channel-specific copy rows, save/reset); content list titles link to it; "drafts
+  are never auto-published" reminder shown in the editor. `lib/content.ts` gained
+  `ContentVersion`, `fetchWorkspaceDraft`, `saveWorkspaceDraft`, `validateDraftInput` with typed
+  results; 24 content tests (suite 88/88).
+- Live verification on the real database: create → PATCH (version 1 with excerpt/body/CTA/
+  channelCopy) → detail returns newest → second PATCH `versionNumber=2`; cross-workspace PATCH
+  404; approved item PATCH 409; bad `plannedPublishAt` 400; `content.created`/`content.updated`
+  audit rows verified. Test rows removed; `content_items` count back to 0 demo baseline.
+- Verified: `make check` exit 0 (Go vet + all packages incl. new store/httpapi draft tests;
+  web prettier/eslint/tsc + 88 Vitest). Migration 0004 self-applied by the store tests and
+  confirmed applied by the migrate command.
+
+**Next action:** Milestone 4 second increment --- AI provider abstraction (server-side provider
+interface + config, failure/timeout/malformed-output handling), a generation endpoint that
+stores the draft from workspace context, and the generate UI hook in the content section.
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;
