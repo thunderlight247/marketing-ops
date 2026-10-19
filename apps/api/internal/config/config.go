@@ -39,6 +39,14 @@ type Config struct {
 	HealthTimeout        time.Duration
 	CredentialKey        []byte
 	CredentialKeyVersion int
+
+	// AI drafting. AIProvider selects the adapter: "openrouter" when a key is
+	// configured, or "stub" for offline development. AIModel is the routed
+	// model name (provider-specific, e.g. "anthropic/claude-3.5-haiku").
+	AIProvider      string
+	AIModel         string
+	AIKey           string // secret; never log it
+	GenerateTimeout time.Duration
 }
 
 // Load reads configuration using getenv (usually os.Getenv). All problems are
@@ -51,6 +59,12 @@ func Load(getenv func(string) string) (Config, error) {
 		AllowedOrigins:  []string{"http://localhost:3000"},
 		ShutdownTimeout: 10 * time.Second,
 		HealthTimeout:   2 * time.Second,
+
+		// AI drafting defaults: no provider until a key exists; the stub
+		// keeps local development moving without any network access.
+		AIProvider:      "stub",
+		AIModel:         "stub-v1",
+		GenerateTimeout: 90 * time.Second,
 	}
 
 	var problems []error
@@ -117,6 +131,44 @@ func Load(getenv func(string) string) (Config, error) {
 	} else if cfg.Env != EnvProduction {
 		// Deterministic development fallback so local development and tests work out of the box.
 		cfg.CredentialKey = bytes.Repeat([]byte{0x42}, secretcipher.KeyLength)
+	}
+
+	// AI provider selection and model routing.
+	aiProvider := strings.TrimSpace(strings.ToLower(getenv("AI_PROVIDER")))
+	aiKey := strings.TrimSpace(getenv("OPENROUTER_API_KEY"))
+	aiModel := strings.TrimSpace(getenv("AI_MODEL"))
+	switch {
+	case aiKey != "":
+		cfg.AIProvider = "openrouter"
+		cfg.AIKey = aiKey
+		if aiModel != "" {
+			cfg.AIModel = aiModel
+		}
+	case aiProvider == "stub" || aiProvider == "":
+		cfg.AIProvider = "stub"
+		cfg.AIModel = "stub-v1"
+	case aiProvider == "openrouter":
+		add("OPENROUTER_API_KEY is required when AI_PROVIDER=openrouter")
+		cfg.AIProvider = "openrouter"
+		if aiModel != "" {
+			cfg.AIModel = aiModel
+		}
+	default:
+		add("AI_PROVIDER must be stub or openrouter (openrouter also needs OPENROUTER_API_KEY)")
+	}
+
+	if cfg.Env == EnvProduction && cfg.AIProvider == "stub" {
+		add("a real AI provider is required when APP_ENV=production (set OPENROUTER_API_KEY)")
+	}
+
+	generateTimeoutRaw := strings.TrimSpace(getenv("AI_GENERATE_TIMEOUT"))
+	if generateTimeoutRaw != "" {
+		timeoutSeconds, err := strconv.Atoi(generateTimeoutRaw)
+		if err != nil || timeoutSeconds < 5 || timeoutSeconds > 600 {
+			add("AI_GENERATE_TIMEOUT must be an integer between 5 and 600 seconds")
+		} else {
+			cfg.GenerateTimeout = time.Duration(timeoutSeconds) * time.Second
+		}
 	}
 
 	if cfg.Env == EnvProduction {
@@ -217,5 +269,8 @@ func (c Config) LogValue() slog.Value {
 		slog.String("database_target", c.DatabaseTarget()),
 		slog.Any("allowed_origins", c.AllowedOrigins),
 		slog.Bool("credential_key_configured", len(c.CredentialKey) > 0),
+		slog.String("ai_provider", c.AIProvider),
+		slog.String("ai_model", c.AIModel),
+		slog.Bool("ai_key_configured", c.AIKey != ""),
 	)
 }

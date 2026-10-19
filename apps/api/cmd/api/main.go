@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"marketingops/api/internal/aiprovider"
 	"marketingops/api/internal/config"
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/health"
@@ -60,6 +61,15 @@ func run() error {
 		logger.Warn("DATABASE_URL is not set; running without a database")
 	}
 
+	// AI drafting: real provider when a key is present, offline stub otherwise.
+	var aiGenerator httpapi.ContentGenerator
+	switch cfg.AIProvider {
+	case "openrouter":
+		aiGenerator = aiprovider.OpenRouter{APIKey: cfg.AIKey, Model: cfg.AIModel}
+	default:
+		aiGenerator = aiprovider.StubProvider{}
+	}
+
 	healthService := health.NewService(health.Options{
 		Service:     "marketing-ops-api",
 		Version:     version,
@@ -79,11 +89,15 @@ func run() error {
 			Integrations:         integration.NewDefaultRegistry(),
 			CredentialKey:        cfg.CredentialKey,
 			CredentialKeyVersion: cfg.CredentialKeyVersion,
+			AIGenerator:          aiGenerator,
+			GenerateTimeout:      cfg.GenerateTimeout,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// WriteTimeout must outlast a whole generation call (default 90s),
+		// otherwise long drafts are cut off mid-response.
+		WriteTimeout: cfg.GenerateTimeout + 15*time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	serverErr := make(chan error, 1)

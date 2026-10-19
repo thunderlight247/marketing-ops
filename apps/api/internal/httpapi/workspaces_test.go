@@ -126,6 +126,10 @@ func (f *fakeWorkspaceStore) InsertContentItem(ctx context.Context, item store.C
 	item.UpdatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	item.Status = "draft"
 	f.insertedContent = append(f.insertedContent, item)
+	if f.contentItemsByID == nil {
+		f.contentItemsByID = make(map[string]store.ContentItem)
+	}
+	f.contentItemsByID[item.ID] = item
 	return item, nil
 }
 

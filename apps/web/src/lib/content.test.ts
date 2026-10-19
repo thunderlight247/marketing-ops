@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createWorkspaceContent,
   fetchWorkspaceContent,
+  generateWorkspaceContent,
   fetchWorkspaceDraft,
   formatContentKind,
   formatContentStatus,
@@ -418,3 +419,140 @@ describe("saveWorkspaceDraft", () => {
     }
   });
 });
+
+describe("generateWorkspaceContent", () => {
+  it("rejects a missing topic without calling the API", async () => {
+    const mockFetch = vi.fn();
+    const result = await generateWorkspaceContent(
+      "http://api.local",
+      "ws",
+      { kind: "social_post", topic: "  " },
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("rejected");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("sends the ask and returns the stored draft", async () => {
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(payload.kind).toBe("social_post");
+      expect(payload.topic).toBe("Morning smoothie tips");
+      expect(payload.channel).toBe("instagram");
+      expect(payload.instructions).toBe("Keep casual");
+      return {
+        status: 201,
+        ok: true,
+        json: async () => ({
+          id: "gen-1",
+          workspaceId: "ws",
+          kind: "social_post",
+          status: "draft",
+          title: "Smoothie tips",
+          slug: "smoothie-tips",
+          plannedPublishAt: null,
+          createdAt: "2026-04-01T00:00:00Z",
+          updatedAt: "2026-04-01T00:00:00Z",
+          provider: "stub",
+          model: "stub-v1",
+          version: {
+            id: "v1",
+            contentItemId: "gen-1",
+            versionNumber: 1,
+            title: "Smoothie tips",
+            body: "Generated body",
+            excerpt: null,
+            createdAt: "2026-04-01T00:00:00Z",
+          },
+        }),
+      };
+    });
+    const result = await generateWorkspaceContent(
+      "http://api.local",
+      "ws",
+      {
+        kind: "social_post",
+        topic: "Morning smoothie tips",
+        channel: "Instagram",
+        instructions: "Keep casual",
+      },
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("created");
+    if (result.kind === "created") {
+      expect(result.item.status).toBe("draft");
+      expect(result.version.versionNumber).toBe(1);
+      expect(result.provider).toBe("stub");
+    }
+  });
+
+  it("only sends channel for social posts", async () => {
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(payload.channel).toBeUndefined();
+      return { status: 201, ok: true, json: async () => generatedItemFixture };
+    });
+    await generateWorkspaceContent(
+      "http://api.local",
+      "ws",
+      { kind: "blog_article", topic: "Anything" },
+      mockFetch as unknown as typeof fetch,
+    );
+  });
+
+  it("maps a provider failure (502) to a failed result with a safe message", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 502,
+      ok: false,
+      json: async () => ({ error: "the model did not answer in time" }),
+    });
+    const result = await generateWorkspaceContent(
+      "http://api.local",
+      "ws",
+      { kind: "blog_article", topic: "x" },
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.message).toBe("the model did not answer in time");
+    }
+  });
+
+  it("maps a slug conflict to a conflict result", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({ error: "the generated slug already exists in this workspace" }),
+    });
+    const result = await generateWorkspaceContent(
+      "http://api.local",
+      "ws",
+      { kind: "blog_article", topic: "x" },
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("conflict");
+  });
+});
+
+const generatedItemFixture = {
+  id: "gen-2",
+  workspaceId: "ws",
+  kind: "blog_article" as const,
+  status: "draft" as const,
+  title: "New draft",
+  slug: null,
+  plannedPublishAt: null,
+  createdAt: "2026-04-01T00:00:00Z",
+  updatedAt: "2026-04-01T00:00:00Z",
+  provider: "stub",
+  model: "stub-v1",
+  version: {
+    id: "v1",
+    contentItemId: "gen-2",
+    versionNumber: 1,
+    title: "New draft",
+    body: "Body",
+    excerpt: null,
+    createdAt: "2026-04-01T00:00:00Z",
+  },
+};

@@ -68,6 +68,22 @@ export interface CreateContentInput {
   slug?: string;
 }
 
+export type GenerateContentResult =
+  | { kind: "created"; item: ContentItem; version: ContentVersion; provider: string; model: string }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "conflict"; message: string }
+  | { kind: "failed"; message: string }
+  | { kind: "unavailable"; message: string };
+
+export interface GenerateContentInput {
+  kind: ContentKind;
+  topic: string;
+  channel?: string;
+  instructions?: string;
+}
+
+export const GENERATE_FORM_LIMITS = { topic: 2000, instructions: 2000 } as const;
+
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
 
 function clearToUndefined(value: string | undefined): string | undefined {
@@ -459,6 +475,89 @@ export async function saveWorkspaceDraft(
       return { kind: "unavailable", message: "Server returned malformed saved draft." };
     }
     return { kind: "saved", item, version };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+/**
+ * POSTs the generation ask. The server asks a model for a structured draft
+ * and stores it as a draft content item with a version; it never publishes.
+ * Provider failures (timeout, malformed output, refused requests) surface as
+ * a `failed` result with a safe message. Never throws.
+ */
+export async function generateWorkspaceContent(
+  baseUrl: string,
+  workspaceId: string,
+  input: GenerateContentInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<GenerateContentResult> {
+  const problems: string[] = [];
+  const topic = (input.topic ?? "").trim();
+  const instructions = (input.instructions ?? "").trim();
+  if (input.kind !== "blog_article" && input.kind !== "social_post" && input.kind !== "snippet") {
+    problems.push("kind must be blog_article, social_post, or snippet");
+  }
+  if (!topic) problems.push("topic is required");
+  if (Array.from(topic).length > 2000) problems.push("topic is too long (max 2000 characters)");
+  if (Array.from(instructions).length > 2000) {
+    problems.push("instructions are too long (max 2000 characters)");
+  }
+  if (problems.length > 0) return { kind: "rejected", problems };
+
+  const payload = {
+    kind: input.kind,
+    topic,
+    ...(input.kind === "social_post" && (input.channel ?? "").trim()
+      ? { channel: (input.channel ?? "").trim().toLowerCase() }
+      : {}),
+    ...(instructions ? { instructions } : {}),
+  };
+
+  const url = `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/content/generate`;
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 400) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (body?.error) return { kind: "rejected", problems: body.error.split("; ") };
+      return { kind: "unavailable", message: "The server refused the generation ask." };
+    }
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "conflict",
+        message: body?.error ?? "The generated slug already exists in this workspace.",
+      };
+    }
+    if (res.status === 502) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { kind: "failed", message: body?.error ?? "Generation failed." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `Failed to generate content (status ${res.status}).`,
+      };
+    }
+    const data = (await res.json()) as { version?: unknown; provider?: unknown; model?: unknown };
+    const item = parseContentItem(data);
+    const version = parseContentVersion(data.version);
+    if (!item || !version) {
+      return { kind: "unavailable", message: "Server returned a malformed generated draft." };
+    }
+    return {
+      kind: "created",
+      item,
+      version,
+      provider: typeof data.provider === "string" ? data.provider : "",
+      model: typeof data.model === "string" ? data.model : "",
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };

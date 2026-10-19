@@ -8,11 +8,13 @@ import {
   fetchWorkspaceContent,
   formatContentKind,
   formatContentStatus,
+  generateWorkspaceContent,
   validateContentInput,
   type ContentItem,
   type ContentKind,
   type ContentListState,
   type CreateContentResult,
+  type GenerateContentResult,
 } from "@/lib/content";
 
 const inputClasses =
@@ -41,6 +43,16 @@ export function WorkspaceContentSection({
 }>) {
   const [state, setState] = useState<ContentListState>({ kind: "loading" });
   const [showForm, setShowForm] = useState(false);
+  const [showGenerate, setShowGenerate] = useState(false);
+
+  // AI generation form fields
+  const [aiKind, setAiKind] = useState<ContentKind>("blog_article");
+  const [aiTopic, setAiTopic] = useState("");
+  const [aiChannel, setAiChannel] = useState("");
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [aiProblems, setAiProblems] = useState<string[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   // Form fields
   const [title, setTitle] = useState("");
@@ -97,6 +109,38 @@ export function WorkspaceContentSection({
     }
   }
 
+  async function handleGenerate(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setAiError(null);
+    setAiProblems([]);
+    setGenerating(true);
+
+    const result: GenerateContentResult = await generateWorkspaceContent(apiBaseUrl, workspaceId, {
+      kind: aiKind,
+      topic: aiTopic,
+      channel: aiChannel || undefined,
+      instructions: aiInstructions || undefined,
+    });
+
+    setGenerating(false);
+    if (result.kind === "created") {
+      setAiTopic("");
+      setAiChannel("");
+      setAiInstructions("");
+      setAiKind("blog_article");
+      setShowGenerate(false);
+      void load();
+    } else if (result.kind === "rejected") {
+      setAiProblems(result.problems);
+    } else if (result.kind === "conflict") {
+      setAiError(result.message);
+    } else if (result.kind === "failed") {
+      setAiError(`${result.message} The nothing-to-publish rule still holds: nothing was stored.`);
+    } else {
+      setAiError(result.message);
+    }
+  }
+
   return (
     <section
       aria-labelledby="workspace-content-heading"
@@ -111,7 +155,14 @@ export function WorkspaceContentSection({
             Drafts and planning for this workspace. Content must be approved before publishing.
           </p>
         </div>
-        <div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setShowGenerate((prev) => !prev)}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+          >
+            {showGenerate ? "Cancel" : "✨ Draft with AI"}
+          </button>
           <button
             type="button"
             onClick={() => setShowForm((prev) => !prev)}
@@ -121,6 +172,107 @@ export function WorkspaceContentSection({
           </button>
         </div>
       </div>
+
+      {showGenerate && (
+        <form
+          onSubmit={(e) => void handleGenerate(e)}
+          className="mt-4 rounded-md border border-teal-200 bg-teal-50/50 p-4"
+        >
+          <h3 className="text-sm font-semibold text-slate-800">Draft with AI</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            The model drafts in this workspace&apos;s voice and the result is stored as a draft. It
+            is never queued or published automatically — you approve everything later.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <div>
+              <label htmlFor="ai-kind" className={labelClasses}>
+                Kind
+              </label>
+              <select
+                id="ai-kind"
+                value={aiKind}
+                onChange={(e) => setAiKind(e.target.value as ContentKind)}
+                className={`mt-1 ${inputClasses}`}
+              >
+                <option value="blog_article">Blog article</option>
+                <option value="social_post">Social post</option>
+                <option value="snippet">Snippet</option>
+              </select>
+            </div>
+            {aiKind === "social_post" && (
+              <div>
+                <label htmlFor="ai-channel" className={labelClasses}>
+                  Channel <span className="font-normal text-slate-500">(optional)</span>
+                </label>
+                <input
+                  id="ai-channel"
+                  type="text"
+                  value={aiChannel}
+                  onChange={(e) => setAiChannel(e.target.value)}
+                  placeholder="e.g. instagram"
+                  className={`mt-1 ${inputClasses}`}
+                />
+              </div>
+            )}
+          </div>
+          <div className="mt-3">
+            <label htmlFor="ai-topic" className={labelClasses}>
+              Topic / brief
+            </label>
+            <textarea
+              id="ai-topic"
+              rows={3}
+              value={aiTopic}
+              onChange={(e) => setAiTopic(e.target.value)}
+              placeholder="e.g. 5 seasonal Ghanaian dishes and their health benefits"
+              required
+              className={`mt-1 ${inputClasses}`}
+            />
+          </div>
+          <div className="mt-3">
+            <label htmlFor="ai-instructions" className={labelClasses}>
+              Extra instructions <span className="font-normal text-slate-500">(optional)</span>
+            </label>
+            <input
+              id="ai-instructions"
+              type="text"
+              value={aiInstructions}
+              onChange={(e) => setAiInstructions(e.target.value)}
+              placeholder="e.g. keep it under 800 words, end with a soft CTA"
+              className={`mt-1 ${inputClasses}`}
+            />
+          </div>
+
+          {aiProblems.length > 0 && (
+            <ul role="alert" className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">
+              {aiProblems.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          )}
+          {aiError && (
+            <p
+              role="alert"
+              className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+            >
+              {aiError}
+            </p>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <button type="submit" disabled={generating} className={PRIMARY_BUTTON}>
+              {generating ? "Drafting… (can take up to 90 seconds)" : "Generate draft"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowGenerate(false)}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
 
       {showForm && (
         <form

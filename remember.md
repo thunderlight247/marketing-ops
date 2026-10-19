@@ -1,7 +1,7 @@
 # Marketing Operations Platform --- Project Memory and Milestones
 
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 first increment complete (draft brief editing with version history)\
-**Current milestone:** Milestone 4 --- Content planning and AI-assisted drafting (AI provider abstraction and generation remaining)\
+**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 complete (drafting + versioned editing + AI provider abstraction and generation; OpenRouter adapter active once the operator sets OPENROUTER_API_KEY)\
+**Current milestone:** Milestone 5 --- Review, versioning, and approval workflow\
 **Project type:** Private internal tool for managing marketing work
 across client businesses\
 **Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
@@ -688,9 +688,53 @@ unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL
   web prettier/eslint/tsc + 88 Vitest). Migration 0004 self-applied by the store tests and
   confirmed applied by the migrate command.
 
-**Next action:** Milestone 4 second increment --- AI provider abstraction (server-side provider
-interface + config, failure/timeout/malformed-output handling), a generation endpoint that
-stores the draft from workspace context, and the generate UI hook in the content section.
+**Milestone 4 second increment (implemented 2026-10-19) --- AI provider abstraction and guided generation:**
+
+- `internal/aiprovider`: small `Provider` interface (`Name`, `Generate`) with a structured
+  `GenerateRequest` (kind/topic/channel/instructions + non-secret `WorkspaceContext` assembled
+  from the workspace and its brand profile) and `GenerateResponse`. Failures are classified
+  `ProviderError` kinds: timeout / network / provider / malformed / empty / not_ready /
+  unsupported --- every message is safe text with no keys or provider payloads.
+  - `OpenRouter` adapter: OpenAI-compatible `POST /chat/completions` against
+    `https://openrouter.ai/api/v1` (`X-Title` attribution header; static). The prompt demands a
+    single JSON object; replies are parsed leniently (code-fence/outermost-object extraction),
+    keys normalized (slug slugified, channel keys lowercased), and only a sha256 hash of the raw
+    reply is kept in metadata for debugging. Non-2xx replies never echo request keys.
+  - `StubProvider`: deterministic offline drafts labeled "[Stub]" so development and tests run
+    with no network and no key.
+  - Unit tests cover stub behavior and the OpenRouter parse/malformed/empty/401/timeout/network
+    classification paths (including key-fragment redaction in error text).
+- Config: `OPENROUTER_API_KEY` selects `openrouter` (with optional `AI_MODEL`), otherwise the
+  stub; `AI_GENERATE_TIMEOUT` seconds (default 90, allowed 5-600); production refuses the stub
+  and requires a key. LogValue reports `ai_provider`/`ai_model`/`ai_key_configured` only --- the
+  key is never logged. `.env.example` documents all three.
+- API: `POST /api/v1/workspaces/{id}/content/generate` (router Deps gains `AIGenerator` and
+  `GenerateTimeout`; nil generator answers 501). The handler enforces the server-side timeout,
+  assembles the workspace/brand prompt context, and maps failures to 502 with the provider's
+  safe message. The generated draft is stored FIRST as a draft item plus version 1 (via
+  `InsertContentItem` + `SaveContentDraft`) with metadata `source=ai`, provider, model, and
+  `topic_length` (scalar-only), then audited as `content.generated`. Nothing is queued or
+  published automatically; slug conflicts surface as 409 asking for a topic reword.
+- `cmd/api` builds the configured provider; the HTTP `WriteTimeout` now outlasts the generation
+  timeout so long drafts are not cut off mid-response.
+- Web: `generateWorkspaceContent` lib helper with typed results (created/rejected/conflict/
+  failed/unavailable; only social_post sends a channel) plus a "✨ Draft with AI" form in the
+  content section (kind, topic, per-channel field for posts, extra instructions, generation
+  pending state noting the up-to-90-second wait). Vitest suite now 93/93.
+- Live verification (stub path): generate returned 201 with a `[Stub]` marked draft whose CTA
+  came from the demo workspace's brand profile (prompt context flows through), duplicate topic
+  409, bad kind 400, unknown workspace 404, and `content.generated` audit row present. Test rows
+  removed afterwards; `content_items` count back to the 0 demo baseline.
+- Note: one live round hit 405 because the API process was started from a stale build before the
+  route registration; restarting from a fresh binary fixed it (no code problem).
+- Verified: `make check` exit 0 (all Go packages incl. aiprovider/config/httpapi tests; web
+  prettier/eslint/tsc + 93 Vitest tests).
+- **To enable real generation:** put `OPENROUTER_API_KEY=<key>` in `apps/api/.env` (optionally
+  `AI_MODEL=...`); with a key present the OpenRouter adapter activates automatically and the
+  stub is bypassed.
+
+**Next action:** Milestone 5 --- review, versioning, and approval workflow (lifecycle transitions,
+approval records, approval invalidation on edit, preview before approval, audit events).
 
 Local-environment note carried forward: port 8080 on this machine is occupied by an
 unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;

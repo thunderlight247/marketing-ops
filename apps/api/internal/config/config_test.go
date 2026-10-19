@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -36,6 +37,7 @@ func TestLoadValidValues(t *testing.T) {
 		"DATABASE_URL":              "postgres://app:pw@db.internal:5432/marketing?sslmode=disable",
 		"CORS_ALLOWED_ORIGINS":      "https://ops.example.com/, https://admin.example.com",
 		"CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32),
+		"OPENROUTER_API_KEY":        "router-key-1",
 	}))
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -49,6 +51,54 @@ func TestLoadValidValues(t *testing.T) {
 	}
 	if cfg.Addr() != ":9000" {
 		t.Errorf("Addr() = %q", cfg.Addr())
+	}
+	if cfg.AIProvider != "openrouter" || cfg.AIKey != "router-key-1" {
+		t.Errorf("production must use the configured real provider: %+v", cfg)
+	}
+	if cfg.GenerateTimeout != 90*time.Second {
+		t.Errorf("GenerateTimeout default not applied: %v", cfg.GenerateTimeout)
+	}
+}
+
+func TestLoadAIDefaults(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatalf("Load with empty env returned error: %v", err)
+	}
+	if cfg.AIProvider != "stub" || cfg.AIKey != "" {
+		t.Errorf("development default should be the offline stub: %+v", cfg)
+	}
+
+	// An explicit stub without a key is fine outside production.
+	cfg, err = Load(env(map[string]string{"AI_PROVIDER": "stub"}))
+	if err != nil {
+		t.Fatalf("explicit stub rejected: %v", err)
+	}
+	if cfg.AIProvider != "stub" || cfg.AIModel != "stub-v1" {
+		t.Errorf("unexpected stub config: %+v", cfg)
+	}
+
+	// AI_PROVIDER=openrouter without a key is a config error.
+	_, err = Load(env(map[string]string{"AI_PROVIDER": "openrouter"}))
+	if err == nil || !strings.Contains(err.Error(), "OPENROUTER_API_KEY is required") {
+		t.Fatalf("expected a key requirement error, got %v", err)
+	}
+
+	// An unknown AI_PROVIDER is refused.
+	_, err = Load(env(map[string]string{"AI_PROVIDER": "magic"}))
+	if err == nil || !strings.Contains(err.Error(), "AI_PROVIDER must be") {
+		t.Fatalf("expected an unknown provider error, got %v", err)
+	}
+
+	// Production rejects the stub provider.
+	_, err = Load(env(map[string]string{
+		"APP_ENV":                   "production",
+		"DATABASE_URL":              "postgres://u:p@localhost:5432/db",
+		"CORS_ALLOWED_ORIGINS":      "https://ops.example.com",
+		"CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("cd", 32),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "real AI provider is required") {
+		t.Fatalf("expected the production AI error, got %v", err)
 	}
 }
 
