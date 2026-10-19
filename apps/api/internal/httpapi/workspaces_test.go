@@ -44,6 +44,9 @@ type fakeWorkspaceStore struct {
 	decisions             []decisionCall
 	fakeOperatorID        string
 	ensureOperatorCalls   int
+	jobsByKey             map[string]store.PublishingJob
+	insertedJobs          []store.PublishingJob
+	recordedArtifacts     []recordedArtifact
 
 	listIntegrationsResult []store.Integration
 	listIntegrationsErr    error
@@ -299,19 +302,109 @@ func (f *fakeWorkspaceStore) TransitionContentItemStatus(ctx context.Context, wo
 	return item, nil
 }
 
+func (f *fakeWorkspaceStore) InsertPublishingJob(ctx context.Context, workspaceID string, j store.PublishingJob) (store.PublishingJob, error) {
+	// Mirror the store's guards: the version must exist for the item in this
+	// workspace, carry an approved decision, and be the newest — then the job
+	// is keyed by idempotency_key.
+	item, ok := f.contentItemsByID[j.ContentItemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.PublishingJob{}, store.ErrNotFound
+	}
+	version, err := findVersion(f.contentVersionsByItem[j.ContentItemID], j.ContentVersionID)
+	if err != nil {
+		return store.PublishingJob{}, err
+	}
+	versions := f.contentVersionsByItem[j.ContentItemID]
+	if versions[len(versions)-1].ID != version.ID {
+		return store.PublishingJob{}, store.ErrNotApproved
+	}
+	decided := false
+	for _, past := range f.decisionsByItem[j.ContentItemID] {
+		if past.ContentVersionID == version.ID && past.Decision == "approved" {
+			decided = true
+			break
+		}
+	}
+	if !decided {
+		return store.PublishingJob{}, store.ErrNotApproved
+	}
+	if _, seen := f.jobsByKey[j.IdempotencyKey]; seen {
+		return store.PublishingJob{}, store.ErrSlugTaken
+	}
+	j.ID = "88888888-8888-8888-8888-888888888888"
+	j.Status = "pending"
+	if f.jobsByKey == nil {
+		f.jobsByKey = make(map[string]store.PublishingJob)
+	}
+	f.jobsByKey[j.IdempotencyKey] = j
+	f.insertedJobs = append(f.insertedJobs, j)
+	return j, nil
+}
+
+func findVersion(list []store.ContentVersion, id string) (store.ContentVersion, error) {
+	for _, version := range list {
+		if version.ID == id {
+			return version, nil
+		}
+	}
+	return store.ContentVersion{}, store.ErrNotApproved
+}
+
+func (f *fakeWorkspaceStore) GetPublishingJobByIdempotencyKey(ctx context.Context, workspaceID, key string) (store.PublishingJob, error) {
+	job, ok := f.jobsByKey[key]
+	if !ok {
+		return store.PublishingJob{}, store.ErrNotFound
+	}
+	return job, nil
+}
+
+func (f *fakeWorkspaceStore) RecordPublishedArtifact(ctx context.Context, jobID, integrationID string, externalID, externalURL *string) error {
+	f.recordedArtifacts = append(f.recordedArtifacts, recordedArtifact{jobID: jobID, integrationID: integrationID, externalID: derefString(externalID)})
+	return nil
+}
+
+type recordedArtifact struct {
+	jobID         string
+	integrationID string
+	externalID    string
+}
+
+func (f *fakeWorkspaceStore) SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error {
+	for key, job := range f.jobsByKey {
+		if job.ID != jobID {
+			continue
+		}
+		job.Status = status
+		if lastErr != "" {
+			errText := lastErr
+			job.LastError = &errText
+		}
+		f.jobsByKey[key] = job
+		return nil
+	}
+	return store.ErrNotFound
+}
+
+func (f *fakeWorkspaceStore) MarkContentPublished(ctx context.Context, workspaceID, itemID string) (store.ContentItem, error) {
+	item, ok := f.contentItemsByID[itemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return store.ContentItem{}, store.ErrNotFound
+	}
+	if item.Status != "approved" {
+		return store.ContentItem{}, store.ErrInvalidStatus
+	}
+	item.Status = "published"
+	item.UpdatedAt = time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)
+	f.contentItemsByID[itemID] = item
+	return item, nil
+}
+
 func (f *fakeWorkspaceStore) EnsureOperator(ctx context.Context) (string, error) {
 	f.ensureOperatorCalls++
 	if f.fakeOperatorID == "" {
 		f.fakeOperatorID = "77777777-7777-7777-7777-777777777777"
 	}
 	return f.fakeOperatorID, nil
-}
-
-func derefString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 func (f *fakeWorkspaceStore) ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error) {

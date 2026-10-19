@@ -32,6 +32,11 @@ type WorkspaceStore interface {
 	ListContentVersionsInWorkspace(ctx context.Context, workspaceID, itemID string) ([]store.ContentVersion, error)
 	TransitionContentItemStatus(ctx context.Context, workspaceID, itemID, toStatus string) (store.ContentItem, error)
 	EnsureOperator(ctx context.Context) (string, error)
+	InsertPublishingJob(ctx context.Context, workspaceID string, j store.PublishingJob) (store.PublishingJob, error)
+	GetPublishingJobByIdempotencyKey(ctx context.Context, workspaceID, key string) (store.PublishingJob, error)
+	SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error
+	RecordPublishedArtifact(ctx context.Context, jobID, integrationID string, externalID, externalURL *string) error
+	MarkContentPublished(ctx context.Context, workspaceID, itemID string) (store.ContentItem, error)
 	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
 	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)
 	GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error)

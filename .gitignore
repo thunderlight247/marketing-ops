@@ -1,24 +1,67 @@
-# Secrets and local configuration. Only *.example files are committed.
+# Environment and local configuration (only example templates are committed)
 .env
 .env.*
+.env.local
 !.env.example
+!.env.*.example
 *.pem
 *.key
+*.cert
+*.crt
 
-# Node / Next.js
+# Node.js & package managers
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Next.js & frontend build artifacts
 .next/
 out/
-coverage/
+dist/
+build/
 *.tsbuildinfo
+.turbo/
+.eslintcache
+.stylelintcache
 
-# Go
+# Go build artifacts & binaries
+bin/
 apps/api/bin/
-*.test
-*.out
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Editors and OS
+# Testing & coverage
+coverage/
+*.lcov
+*.nyc_output/
+*.out
+*.test
+*.prof
+
+# Operating system files
 .DS_Store
+.DS_Store?
+._*
+[Tt]humbs.db
+ehthumbs.db
+
+# IDEs & editors
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+*.bak
+
+# Logs
 *.log
+
+# Tooling & assistant metadata
+.freebuff/
+.codebuff/

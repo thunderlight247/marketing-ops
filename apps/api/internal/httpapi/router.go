@@ -32,6 +32,11 @@ type Deps struct {
 	// nil makes the decision route answer 501 alongside the store check.
 	Operators OperatorProvider
 
+	// SanityOpsBase overrides the Sanity API host (tests only) and HTTPClient
+	// customizes the transport used by Sanity operations.
+	SanityOpsBase string
+	HTTPClient    *http.Client
+
 	// AIGenerator drafts content; nil makes the generate route answer 501.
 	AIGenerator     ContentGenerator
 	GenerateTimeout time.Duration
@@ -59,6 +64,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/history", getWorkspaceContentHistoryHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/decision", decideWorkspaceContentHandler(d.Workspaces, d.Operators))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/status", transitionWorkspaceContentHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/publish", publishWorkspaceContentHandler(d.Workspaces, d.CredentialKey, d.SanityOpsBase, d.HTTPClient))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/generate", generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))

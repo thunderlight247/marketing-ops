@@ -9,6 +9,7 @@ import {
   formatContentKind,
   formatContentStatus,
   saveWorkspaceDraft,
+  pushToSanity,
   transitionContentStatus,
   validateContentInput,
   validateDraftInput,
@@ -753,5 +754,147 @@ describe("transitionContentStatus", () => {
       mockFetch as unknown as typeof fetch,
     );
     expect(result.kind).toBe("conflict");
+  });
+});
+
+describe("pushToSanity", () => {
+  const wsId = "ws-123";
+  const itemId = "ci-9";
+
+  it("rejects invalid input without a network call", async () => {
+    const mockFetch = vi.fn();
+    for (const [integrationId, mode] of [
+      ["", "draft"],
+      ["   ", "publish"],
+      ["int-1", "live"],
+    ] as const) {
+      const result = await pushToSanity(
+        "http://api.local",
+        wsId,
+        itemId,
+        integrationId,
+        mode as "draft" | "publish",
+        mockFetch as unknown as typeof fetch,
+      );
+      expect(result.kind).toBe("rejected");
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("posts to the publish endpoint with the integration and mode", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 201,
+      ok: true,
+      json: async () => ({
+        id: "ci-9",
+        workspaceId: wsId,
+        kind: "blog_article",
+        status: "draft",
+        title: "Pilot post",
+        slug: "pilot-post",
+        createdAt: "2026-03-01T00:00:00Z",
+        updatedAt: "2026-03-01T00:00:00Z",
+        mode: "draft",
+        draftId: "drafts.mktops-ci-9-v1",
+        transactionId: "tx-1",
+        message: "ok",
+      }),
+    });
+    const result = await pushToSanity(
+      "http://api.local",
+      wsId,
+      itemId,
+      "int-1",
+      "draft",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://api.local/api/v1/workspaces/ws-123/content/ci-9/publish",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({ integrationId: "int-1", mode: "draft" });
+    expect(result.kind).toBe("pushed");
+    if (result.kind === "pushed") {
+      expect(result.success.draftId).toBe("drafts.mktops-ci-9-v1");
+      expect(result.success.publicUrl).toBeNull();
+    }
+  });
+
+  it("surfaces Sanity-side 502 failures as failed", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 502,
+      ok: false,
+      json: async () => ({ error: "the Sanity API refused the request (HTTP 403)" }),
+    });
+    const result = await pushToSanity(
+      "http://api.local",
+      wsId,
+      itemId,
+      "int-1",
+      "publish",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.message).toContain("403");
+    }
+  });
+
+  it("surfaces the duplicate-publish conflict as conflict", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({ error: "this exact version was already published" }),
+    });
+    const result = await pushToSanity(
+      "http://api.local",
+      wsId,
+      itemId,
+      "int-1",
+      "publish",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("conflict");
+    expect(result.kind === "conflict" && result.message).toContain("already published");
+    void result;
+  });
+
+  it("parses the published reply with a verified URL", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({
+        id: "ci-9",
+        workspaceId: wsId,
+        kind: "blog_article",
+        status: "published",
+        title: "Pilot post",
+        slug: "pilot-post",
+        createdAt: "2026-03-01T00:00:00Z",
+        updatedAt: "2026-03-01T00:00:00Z",
+        mode: "publish",
+        jobId: "job-1",
+        transactionId: "tx-2",
+        publicUrl: "https://nutritionguide.xyz/posts/pilot-post",
+        urlVerified: true,
+        message: "Published",
+      }),
+    });
+    const result = await pushToSanity(
+      "http://api.local",
+      wsId,
+      itemId,
+      "int-1",
+      "publish",
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.kind).toBe("pushed");
+    if (result.kind === "pushed") {
+      expect(result.success.item.status).toBe("published");
+      expect(result.success.publicUrl).toBe("https://nutritionguide.xyz/posts/pilot-post");
+      expect(result.success.urlVerified).toBe(true);
+      expect(result.success.jobId).toBe("job-1");
+    }
   });
 });

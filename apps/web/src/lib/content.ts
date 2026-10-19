@@ -782,3 +782,111 @@ export async function transitionContentStatus(
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
   }
 }
+
+/** Sanity publish modes. */
+export type SanityPublishMode = "draft" | "publish";
+
+export interface SanityPublishSuccess {
+  mode: SanityPublishMode;
+  item: ContentItem;
+  jobId: string | null;
+  draftId: string | null;
+  transactionId: string | null;
+  publicUrl: string | null;
+  urlVerified: boolean | null;
+  message: string;
+}
+
+export type SanityPublishResult =
+  | { kind: "pushed"; success: SanityPublishSuccess }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "conflict"; message: string }
+  | { kind: "failed"; message: string } // Sanity-side write failure (502)
+  | { kind: "unavailable"; message: string };
+
+/**
+ * POSTs /content/{itemId}/publish for one Sanity integration.
+ * mode "draft" writes (or replaces) the invisible Sanity draft — no approval
+ * needed. mode "publish" pushes the approved version live; the server enforces
+ * the approval gate and records the job/artifact. Never throws.
+ */
+export async function pushToSanity(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  integrationId: string,
+  mode: SanityPublishMode,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SanityPublishResult> {
+  const problems: string[] = [];
+  const trimmedIntegration = (integrationId ?? "").trim();
+  if (!trimmedIntegration) problems.push("integrationId is required");
+  if (mode !== "draft" && mode !== "publish") {
+    problems.push("mode must be draft or publish");
+  }
+  if (problems.length > 0) return { kind: "rejected", problems };
+
+  const url = itemUrl(baseUrl, workspaceId, itemId) + "/publish";
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ integrationId: trimmedIntegration, mode }),
+    });
+    if (res.status === 400) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "rejected",
+        problems: body?.error ? body.error.split("; ") : ["The request was refused."],
+      };
+    }
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "conflict",
+        message: body?.error ?? "This publishing step is not allowed right now.",
+      };
+    }
+    if (res.status === 502) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { kind: "failed", message: body?.error ?? "The Sanity write failed." };
+    }
+    if (res.status === 404) {
+      return {
+        kind: "unavailable",
+        message: "Workspace, content item, or integration not found.",
+      };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    const item = parseContentItem(data);
+    if (!item) {
+      return { kind: "unavailable", message: "Server returned a malformed publish reply." };
+    }
+    return {
+      kind: "pushed",
+      success: {
+        mode: data.mode === "publish" ? "publish" : "draft",
+        item,
+        jobId: typeof data.jobId === "string" ? data.jobId : null,
+        draftId: typeof data.draftId === "string" ? data.draftId : null,
+        transactionId: typeof data.transactionId === "string" ? data.transactionId : null,
+        publicUrl:
+          typeof data.publicUrl === "string" || data.publicUrl === null
+            ? ((data.publicUrl as string | null) ?? null)
+            : null,
+        urlVerified: typeof data.urlVerified === "boolean" ? data.urlVerified : null,
+        message: typeof data.message === "string" ? data.message : "",
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}

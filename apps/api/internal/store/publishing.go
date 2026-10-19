@@ -86,6 +86,37 @@ func (s *Store) InsertPublishingJob(ctx context.Context, workspaceID string, j P
 	return out, err
 }
 
+// SetPublishingJobStatus records a lifecycle move of one publishing job
+// (pending → running → succeeded/failed/cancelled), incrementing attempts and
+// storing a safe diagnostic. Scoped through the job's item's workspace.
+func (s *Store) SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE publishing_jobs pj
+		 SET status = $3, last_error = NULLIF($4, ''), attempts = attempts + 1, updated_at = now()
+		 FROM content_items ci
+		 WHERE pj.content_item_id = ci.id AND pj.id = $1 AND ci.workspace_id = $2`,
+		jobID, workspaceID, status, lastErr)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkContentPublished moves an approved item to published. Only the
+// publishing workflow calls this after a real adapter write succeeded, which
+// is why it is not part of the general transition surface.
+func (s *Store) MarkContentPublished(ctx context.Context, workspaceID, itemID string) (ContentItem, error) {
+	out, err := scanContentItem(s.pool.QueryRow(ctx,
+		`UPDATE content_items SET status = 'published', updated_at = now()
+		 WHERE id = $1 AND workspace_id = $2 AND status = 'approved'
+		 RETURNING `+contentItemColumns,
+		itemID, workspaceID))
+	return out, mapNotFound(err)
+}
+
 // GetPublishingJobByID reads one job through the workspace of its item.
 func (s *Store) GetPublishingJobByID(ctx context.Context, workspaceID, jobID string) (PublishingJob, error) {
 	var j PublishingJob

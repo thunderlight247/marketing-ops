@@ -47,6 +47,11 @@ type Config struct {
 	AIModel         string
 	AIKey           string // secret; never log it
 	GenerateTimeout time.Duration
+
+	// SanityOpsBase overrides the Sanity API host for local end-to-end runs
+	// against a mock. It is honored only outside production; in production a
+	// value is rejected, so real publishing always talks to sanity.io.
+	SanityOpsBase string
 }
 
 // Load reads configuration using getenv (usually os.Getenv). All problems are
@@ -181,6 +186,12 @@ func Load(getenv func(string) string) (Config, error) {
 		if len(cfg.CredentialKey) == 0 {
 			add("CREDENTIAL_ENCRYPTION_KEY is required when APP_ENV=production")
 		}
+		if strings.TrimSpace(getenv("SANITY_OPS_BASE")) != "" {
+			add("SANITY_OPS_BASE must not be set when APP_ENV=production")
+		}
+	} else {
+		// Dev/test-only API-host override for the publishing adapter.
+		cfg.SanityOpsBase = strings.TrimRight(strings.TrimSpace(getenv("SANITY_OPS_BASE")), "/")
 	}
 
 	if err := errors.Join(problems...); err != nil {

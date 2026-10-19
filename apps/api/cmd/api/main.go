@@ -95,6 +95,7 @@ func run() error {
 			Operators:            operatorProvider,
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,
+			SanityOpsBase:        cfg.SanityOpsBase,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

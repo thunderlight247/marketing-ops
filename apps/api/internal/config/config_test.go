@@ -102,6 +102,27 @@ func TestLoadAIDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadSanityOpsBaseDevelopmentOnly(t *testing.T) {
+	t.Run("honored outside production", func(t *testing.T) {
+		cfg, err := Load(env(map[string]string{"SANITY_OPS_BASE": "http://127.0.0.1:9999/"}))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SanityOpsBase != "http://127.0.0.1:9999" {
+			t.Errorf("SanityOpsBase = %q", cfg.SanityOpsBase)
+		}
+	})
+	t.Run("empty by default", func(t *testing.T) {
+		cfg, err := Load(env(nil))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SanityOpsBase != "" {
+			t.Errorf("SanityOpsBase = %q, want empty", cfg.SanityOpsBase)
+		}
+	})
+}
+
 func TestLoadRejectsInvalid(t *testing.T) {
 	validDB := "postgres://u:p@localhost:5432/db"
 	tests := []struct {
@@ -123,6 +144,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"prod without origins", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32)}, "CORS_ALLOWED_ORIGINS is required"},
 		{"prod without credential key", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com"}, "CREDENTIAL_ENCRYPTION_KEY is required"},
 		{"invalid credential key", map[string]string{"CREDENTIAL_ENCRYPTION_KEY": "not-hex"}, "CREDENTIAL_ENCRYPTION_KEY is invalid"},
+		{"prod with sanity override", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32), "SANITY_OPS_BASE": "http://localhost:9999"}, "SANITY_OPS_BASE must not be set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

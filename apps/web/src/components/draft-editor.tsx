@@ -9,13 +9,17 @@ import {
   fetchWorkspaceDraft,
   formatContentKind,
   formatContentStatus,
+  pushToSanity,
   saveWorkspaceDraft,
   transitionContentStatus,
   type ApprovalDecision,
   type ContentHistoryState,
   type DraftState,
+  type SanityPublishMode,
+  type SanityPublishResult,
   type SaveDraftResult,
 } from "@/lib/content";
+import { fetchWorkspaceIntegrations, type Integration } from "@/lib/integrations";
 import { inlineSegments, parseDraftBody } from "@/lib/preview";
 
 const inputClasses =
@@ -155,6 +159,30 @@ export function DraftEditor({
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
 
+  // Sanity publishing state
+  const [sanityIntegrations, setSanityIntegrations] = useState<Integration[]>([]);
+  const [integrationsLoaded, setIntegrationsLoaded] = useState(false);
+  const [selectedIntegrationId, setSelectedIntegrationId] = useState("");
+  const [sanityBusy, setSanityBusy] = useState<SanityPublishMode | null>(null);
+  const [sanityResult, setSanityResult] = useState<SanityPublishResult | null>(null);
+
+  const loadSanityIntegrations = useCallback(async () => {
+    const result = await fetchWorkspaceIntegrations(apiBaseUrl, workspaceId);
+    if (result.kind === "loaded") {
+      const sanity = result.integrations.filter(
+        (integration) => integration.adapterKind === "sanity",
+      );
+      setSanityIntegrations(sanity);
+      setSelectedIntegrationId((current) => {
+        if (current && sanity.some((integration) => integration.id === current)) {
+          return current;
+        }
+        return sanity[0]?.id ?? "";
+      });
+    }
+    setIntegrationsLoaded(true);
+  }, [apiBaseUrl, workspaceId]);
+
   const loadHistory = useCallback(async () => {
     const result = await fetchContentHistory(apiBaseUrl, workspaceId, itemId);
     setHistory(result);
@@ -181,7 +209,8 @@ export function DraftEditor({
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadSanityIntegrations();
+  }, [load, loadSanityIntegrations]);
 
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -258,6 +287,15 @@ export function DraftEditor({
     } else {
       setDecisionError(result.message);
     }
+  }
+
+  async function handleSanity(mode: SanityPublishMode) {
+    if (mode === "draft") setSanityResult(null);
+    setSanityBusy(mode);
+    const result = await pushToSanity(apiBaseUrl, workspaceId, itemId, selectedIntegrationId, mode);
+    setSanityBusy(null);
+    setSanityResult(result);
+    if (result.kind === "pushed") void load();
   }
 
   if (state.kind === "loading") {
@@ -394,8 +432,7 @@ export function DraftEditor({
               : "In review. Decide on it, or send it back to draft for more work — version " +
                 version.versionNumber +
                 "."}{" "}
-            Nothing publishes without an approval decision, and publishing itself arrives in a later
-            milestone.
+            Nothing publishes without an explicit approval decision.
           </p>
           {item.status === "draft" && (
             <button
@@ -459,6 +496,140 @@ export function DraftEditor({
               Reject version
             </button>
           </div>
+        </div>
+      )}
+
+      {version && integrationsLoaded && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <h3 className="text-sm font-semibold text-slate-800">Sanity publishing</h3>
+          {sanityIntegrations.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-600">
+              This workspace has no Sanity integration yet — connect one under
+              <Link
+                href={`/workspaces/${workspaceId}`}
+                className="ml-1 font-medium text-teal-800 underline-offset-2 hover:underline"
+              >
+                workspace integrations
+              </Link>
+              first.
+            </p>
+          ) : (
+            <>
+              <div className="mt-2 sm:max-w-sm">
+                <label
+                  htmlFor="sanity-integration"
+                  className="block text-xs font-medium text-slate-600"
+                >
+                  Sanity integration
+                </label>
+                <select
+                  id="sanity-integration"
+                  value={selectedIntegrationId}
+                  onChange={(e) => setSelectedIntegrationId(e.target.value)}
+                  className={`mt-1 ${inputClasses}`}
+                >
+                  {sanityIntegrations.map((integration) => (
+                    <option key={integration.id} value={integration.id}>
+                      {integration.name}
+                      {integration.hasCredentials ? "" : " (no write token saved)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={sanityBusy !== null}
+                  onClick={() => void handleSanity("draft")}
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {sanityBusy === "draft" ? "Pushing…" : "Push draft to Sanity"}
+                </button>
+                <button
+                  type="button"
+                  disabled={sanityBusy !== null || item.status !== "approved"}
+                  title={
+                    item.status === "approved"
+                      ? undefined
+                      : "Approve the newest version first — the server refuses unapproved publishes."
+                  }
+                  onClick={() => void handleSanity("publish")}
+                  className="rounded-md bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {sanityBusy === "publish" ? "Publishing…" : "Publish to Sanity"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                “Push draft” writes an invisible Sanity draft for version {version.versionNumber} —
+                safe on any status. “Publish” is only usable once the newest version is approved.
+              </p>
+              {sanityResult?.kind === "pushed" && (
+                <div
+                  role="status"
+                  className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-700/15"
+                >
+                  <p className="font-medium">{sanityResult.success.message}</p>
+                  {sanityResult.success.mode === "draft" && sanityResult.success.draftId && (
+                    <p className="mt-1 text-xs">
+                      Sanity draft{" "}
+                      <code className="rounded bg-emerald-100/60 px-1">
+                        {sanityResult.success.draftId}
+                      </code>
+                      {sanityResult.success.transactionId
+                        ? ` · transaction ${sanityResult.success.transactionId}`
+                        : ""}
+                    </p>
+                  )}
+                  {sanityResult.success.mode === "publish" && sanityResult.success.publicUrl && (
+                    <p className="mt-1 text-xs">
+                      <a
+                        href={sanityResult.success.publicUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="font-medium underline underline-offset-2"
+                      >
+                        {sanityResult.success.publicUrl}
+                      </a>{" "}
+                      {sanityResult.success.urlVerified
+                        ? "— verified reachable (HTTP 200)."
+                        : "— could not be verified from here; open it to confirm."}
+                    </p>
+                  )}
+                </div>
+              )}
+              {sanityResult?.kind === "conflict" && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-700/15"
+                >
+                  {sanityResult.message}
+                </p>
+              )}
+              {sanityResult?.kind === "failed" && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+                >
+                  {sanityResult.message}
+                </p>
+              )}
+              {sanityResult?.kind === "rejected" && (
+                <ul role="alert" className="mt-3 list-disc pl-5 text-xs text-red-700">
+                  {sanityResult.problems.map((problem) => (
+                    <li key={problem}>{problem}</li>
+                  ))}
+                </ul>
+              )}
+              {sanityResult?.kind === "unavailable" && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+                >
+                  {sanityResult.message}
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
 
