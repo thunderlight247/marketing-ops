@@ -2,10 +2,14 @@
  * A deliberately minimal, dependency-free layout parser for draft previews.
  *
  * Drafts mostly arrive from the AI provider as simple markdown (headings,
- * paragraphs, lists, horizontal rules). Blocks are derived structurally so
- * the React renderer can build them from plain text nodes — nothing is ever
- * injected as raw HTML, so no crafted body text can execute script.
+ * paragraphs, lists, horizontal rules). Media markers produced by the editor
+ * (see lib/markers) become image and video blocks. Blocks are derived
+ * structurally so the React renderer can build them from plain text nodes —
+ * nothing is ever injected as raw HTML, so no crafted body text can execute
+ * script.
  */
+
+import { parseImageMarker, parseYoutubeMarker, youtubeEmbedUrl } from "./markers";
 
 export type PreviewBlock =
   | { type: "h1"; text: string }
@@ -14,7 +18,9 @@ export type PreviewBlock =
   | { type: "p"; text: string }
   | { type: "ul"; items: string[] }
   | { type: "ol"; items: string[] }
-  | { type: "hr" };
+  | { type: "hr" }
+  | { type: "image"; src: string; alt?: string }
+  | { type: "youtube"; embedUrl: string; raw: string };
 
 export interface InlineSegment {
   text: string;
@@ -37,6 +43,18 @@ export function inlineSegments(text: string): InlineSegment[] {
     }
   }
   return segments;
+}
+
+function isHttpsImage(line: string): { src: string; alt?: string } | null {
+  const image = parseImageMarker(line);
+  if (!image?.src) return null;
+  try {
+    const url = new URL(image.src);
+    if (url.protocol !== "https:") return null;
+    return { src: image.src, alt: image.alt };
+  } catch {
+    return null;
+  }
 }
 
 const headingLevel = (line: string): 1 | 2 | 3 | 0 => {
@@ -80,6 +98,26 @@ export function parseDraftBody(body: string): PreviewBlock[] {
   };
 
   for (const line of lines) {
+    const mediaImage = isHttpsImage(line);
+    if (mediaImage) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "image", src: mediaImage.src, alt: mediaImage.alt });
+      continue;
+    }
+    const youtubeUrl = parseYoutubeMarker(line);
+    if (youtubeUrl !== null) {
+      flushParagraph();
+      flushList();
+      const embedUrl = youtubeEmbedUrl(youtubeUrl);
+      if (embedUrl) {
+        blocks.push({ type: "youtube", embedUrl, raw: youtubeUrl });
+      } else {
+        // Not a recognizable YouTube link: keep it as plain text.
+        blocks.push({ type: "p", text: youtubeUrl });
+      }
+      continue;
+    }
     const level = headingLevel(line);
     if (level > 0) {
       flushParagraph();

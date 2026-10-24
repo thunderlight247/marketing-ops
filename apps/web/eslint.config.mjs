@@ -6,7 +6,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const compat = new FlatCompat({ baseDirectory: __dirname });
 
 const eslintConfig = [
-  { ignores: [".next/**", "node_modules/**", "next-env.d.ts"] },
+  {
+    // Only source is linted; matches the gitignored generated output dirs.
+    ignores: [
+      ".next/**",
+      ".next-e2e-*/**",
+      "node_modules/**",
+      "next-env.d.ts",
+      "test-results*/**",
+      "playwright-report*/**",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
 ];
 

@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/config";
 import { WorkspaceContentSection } from "@/components/workspace-content-section";
 import { WorkspaceIntegrationsSection } from "@/components/workspace-integrations-section";
+import { WorkspaceCampaignsSection } from "@/components/workspace-campaigns-section";
+import { WorkspaceReportsSection } from "@/components/workspace-reports-section";
+import { WorkspaceSeoAdvisorSection } from "@/components/workspace-seo-advisor-section";
+import { WorkspaceContentCreatorSection } from "@/components/workspace-content-creator-section";
 import {
   deleteWorkspace,
   fetchWorkspaceDetail,
@@ -67,6 +71,7 @@ const DANGER_BUTTON =
 
 export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const router = useRouter();
+  const [contentRevision, setContentRevision] = useState(0);
   const [state, setState] = useState<WorkspaceDetailState>({ kind: "loading" });
 
   // Facts form state.
@@ -405,9 +410,20 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         </form>
       </section>
 
-      <WorkspaceContentSection workspaceId={workspace.id} />
+      <WorkspaceContentSection key={contentRevision} workspaceId={workspace.id} />
+
+      <WorkspaceContentCreatorSection
+        workspaceId={workspace.id}
+        onCreated={() => setContentRevision((revision) => revision + 1)}
+      />
 
       <WorkspaceIntegrationsSection workspaceId={workspace.id} />
+
+      <WorkspaceCampaignsSection workspaceId={workspace.id} />
+
+      <WorkspaceReportsSection workspaceId={workspace.id} />
+
+      <WorkspaceSeoAdvisorSection workspaceId={workspace.id} />
 
       <section
         aria-labelledby="danger-zone-heading"

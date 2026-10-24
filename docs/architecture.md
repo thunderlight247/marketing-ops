@@ -44,12 +44,16 @@ Files are embedded with `go:embed`, validated (name pattern, contiguous versions
 ## Dashboard (`apps/web`)
 
 ```
-src/app/              routes: Overview plus six placeholder sections
-src/components/       app shell, status panel, empty state, placeholder page
-src/lib/              config, health parsing and fetching, navigation: pure, unit-tested logic
+src/app/              dashboard routes for overview, workspaces, content, integrations, and placeholders
+src/components/       app shell, status panel, workspace/content/integration panels, batch publisher
+src/lib/              config, health, workspace, content, integration, navigation API clients + tests
 ```
 
-The status panel calls the API from the browser, so a stopped API produces a clear "API unavailable" state instead of a broken page. Responses are validated before display; anything that is not a well-formed health report is treated as unavailable. The shell is responsive (sidebar on wide screens, menu button on narrow ones) and includes a skip link, landmarks, `aria-current`, and visible focus rings.
+The status panel calls the API from the browser, so a stopped API produces a clear "API unavailable" state instead of a broken page. Responses are validated before display; anything that is not a well-formed health report is treated as unavailable. The overview loads workspace records and marks seeded `demo-*` records as demos. Its batch publisher presents approved posts from all workspaces, confirms the selected list, then sends independent concurrent publish requests through each post's chosen registered publisher; outcomes are displayed per post, with no claim of cross-post atomicity. The shell is responsive (sidebar on wide screens, menu button on narrow ones) and includes a skip link, landmarks, `aria-current`, and visible focus rings.
+
+### Publishing adapter boundary
+
+The `integration.Publisher` contract accepts an immutable content-version payload and exposes draft creation, publication, and optional read-only URL verification. `integration.Registry` keeps destination capability adapters separate from publisher implementations: Sanity is registered for both, while generic REST and manual export currently have no automated publisher. The API decrypts credentials server-side and dispatches through the publisher registry; unknown/unimplemented destinations are rejected before creating a publishing job or performing an external write. Provider failures are exposed or persisted only when they implement the explicit safe-message interface. Adding another CMS requires a provider implementation and its contract tests; merely saving a base URL/token never claims verified publish support.
 
 ## Security posture in Milestone 0
 

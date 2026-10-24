@@ -76,7 +76,20 @@ export function WorkspaceIntegrationsSection({
   const [adapterKind, setAdapterKind] = useState("sanity");
   const [sanityProjectId, setSanityProjectId] = useState("");
   const [sanityDataset, setSanityDataset] = useState("production");
+  const [sanityDocType, setSanityDocType] = useState("post");
+  const [sanityPublicUrlPrefix, setSanityPublicUrlPrefix] = useState("/posts/");
   const [genericBaseUrl, setGenericBaseUrl] = useState("");
+  const [searchConsoleProperty, setSearchConsoleProperty] = useState("");
+  const [metaChannel, setMetaChannel] = useState("facebook");
+  const [metaTargetId, setMetaTargetId] = useState("");
+  const [metaApiVersion, setMetaApiVersion] = useState("");
+  const [metaPostLinkPrefix, setMetaPostLinkPrefix] = useState("");
+  const [youtubeChannelId, setYoutubeChannelId] = useState("");
+  const [youtubePrivacy, setYoutubePrivacy] = useState("public");
+  const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
+  const [youtubeClientId, setYoutubeClientId] = useState("");
+  const [youtubeClientSecret, setYoutubeClientSecret] = useState("");
+  const [youtubeRefreshToken, setYoutubeRefreshToken] = useState("");
   const [addErrors, setAddErrors] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -126,12 +139,51 @@ export function WorkspaceIntegrationsSection({
       }
       config.projectId = sanityProjectId.trim();
       config.dataset = sanityDataset.trim() || "production";
+      config.docType = sanityDocType.trim() || "post";
+      config.publicUrlPrefix = sanityPublicUrlPrefix.trim() || "/posts/";
+      config.docType = sanityDocType.trim() || "post";
+      config.publicUrlPrefix = sanityPublicUrlPrefix.trim() || "/posts/";
     } else if (adapterKind === "generic_api") {
       if (!genericBaseUrl.trim()) {
         setAddErrors(["Base API URL is required"]);
         return;
       }
       config.baseUrl = genericBaseUrl.trim();
+    } else if (adapterKind === "search_console") {
+      if (!searchConsoleProperty.trim()) {
+        setAddErrors([
+          "Search Console property is required (for example https://example.com/ or sc-domain:example.com)",
+        ]);
+        return;
+      }
+      config.property = searchConsoleProperty.trim();
+    } else if (adapterKind === "meta") {
+      if (!metaTargetId.trim()) {
+        setAddErrors([
+          "Target ID is required (the Facebook Page ID or the Instagram business account ID)",
+        ]);
+        return;
+      }
+      config.channel = metaChannel;
+      config.targetId = metaTargetId.trim();
+      if (metaApiVersion.trim()) {
+        config.apiVersion = metaApiVersion.trim();
+      }
+      if (metaPostLinkPrefix.trim()) {
+        config.postLinkPrefix = metaPostLinkPrefix.trim();
+      }
+    } else if (adapterKind === "youtube") {
+      if (!youtubeChannelId.trim()) {
+        setAddErrors(["YouTube channel ID is required (the UC… id of the authorized channel)"]);
+        return;
+      }
+      config.channelId = youtubeChannelId.trim();
+      if (youtubePrivacy) {
+        config.privacyStatus = youtubePrivacy;
+      }
+      if (youtubeCategoryId.trim()) {
+        config.categoryId = youtubeCategoryId.trim();
+      }
     }
 
     setAddErrors([]);
@@ -148,7 +200,18 @@ export function WorkspaceIntegrationsSection({
     if (res.kind === "created") {
       setName("");
       setSanityProjectId("");
+      setSanityDataset("production");
+      setSanityDocType("post");
+      setSanityPublicUrlPrefix("/posts/");
       setGenericBaseUrl("");
+      setSearchConsoleProperty("");
+      setMetaChannel("facebook");
+      setMetaTargetId("");
+      setMetaApiVersion("");
+      setMetaPostLinkPrefix("");
+      setYoutubeChannelId("");
+      setYoutubePrivacy("public");
+      setYoutubeCategoryId("");
       setShowAddForm(false);
       void load();
     } else if (res.kind === "conflict") {
@@ -176,6 +239,19 @@ export function WorkspaceIntegrationsSection({
     const payload: Record<string, string> = {};
     if (kind === "sanity") {
       payload.token = credSecret.trim();
+    } else if (kind === "search_console") {
+      payload.serviceAccount = credSecret.trim();
+    } else if (kind === "meta") {
+      payload.accessToken = credSecret.trim();
+    } else if (kind === "youtube") {
+      if (!youtubeClientId.trim() || !youtubeClientSecret.trim() || !youtubeRefreshToken.trim()) {
+        setCredSaving(false);
+        setCredError("Client ID, client secret, and refresh token are all required.");
+        return;
+      }
+      payload.clientId = youtubeClientId.trim();
+      payload.clientSecret = youtubeClientSecret.trim();
+      payload.refreshToken = youtubeRefreshToken.trim();
     } else {
       payload.apiKey = credSecret.trim();
     }
@@ -190,6 +266,9 @@ export function WorkspaceIntegrationsSection({
 
     if (res.kind === "saved") {
       setCredSecret("");
+      setYoutubeClientId("");
+      setYoutubeClientSecret("");
+      setYoutubeRefreshToken("");
       setCredIntegrationId(null);
       void load();
     } else {
@@ -256,7 +335,14 @@ export function WorkspaceIntegrationsSection({
           onSubmit={(e) => void handleAdd(e)}
           className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4"
         >
-          <h3 className="text-sm font-semibold text-slate-800">Connect new integration</h3>
+          <h3 className="text-sm font-semibold text-slate-800">
+            Connect this workspace&apos;s publishing destination
+          </h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Enter the business&apos;s Sanity project details below. The API token is saved
+            separately as an encrypted server-side credential; never paste it into the project ID or
+            dataset fields.
+          </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
               <label htmlFor="int-name" className={labelClasses}>
@@ -267,7 +353,7 @@ export function WorkspaceIntegrationsSection({
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Nutrition Guide Blog"
+                placeholder="e.g. Main website blog"
                 maxLength={120}
                 required
                 className={`mt-1 ${inputClasses}`}
@@ -321,6 +407,38 @@ export function WorkspaceIntegrationsSection({
                   className={`mt-1 ${inputClasses}`}
                 />
               </div>
+              <div>
+                <label htmlFor="sanity-doctype" className={labelClasses}>
+                  Article document type
+                </label>
+                <input
+                  id="sanity-doctype"
+                  type="text"
+                  value={sanityDocType}
+                  onChange={(e) => setSanityDocType(e.target.value)}
+                  placeholder="post"
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Must match the document type in this project&apos;s Sanity schema.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="sanity-url-prefix" className={labelClasses}>
+                  Public article path prefix
+                </label>
+                <input
+                  id="sanity-url-prefix"
+                  type="text"
+                  value={sanityPublicUrlPrefix}
+                  onChange={(e) => setSanityPublicUrlPrefix(e.target.value)}
+                  placeholder="/blog/"
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Used to verify websiteUrl + path prefix + article slug after publishing.
+                </p>
+              </div>
             </div>
           )}
 
@@ -338,6 +456,165 @@ export function WorkspaceIntegrationsSection({
                 required
                 className={`mt-1 ${inputClasses}`}
               />
+            </div>
+          )}
+
+          {adapterKind === "meta" && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="meta-channel" className={labelClasses}>
+                  Channel
+                </label>
+                <select
+                  id="meta-channel"
+                  value={metaChannel}
+                  onChange={(e) => setMetaChannel(e.target.value)}
+                  className={`mt-1 ${inputClasses}`}
+                >
+                  <option value="facebook">Facebook Page post</option>
+                  <option value="instagram">Instagram business post</option>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  One integration posts to exactly one channel. Connect a second one for the other
+                  channel.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="meta-target" className={labelClasses}>
+                  Target ID
+                </label>
+                <input
+                  id="meta-target"
+                  type="text"
+                  value={metaTargetId}
+                  onChange={(e) => setMetaTargetId(e.target.value)}
+                  placeholder={
+                    metaChannel === "facebook"
+                      ? "e.g. 123456789012345 (Page ID)"
+                      : "e.g. 17841400000000000 (IG user ID)"
+                  }
+                  required
+                  className={`mt-1 ${inputClasses}`}
+                />
+              </div>
+              <div>
+                <label htmlFor="meta-link-prefix" className={labelClasses}>
+                  Article link prefix (optional, Facebook only)
+                </label>
+                <input
+                  id="meta-link-prefix"
+                  type="url"
+                  value={metaPostLinkPrefix}
+                  onChange={(e) => setMetaPostLinkPrefix(e.target.value)}
+                  placeholder="https://example.com/blog"
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  When set, Facebook posts link to prefix + the article slug, and a repeated publish
+                  reuses the earlier post instead of duplicating it.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="meta-api-version" className={labelClasses}>
+                  Graph API version (optional)
+                </label>
+                <input
+                  id="meta-api-version"
+                  type="text"
+                  value={metaApiVersion}
+                  onChange={(e) => setMetaApiVersion(e.target.value)}
+                  placeholder="v21.0"
+                  className={`mt-1 ${inputClasses}`}
+                />
+              </div>
+              <p className="sm:col-span-2 text-xs text-slate-500">
+                Official Graph API only, with an access token that carries the channel&apos;s
+                manage-posts permission. Instagram posts additionally require a public image on the
+                approved version.
+              </p>
+            </div>
+          )}
+
+          {adapterKind === "youtube" && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="youtube-channel" className={labelClasses}>
+                  Channel ID
+                </label>
+                <input
+                  id="youtube-channel"
+                  type="text"
+                  value={youtubeChannelId}
+                  onChange={(e) => setYoutubeChannelId(e.target.value)}
+                  placeholder="e.g. UCxxxxxxxxxxxxxxxxxxxxxx"
+                  required
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  The UC… id of the channel the OAuth authorization belongs to (shown on YouTube
+                  under account → advanced settings).
+                </p>
+              </div>
+              <div>
+                <label htmlFor="youtube-privacy" className={labelClasses}>
+                  Privacy status
+                </label>
+                <select
+                  id="youtube-privacy"
+                  value={youtubePrivacy}
+                  onChange={(e) => setYoutubePrivacy(e.target.value)}
+                  className={`mt-1 ${inputClasses}`}
+                >
+                  <option value="public">Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="youtube-category" className={labelClasses}>
+                  Category ID (optional)
+                </label>
+                <input
+                  id="youtube-category"
+                  type="text"
+                  value={youtubeCategoryId}
+                  onChange={(e) => setYoutubeCategoryId(e.target.value)}
+                  placeholder="22 (People &amp; Blogs)"
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Numeric YouTube video category; 22 (People &amp; Blogs) is the default when left
+                  empty.
+                </p>
+              </div>
+              <p className="sm:col-span-2 text-xs text-slate-500">
+                Official YouTube Data API only, with an OAuth refresh token minted with the
+                youtube.upload scope. Uploads also require a public video file URL on the approved
+                version (metadata key&nbsp;
+                <code className="rounded bg-slate-200 px-1">videoUrl</code>) and each upload costs a
+                large slice of the project&apos;s daily API quota.
+              </p>
+            </div>
+          )}
+
+          {adapterKind === "search_console" && (
+            <div className="mt-3">
+              <label htmlFor="search-console-property" className={labelClasses}>
+                Search Console property
+              </label>
+              <input
+                id="search-console-property"
+                type="text"
+                value={searchConsoleProperty}
+                onChange={(e) => setSearchConsoleProperty(e.target.value)}
+                placeholder="https://example.com/ or sc-domain:example.com"
+                required
+                className={`mt-1 ${inputClasses}`}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                URL-prefix or domain property. Read-only: the service account only needs read
+                access; the check never verifies or modifies anything.
+              </p>
             </div>
           )}
 
@@ -429,6 +706,9 @@ export function WorkspaceIntegrationsSection({
                     onClick={() => {
                       setCredIntegrationId((curr) => (curr === inItem.id ? null : inItem.id));
                       setCredSecret("");
+                      setYoutubeClientId("");
+                      setYoutubeClientSecret("");
+                      setYoutubeRefreshToken("");
                       setCredError(null);
                     }}
                     className={SECONDARY_BUTTON}
@@ -449,6 +729,28 @@ export function WorkspaceIntegrationsSection({
                 </div>
               </div>
 
+              {(inItem.status === "error" || inItem.status === "disconnected") && (
+                <div
+                  role="status"
+                  data-testid="reconnect-banner"
+                  className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs ring-1 ring-inset ring-red-700/15"
+                >
+                  <p className="font-medium text-red-900">Needs reconnection</p>
+                  <p className="mt-1 text-red-800">
+                    The saved credentials were rejected or expired — for example an access token
+                    that was revoked, or an OAuth refresh token whose authorization ended.
+                    Publishing stays blocked until you save new credentials and the check passes
+                    again.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setCredIntegrationId(inItem.id)}
+                    className="mt-2 rounded-md bg-red-700 px-2 py-1 text-xs font-semibold text-white hover:bg-red-800"
+                  >
+                    Reconnect now
+                  </button>
+                </div>
+              )}
               {diagnostic && diagnostic.id === inItem.id && (
                 <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-900 ring-1 ring-inset ring-blue-700/15">
                   <strong>Verification report:</strong> {diagnostic.message}
@@ -460,23 +762,86 @@ export function WorkspaceIntegrationsSection({
                   onSubmit={(e) => void handleSaveCredentials(e, inItem.id, inItem.adapterKind)}
                   className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3"
                 >
-                  <label htmlFor={`cred-${inItem.id}`} className={labelClasses}>
-                    {inItem.adapterKind === "sanity"
-                      ? "Sanity API write token"
-                      : "API secret key / token"}
-                  </label>
-                  <p className="text-xs text-slate-500">
-                    Encrypted at rest using AES-256-GCM. Never returned to the browser or logged.
-                  </p>
-                  <input
-                    id={`cred-${inItem.id}`}
-                    type="password"
-                    value={credSecret}
-                    onChange={(e) => setCredSecret(e.target.value)}
-                    placeholder="Enter secret token"
-                    required
-                    className={`mt-1 ${inputClasses}`}
-                  />
+                  {inItem.adapterKind === "youtube" && (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div>
+                        <label htmlFor={`cred-yt-id-${inItem.id}`} className={labelClasses}>
+                          OAuth client ID
+                        </label>
+                        <input
+                          id={`cred-yt-id-${inItem.id}`}
+                          type="password"
+                          value={youtubeClientId}
+                          onChange={(e) => setYoutubeClientId(e.target.value)}
+                          className={`mt-1 ${inputClasses}`}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor={`cred-yt-secret-${inItem.id}`} className={labelClasses}>
+                          OAuth client secret
+                        </label>
+                        <input
+                          id={`cred-yt-secret-${inItem.id}`}
+                          type="password"
+                          value={youtubeClientSecret}
+                          onChange={(e) => setYoutubeClientSecret(e.target.value)}
+                          className={`mt-1 ${inputClasses}`}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor={`cred-yt-refresh-${inItem.id}`} className={labelClasses}>
+                          Refresh token (youtube.upload scope)
+                        </label>
+                        <input
+                          id={`cred-yt-refresh-${inItem.id}`}
+                          type="password"
+                          value={youtubeRefreshToken}
+                          onChange={(e) => setYoutubeRefreshToken(e.target.value)}
+                          className={`mt-1 ${inputClasses}`}
+                          required
+                        />
+                      </div>
+                      <p className="sm:col-span-3 text-xs text-slate-500">
+                        Mint the refresh token offline for this Google Cloud project with the
+                        youtube.upload scope; the adapter exchanges it server-side for short-lived
+                        access tokens. All three values are encrypted at rest with AES-256-GCM,
+                        never returned to the browser, and never logged.
+                      </p>
+                    </div>
+                  )}
+                  {inItem.adapterKind !== "youtube" && (
+                    <label htmlFor={`cred-${inItem.id}`} className={labelClasses}>
+                      {inItem.adapterKind === "sanity"
+                        ? "Sanity API write token"
+                        : inItem.adapterKind === "search_console"
+                          ? "Google service-account key (JSON)"
+                          : inItem.adapterKind === "meta"
+                            ? "Meta Graph access token"
+                            : "API secret key / token"}
+                    </label>
+                  )}
+                  {inItem.adapterKind !== "youtube" && (
+                    <>
+                      <p className="text-xs text-slate-500">
+                        {inItem.adapterKind === "search_console"
+                          ? "Paste the full JSON of a Google service-account key. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and is used read-only (webmasters.readonly) to verify property access and read search analytics."
+                          : inItem.adapterKind === "meta"
+                            ? "Paste the access token for this channel's target: a Page access token, or the Instagram-linked Page token. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and needs only the channel's manage-posts permission (pages_manage_posts or instagram_content_publish)."
+                            : "This is the Sanity API token for this workspace's project. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and should have only the write permissions needed for this site."}
+                      </p>
+                      <input
+                        id={`cred-${inItem.id}`}
+                        type="password"
+                        value={credSecret}
+                        onChange={(e) => setCredSecret(e.target.value)}
+                        placeholder="Enter secret token"
+                        required
+                        className={`mt-1 ${inputClasses}`}
+                      />
+                    </>
+                  )}
                   {credError && (
                     <p role="alert" className="mt-2 text-xs text-red-700">
                       {credError}

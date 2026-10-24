@@ -153,12 +153,16 @@ export function WorkspacesPanel() {
         className="rounded-lg border border-slate-200 bg-white px-5 py-4"
       >
         <h2 id="workspaces-create-heading" className="text-base font-semibold">
-          New workspace
+          Add a business
         </h2>
+        <p className="mt-1 text-xs text-slate-600">
+          A workspace is the private container for one business. Its ID is generated automatically;
+          you only choose a display name, URL slug, and optional website.
+        </p>
         <form onSubmit={(event) => void submit(event)} className="mt-4 grid gap-4">
           <div>
             <label htmlFor="workspace-slug" className={labelClasses}>
-              URL slug
+              Workspace URL slug
             </label>
             <input
               id="workspace-slug"
@@ -212,7 +216,8 @@ export function WorkspacesPanel() {
           </button>
         </form>
         <p className="mt-3 text-xs text-slate-500">
-          Created workspaces appear in the list immediately.
+          Add more businesses whenever you need; each business gets its own content and publishing
+          settings.
         </p>
       </section>
     </div>

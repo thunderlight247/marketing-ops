@@ -1,26 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { getApiBaseUrl } from "@/lib/config";
 import {
+  cancelContentJob,
   decideContentApproval,
   fetchContentHistory,
+  fetchContentJobs,
   fetchWorkspaceDraft,
   formatContentKind,
   formatContentStatus,
+  formatPublishJobStatus,
   pushToSanity,
+  retryContentJob,
   saveWorkspaceDraft,
   transitionContentStatus,
+  uploadIntegrationImage,
   type ApprovalDecision,
   type ContentHistoryState,
+  type ContentJobsState,
   type DraftState,
   type SanityPublishMode,
   type SanityPublishResult,
   type SaveDraftResult,
 } from "@/lib/content";
 import { fetchWorkspaceIntegrations, type Integration } from "@/lib/integrations";
+import { buildImageMarker, buildYoutubeMarker, youtubeEmbedUrl } from "@/lib/markers";
 import { inlineSegments, parseDraftBody } from "@/lib/preview";
+import { evaluateSeo, type SeoCheckStatus } from "@/lib/seo";
 
 const inputClasses =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
@@ -114,6 +123,31 @@ function PreviewBody({ body }: Readonly<{ body: string }>) {
             );
           case "hr":
             return <hr key={index} className="border-slate-200" />;
+          case "image":
+            return (
+              <Image
+                key={index}
+                src={block.src}
+                alt={block.alt ?? ""}
+                width={1024}
+                height={576}
+                unoptimized
+                className="h-auto max-w-full rounded-md border border-slate-200"
+              />
+            );
+          case "youtube":
+            return (
+              <iframe
+                key={index}
+                src={block.embedUrl}
+                title="YouTube video"
+                className="aspect-video w-full rounded-md border border-slate-200"
+                allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            );
           default:
             return (
               <p key={index} className="text-sm leading-relaxed text-slate-800">
@@ -124,6 +158,43 @@ function PreviewBody({ body }: Readonly<{ body: string }>) {
       })}
     </div>
   );
+}
+
+function seoStatusClass(status: SeoCheckStatus): string {
+  switch (status) {
+    case "good":
+      return "bg-emerald-50 text-emerald-800";
+    case "warn":
+      return "bg-amber-50 text-amber-800";
+    case "fail":
+      return "bg-red-50 text-red-800";
+  }
+}
+
+function seoStatusLabel(status: SeoCheckStatus): string {
+  switch (status) {
+    case "good":
+      return "Good";
+    case "warn":
+      return "Improve";
+    case "fail":
+      return "Fix";
+  }
+}
+
+function jobStatusClass(status: string): string {
+  switch (status) {
+    case "succeeded":
+      return "bg-emerald-50 text-emerald-800";
+    case "failed":
+      return "bg-red-50 text-red-800";
+    case "running":
+      return "bg-sky-50 text-sky-800";
+    case "pending":
+      return "bg-amber-50 text-amber-800";
+    default:
+      return "bg-slate-100 text-slate-700";
+  }
 }
 
 export function DraftEditor({
@@ -141,6 +212,21 @@ export function DraftEditor({
   const [body, setBody] = useState("");
   const [callToAction, setCallToAction] = useState("");
   const [channels, setChannels] = useState<Array<{ name: string; copy: string }>>([]);
+
+  // Media state. The main image rides in the version metadata (its asset
+  // reference is what a publisher needs); body media is inserted as single
+  // [media-...] marker lines in the body text itself.
+  const [loadedMetadata, setLoadedMetadata] = useState<Record<string, unknown>>({});
+  const [mainImage, setMainImage] = useState<{ ref: string; src: string; alt: string }>({
+    ref: "",
+    src: "",
+    alt: "",
+  });
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [youtubeInput, setYoutubeInput] = useState("");
+  const mainImageFileRef = useRef<HTMLInputElement | null>(null);
+  const insertFileRef = useRef<HTMLInputElement | null>(null);
 
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -166,6 +252,26 @@ export function DraftEditor({
   const [sanityBusy, setSanityBusy] = useState<SanityPublishMode | null>(null);
   const [sanityResult, setSanityResult] = useState<SanityPublishResult | null>(null);
 
+  // Social publishing (Milestone 8 Meta, Milestone 9 YouTube): one picker over
+  // this workspace's social integrations; publishes reuse the same
+  // approval-gated endpoint as Sanity — the backend dispatches by adapter
+  // kind — and a future scheduledAt queues the job for the worker instead of
+  // publishing inline.
+  const [socialIntegrations, setSocialIntegrations] = useState<Integration[]>([]);
+  const [socialSelectedId, setSocialSelectedId] = useState("");
+  const [socialBusy, setSocialBusy] = useState(false);
+  const [socialResult, setSocialResult] = useState<SanityPublishResult | null>(null);
+  const [socialScheduleInput, setSocialScheduleInput] = useState("");
+  const [socialScheduleError, setSocialScheduleError] = useState<string | null>(null);
+
+  // Scheduled publish + publishing jobs (Milestone 9). The schedule input
+  // works in UTC like the suggested publish slot; a future time queues the
+  // job for the background worker instead of publishing inline.
+  const [scheduleInput, setScheduleInput] = useState("");
+  const [jobsState, setJobsState] = useState<ContentJobsState>({ kind: "loading" });
+  const [jobBusyId, setJobBusyId] = useState<string | null>(null);
+  const [jobActionError, setJobActionError] = useState<string | null>(null);
+
   const loadSanityIntegrations = useCallback(async () => {
     const result = await fetchWorkspaceIntegrations(apiBaseUrl, workspaceId);
     if (result.kind === "loaded") {
@@ -179,6 +285,17 @@ export function DraftEditor({
         }
         return sanity[0]?.id ?? "";
       });
+      const social = result.integrations.filter(
+        (integration) =>
+          integration.adapterKind === "meta" || integration.adapterKind === "youtube",
+      );
+      setSocialIntegrations(social);
+      setSocialSelectedId((current) => {
+        if (current && social.some((integration) => integration.id === current)) {
+          return current;
+        }
+        return social[0]?.id ?? "";
+      });
     }
     setIntegrationsLoaded(true);
   }, [apiBaseUrl, workspaceId]);
@@ -186,6 +303,11 @@ export function DraftEditor({
   const loadHistory = useCallback(async () => {
     const result = await fetchContentHistory(apiBaseUrl, workspaceId, itemId);
     setHistory(result);
+  }, [apiBaseUrl, workspaceId, itemId]);
+
+  const loadJobs = useCallback(async () => {
+    const result = await fetchContentJobs(apiBaseUrl, workspaceId, itemId);
+    setJobsState(result);
   }, [apiBaseUrl, workspaceId, itemId]);
 
   const load = useCallback(async () => {
@@ -203,6 +325,28 @@ export function DraftEditor({
       setChannels(
         Object.entries(version?.channelCopy ?? {}).map(([name, copy]) => ({ name, copy })),
       );
+      const metadata = version?.metadata ?? {};
+      setLoadedMetadata(metadata);
+      const rawMain = metadata.mainImage;
+      if (
+        rawMain &&
+        typeof rawMain === "object" &&
+        typeof (rawMain as { ref?: unknown }).ref === "string" &&
+        ((rawMain as { ref: string }).ref as string) !== ""
+      ) {
+        const ref = (rawMain as { ref: string }).ref;
+        const src =
+          typeof (rawMain as { src?: unknown }).src === "string"
+            ? String((rawMain as { src?: unknown }).src)
+            : "";
+        const alt =
+          typeof (rawMain as { alt?: unknown }).alt === "string"
+            ? String((rawMain as { alt?: unknown }).alt)
+            : "";
+        setMainImage({ ref, src, alt });
+      } else {
+        setMainImage({ ref: "", src: "", alt: "" });
+      }
     }
     void loadHistory();
   }, [apiBaseUrl, workspaceId, itemId, loadHistory]);
@@ -210,7 +354,8 @@ export function DraftEditor({
   useEffect(() => {
     void load();
     void loadSanityIntegrations();
-  }, [load, loadSanityIntegrations]);
+    void loadJobs();
+  }, [load, loadSanityIntegrations, loadJobs]);
 
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -225,6 +370,15 @@ export function DraftEditor({
       if (name) channelCopy[name] = channel.copy;
     }
 
+    // Main image: the asset reference (plus preview URL and alt) travels in
+    // the version metadata; other metadata keys are preserved as loaded.
+    const metadata: Record<string, unknown> = { ...loadedMetadata };
+    if (mainImage.ref) {
+      metadata.mainImage = { ref: mainImage.ref, src: mainImage.src, alt: mainImage.alt };
+    } else {
+      delete metadata.mainImage;
+    }
+
     const result: SaveDraftResult = await saveWorkspaceDraft(apiBaseUrl, workspaceId, itemId, {
       title,
       slug,
@@ -233,6 +387,7 @@ export function DraftEditor({
       body,
       callToAction,
       channelCopy,
+      metadata,
     });
 
     setSaving(false);
@@ -289,13 +444,158 @@ export function DraftEditor({
     }
   }
 
-  async function handleSanity(mode: SanityPublishMode) {
+  async function handleSanity(mode: SanityPublishMode, scheduledAt?: string) {
     if (mode === "draft") setSanityResult(null);
     setSanityBusy(mode);
-    const result = await pushToSanity(apiBaseUrl, workspaceId, itemId, selectedIntegrationId, mode);
+    const result = await pushToSanity(
+      apiBaseUrl,
+      workspaceId,
+      itemId,
+      selectedIntegrationId,
+      mode,
+      scheduledAt,
+    );
     setSanityBusy(null);
     setSanityResult(result);
-    if (result.kind === "pushed") void load();
+    if (mode === "publish") {
+      void loadJobs();
+      if (!scheduledAt) void load();
+    }
+    if (mode === "draft") void load();
+  }
+
+  async function handleSocialPublish(scheduledAt?: string) {
+    setSocialResult(null);
+    setSocialBusy(true);
+    const result = await pushToSanity(
+      apiBaseUrl,
+      workspaceId,
+      itemId,
+      socialSelectedId,
+      "publish",
+      scheduledAt,
+    );
+    setSocialBusy(false);
+    setSocialResult(result);
+    void loadJobs();
+    if (!scheduledAt) void load();
+  }
+
+  async function handleSocialSchedule() {
+    setSocialScheduleError(null);
+    const iso = localInputToIso(socialScheduleInput);
+    if (!iso) {
+      setSocialScheduleError("Choose a date and time first.");
+      return;
+    }
+    if (new Date(iso).getTime() <= Date.now()) {
+      setSocialScheduleError("The schedule must be in the future.");
+      return;
+    }
+    setSocialScheduleInput("");
+    await handleSocialPublish(iso);
+  }
+
+  async function handleSchedule() {
+    setJobActionError(null);
+    const iso = localInputToIso(scheduleInput);
+    if (!iso) {
+      setJobActionError("Choose a date and time first.");
+      return;
+    }
+    if (new Date(iso).getTime() <= Date.now()) {
+      setJobActionError("The schedule must be in the future.");
+      return;
+    }
+    setScheduleInput("");
+    await handleSanity("publish", iso);
+  }
+
+  async function handleRetryJob(jobId: string) {
+    setJobActionError(null);
+    setJobBusyId(jobId);
+    const result = await retryContentJob(apiBaseUrl, workspaceId, itemId, jobId);
+    setJobBusyId(null);
+    setJobActionError(result.kind === "requeued" ? null : result.message);
+    void loadJobs();
+  }
+
+  async function handleCancelJob(jobId: string) {
+    setJobActionError(null);
+    setJobBusyId(jobId);
+    const result = await cancelContentJob(apiBaseUrl, workspaceId, itemId, jobId);
+    setJobBusyId(null);
+    setJobActionError(result.kind === "cancelled" ? null : result.message);
+    void loadJobs();
+  }
+
+  // ---- media handling ----------------------------------------------------------
+
+  const hasUploadIntegration =
+    integrationsLoaded && sanityIntegrations.some((integration) => integration.hasCredentials);
+
+  // Advisory SEO recommendations (Milestone 10): recomputed live from the
+  // current form fields. Purely derived advice — never measured analytics.
+  const itemKind = state.kind === "loaded" ? state.item.kind : "blog_article";
+  const seoReport = useMemo(
+    () => evaluateSeo({ title, slug, excerpt, body, kind: itemKind }),
+    [title, slug, excerpt, body, itemKind],
+  );
+
+  function appendToBody(prev: string, marker: string): string {
+    const base = prev.trimEnd();
+    return base ? `${base}\n\n${marker}` : marker;
+  }
+
+  async function uploadFile(file: File): Promise<{ ref: string; src: string } | null> {
+    if (!selectedIntegrationId) {
+      setMediaError("Connect a Sanity integration first.");
+      return null;
+    }
+    setMediaError(null);
+    setMediaBusy(true);
+    const result = await uploadIntegrationImage(
+      apiBaseUrl,
+      workspaceId,
+      selectedIntegrationId,
+      file,
+    );
+    setMediaBusy(false);
+    if (result.kind === "rejected") {
+      setMediaError(result.problems.join("; "));
+      return null;
+    }
+    if (result.kind === "unavailable") {
+      setMediaError(result.message);
+      return null;
+    }
+    return { ref: result.ref, src: result.url };
+  }
+
+  async function handleMainImageFile(file: File) {
+    const uploaded = await uploadFile(file);
+    if (!uploaded) return;
+    setMainImage((current) => ({ ref: uploaded.ref, src: uploaded.src, alt: current.alt }));
+  }
+
+  async function handleInsertImageFile(file: File) {
+    const uploaded = await uploadFile(file);
+    if (!uploaded) return;
+    setBody((prev) =>
+      appendToBody(prev, buildImageMarker({ ref: uploaded.ref, src: uploaded.src })),
+    );
+  }
+
+  function handleInsertYoutube() {
+    const raw = youtubeInput.trim();
+    const embed = youtubeEmbedUrl(raw);
+    if (!embed) {
+      setMediaError("Paste a YouTube video link (youtube.com or youtu.be).");
+      return;
+    }
+    setMediaError(null);
+    setYoutubeInput("");
+    setBody((prev) => appendToBody(prev, buildYoutubeMarker(raw)));
   }
 
   if (state.kind === "loading") {
@@ -559,9 +859,39 @@ export function DraftEditor({
                   {sanityBusy === "publish" ? "Publishing…" : "Publish to Sanity"}
                 </button>
               </div>
+              {item.status === "approved" && (
+                <div className="mt-3 flex flex-wrap items-end gap-2">
+                  <div>
+                    <label
+                      htmlFor="draft-schedule"
+                      className="block text-xs font-medium text-slate-600"
+                    >
+                      Or schedule the publish (UTC)
+                    </label>
+                    <input
+                      id="draft-schedule"
+                      type="datetime-local"
+                      step={60}
+                      value={scheduleInput}
+                      onChange={(e) => setScheduleInput(e.target.value)}
+                      disabled={sanityBusy !== null}
+                      className={`max-w-xs ${inputClasses}`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={sanityBusy !== null || !scheduleInput}
+                    onClick={() => void handleSchedule()}
+                    className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {sanityBusy === "publish" ? "Scheduling…" : "Queue scheduled publish"}
+                  </button>
+                </div>
+              )}
               <p className="mt-2 text-xs text-slate-500">
-                “Push draft” writes an invisible Sanity draft for version {version.versionNumber} —
-                safe on any status. “Publish” is only usable once the newest version is approved.
+                “Push draft” writes or replaces this item&apos;s invisible Sanity draft with version{" "}
+                {version.versionNumber} — safe on any status. “Publish” refreshes that same Sanity
+                draft from the newest approved version, then publishes it.
               </p>
               {sanityResult?.kind === "pushed" && (
                 <div
@@ -630,6 +960,310 @@ export function DraftEditor({
               )}
             </>
           )}
+        </div>
+      )}
+
+      {version && integrationsLoaded && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <h3 className="text-sm font-semibold text-slate-800">
+            Social publishing (Meta & YouTube)
+          </h3>
+          {socialIntegrations.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-600">
+              No social channel is connected yet — connect a Facebook Page post, Instagram business
+              post, or YouTube channel integration under
+              <Link
+                href={`/workspaces/${workspaceId}`}
+                className="ml-1 font-medium text-teal-800 underline-offset-2 hover:underline"
+              >
+                workspace integrations
+              </Link>
+              first.
+            </p>
+          ) : (
+            <>
+              <div className="mt-2 sm:max-w-sm">
+                <label
+                  htmlFor="meta-integration"
+                  className="block text-xs font-medium text-slate-600"
+                >
+                  Social destination
+                </label>
+                <select
+                  id="meta-integration"
+                  value={socialSelectedId}
+                  onChange={(e) => setSocialSelectedId(e.target.value)}
+                  className={`mt-1 ${inputClasses}`}
+                >
+                  {socialIntegrations.map((integration) => (
+                    <option key={integration.id} value={integration.id}>
+                      {integration.name}
+                      {integration.hasCredentials ? "" : " (no credentials saved)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  disabled={socialBusy || item.status !== "approved"}
+                  title={
+                    item.status === "approved"
+                      ? undefined
+                      : "Approve the newest version first — the server refuses unapproved publishes."
+                  }
+                  onClick={() => void handleSocialPublish()}
+                  className={PRIMARY_BUTTON}
+                >
+                  {socialBusy ? "Posting…" : "Publish post now"}
+                </button>
+              </div>
+              {item.status === "approved" && (
+                <div className="mt-3 flex flex-wrap items-end gap-2">
+                  <div>
+                    <label
+                      htmlFor="meta-schedule"
+                      className="block text-xs font-medium text-slate-600"
+                    >
+                      Or schedule the post (UTC)
+                    </label>
+                    <input
+                      id="meta-schedule"
+                      type="datetime-local"
+                      step={60}
+                      value={socialScheduleInput}
+                      onChange={(e) => setSocialScheduleInput(e.target.value)}
+                      disabled={socialBusy}
+                      className={`max-w-xs ${inputClasses}`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={socialBusy || !socialScheduleInput}
+                    onClick={() => void handleSocialSchedule()}
+                    className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {socialBusy ? "Scheduling…" : "Queue scheduled post"}
+                  </button>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-slate-500">
+                The post goes out only after the newest version is approved. There is no
+                destination-side draft on social destinations; Instagram additionally needs a public
+                image on the approved version, and YouTube needs a public video file URL (metadata
+                key&nbsp;
+                <code className="rounded bg-slate-200 px-1">videoUrl</code>).
+              </p>
+              {socialScheduleError && (
+                <p role="alert" className="mt-2 text-xs text-red-700">
+                  {socialScheduleError}
+                </p>
+              )}
+              {socialResult?.kind === "pushed" && (
+                <div
+                  role="status"
+                  className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-700/15"
+                >
+                  <p className="font-medium">{socialResult.success.message}</p>
+                  {socialResult.success.publicUrl && (
+                    <p className="mt-1 text-xs">
+                      <a
+                        href={socialResult.success.publicUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="font-medium underline underline-offset-2"
+                      >
+                        {socialResult.success.publicUrl}
+                      </a>
+                    </p>
+                  )}
+                </div>
+              )}
+              {socialResult?.kind === "conflict" && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-700/15"
+                >
+                  {socialResult.message}
+                </p>
+              )}
+              {socialResult?.kind === "failed" && (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+                >
+                  <p>{socialResult.message}</p>
+                  <p className="mt-1 text-xs">
+                    If this failure says the saved credentials were rejected or expired, reconnect
+                    the integration on the{" "}
+                    <Link
+                      href={`/workspaces/${workspaceId}`}
+                      className="font-medium underline underline-offset-2"
+                    >
+                      workspace integrations page
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+              {socialResult?.kind === "rejected" && (
+                <ul role="alert" className="mt-3 list-disc pl-5 text-xs text-red-700">
+                  {socialResult.problems.map((problem) => (
+                    <li key={problem}>{problem}</li>
+                  ))}
+                </ul>
+              )}
+              {socialResult?.kind === "unavailable" && (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+                >
+                  <p>{socialResult.message}</p>
+                  <p className="mt-1 text-xs">
+                    If this failure says the saved credentials were rejected or expired, reconnect
+                    the integration on the{" "}
+                    <Link
+                      href={`/workspaces/${workspaceId}`}
+                      className="font-medium underline underline-offset-2"
+                    >
+                      workspace integrations page
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {version && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-800">Publishing jobs</h3>
+            <button
+              type="button"
+              onClick={() => void loadJobs()}
+              className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Refresh
+            </button>
+          </div>
+          {jobsState.kind === "loading" && (
+            <p className="mt-2 text-xs text-slate-500">Loading publishing history…</p>
+          )}
+          {jobsState.kind === "missing" && (
+            <p className="mt-2 text-xs text-slate-500">{jobsState.message}</p>
+          )}
+          {jobsState.kind === "unavailable" && (
+            <p role="alert" className="mt-2 text-xs text-red-700">
+              {jobsState.message}
+            </p>
+          )}
+          {jobsState.kind === "loaded" && jobsState.jobs.length === 0 && (
+            <p className="mt-2 text-xs text-slate-500">No publishing attempts yet for this item.</p>
+          )}
+          {jobsState.kind === "loaded" && jobsState.jobs.length > 0 && (
+            <ul className="mt-2 space-y-2">
+              {jobsState.jobs.map((job) => (
+                <li
+                  key={job.id}
+                  className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded px-2 py-0.5 text-xs font-medium ${jobStatusClass(job.status)}`}
+                    >
+                      {formatPublishJobStatus(job.status)}
+                    </span>
+                    <span className="text-xs text-slate-600">
+                      attempt {job.attempts} · {new Date(job.updatedAt).toLocaleString()}
+                    </span>
+                    {job.scheduledAt && (
+                      <span className="text-xs text-slate-600">
+                        scheduled {new Date(job.scheduledAt).toLocaleString()}
+                      </span>
+                    )}
+                    {job.nextAttemptAt && (
+                      <span className="text-xs text-slate-600">
+                        next attempt {new Date(job.nextAttemptAt).toLocaleString()}
+                      </span>
+                    )}
+                    {(job.status === "failed" || job.status === "pending") && (
+                      <div className="ml-auto flex gap-2">
+                        {job.status === "failed" && (
+                          <button
+                            type="button"
+                            disabled={jobBusyId === job.id}
+                            onClick={() => void handleRetryJob(job.id)}
+                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {jobBusyId === job.id ? "Retrying…" : "Retry"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={jobBusyId === job.id}
+                          onClick={() => void handleCancelJob(job.id)}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {job.lastError && <p className="mt-1 text-xs text-red-700">{job.lastError}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {jobActionError && (
+            <p role="alert" className="mt-2 text-xs text-red-700">
+              {jobActionError}
+            </p>
+          )}
+        </div>
+      )}
+
+      {seoReport.checks.length > 0 && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">SEO advice</h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Recommendations from this draft&apos;s own content — not measured search data.
+              </p>
+            </div>
+            <span
+              className={`rounded px-2 py-0.5 text-xs font-semibold ${
+                seoReport.score >= 90
+                  ? "bg-emerald-50 text-emerald-800"
+                  : seoReport.score >= 60
+                    ? "bg-amber-50 text-amber-800"
+                    : "bg-red-50 text-red-800"
+              }`}
+            >
+              {seoReport.score}%
+            </span>
+          </div>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {seoReport.checks.map((check) => (
+              <li
+                key={check.id}
+                className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded px-2 py-0.5 text-xs font-medium ${seoStatusClass(check.status)}`}
+                  >
+                    {seoStatusLabel(check.status)}
+                  </span>
+                  <span className="text-xs font-medium text-slate-800">{check.label}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">{check.detail}</p>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -760,6 +1394,116 @@ export function DraftEditor({
                 disabled={!editable}
                 className={`mt-1 ${inputClasses}`}
               />
+            </div>
+
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className={labelClasses}>Main image</span>
+                {mainImage.ref ? (
+                  <button
+                    type="button"
+                    disabled={!editable}
+                    onClick={() => setMainImage({ ref: "", src: "", alt: "" })}
+                    className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Remove main image
+                  </button>
+                ) : null}
+              </div>
+              {mainImage.src ? (
+                <Image
+                  src={mainImage.src}
+                  alt={mainImage.alt ?? ""}
+                  width={320}
+                  height={256}
+                  unoptimized
+                  className="mt-2 h-32 w-auto rounded-md border border-slate-200 object-contain"
+                />
+              ) : null}
+              <input
+                ref={mainImageFileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                disabled={!editable || mediaBusy}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = "";
+                  if (file) void handleMainImageFile(file);
+                }}
+              />
+              <button
+                type="button"
+                disabled={!editable || mediaBusy}
+                onClick={() => mainImageFileRef.current?.click()}
+                className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {mediaBusy ? "Uploading…" : mainImage.ref ? "Replace image" : "Upload image"}
+              </button>
+              <input
+                type="text"
+                value={mainImage.alt}
+                onChange={(e) => setMainImage((current) => ({ ...current, alt: e.target.value }))}
+                placeholder="Image alt text (optional)"
+                disabled={!editable}
+                className={`mt-2 ${inputClasses}`}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {hasUploadIntegration
+                  ? "Uploaded to the workspace's Sanity project; the image reference travels with the version."
+                  : "Uploading needs a Sanity integration with a saved write token."}
+              </p>
+            </div>
+
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+              <span className={labelClasses}>Add media to the body</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  ref={insertFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  disabled={!editable || mediaBusy}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.currentTarget.files?.[0];
+                    e.currentTarget.value = "";
+                    if (file) void handleInsertImageFile(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!editable || mediaBusy}
+                  onClick={() => insertFileRef.current?.click()}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  + Insert image
+                </button>
+                <input
+                  type="url"
+                  value={youtubeInput}
+                  onChange={(e) => setYoutubeInput(e.target.value)}
+                  placeholder="https://youtu.be/…"
+                  disabled={!editable}
+                  className={`${inputClasses} max-w-xs`}
+                />
+                <button
+                  type="button"
+                  disabled={!editable || mediaBusy}
+                  onClick={handleInsertYoutube}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  + Insert YouTube video
+                </button>
+              </div>
+              {mediaError && (
+                <p role="alert" className="mt-2 text-xs text-red-700">
+                  {mediaError}
+                </p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Media is appended at the end of the body in “Edit” mode and appears in the preview;
+                move it by editing the [media-…] lines in the body text.
+              </p>
             </div>
 
             <div>

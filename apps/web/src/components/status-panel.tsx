@@ -75,40 +75,51 @@ export function StatusPanel() {
             </p>
             <p className="mt-3 text-sm text-slate-800">{state.reason}</p>
             <p className="mt-2 text-sm text-slate-600">
-              Start the API with{" "}
-              <code className="rounded bg-slate-100 px-1 font-mono">make api-run</code>, or check{" "}
+              The dashboard cannot load workspaces or publish until the API is running. From the
+              repository root, run{" "}
+              <code className="rounded bg-slate-100 px-1 font-mono">make api-run</code>. If the API
+              is running on a different address, set{" "}
               <code className="rounded bg-slate-100 px-1 font-mono">NEXT_PUBLIC_API_BASE_URL</code>{" "}
-              in <code className="rounded bg-slate-100 px-1 font-mono">apps/web/.env.local</code>.
+              in <code className="rounded bg-slate-100 px-1 font-mono">apps/web/.env.local</code> to
+              that API&apos;s base URL, then restart the web app.
             </p>
           </div>
         ) : null}
 
         {state.kind === "loaded" ? (
-          <dl className="divide-y divide-slate-200">
-            <Row term="API">
-              <Badge label="Running" tone="good" />
-              <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
-                {state.health.service} {state.health.version}, {state.health.environment}
-              </span>
-            </Row>
-            <Row term="Database">
-              <Badge
-                label={describeDatabase(state.health.database.status).label}
-                tone={describeDatabase(state.health.database.status).tone}
-              />
-              <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
-                {state.health.database.message}
-                {state.health.database.latencyMs !== undefined
-                  ? ` (${state.health.database.latencyMs} ms)`
-                  : ""}
-              </span>
-            </Row>
-            <Row term="Last checked">
-              <time dateTime={state.health.checkedAt}>
-                {new Date(state.health.checkedAt).toLocaleString()}
-              </time>
-            </Row>
-          </dl>
+          <>
+            <dl className="divide-y divide-slate-200">
+              <Row term="API">
+                <Badge label="Running" tone="good" />
+                <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
+                  {state.health.service} {state.health.version}, {state.health.environment}
+                </span>
+              </Row>
+              <Row term="Database">
+                <Badge
+                  label={describeDatabase(state.health.database.status).label}
+                  tone={describeDatabase(state.health.database.status).tone}
+                />
+                <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
+                  {state.health.database.message}
+                  {state.health.database.latencyMs !== undefined
+                    ? ` (${state.health.database.latencyMs} ms)`
+                    : ""}
+                </span>
+              </Row>
+              <Row term="Last checked">
+                <time dateTime={state.health.checkedAt}>
+                  {new Date(state.health.checkedAt).toLocaleString()}
+                </time>
+              </Row>
+            </dl>
+            {state.health.database.status === "unconfigured" ? (
+              <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
+                The API is running, but no database is configured. Set <code>DATABASE_URL</code> for
+                the API and restart it before creating persistent business workspaces.
+              </p>
+            ) : null}
+          </>
         ) : null}
       </div>
     </section>

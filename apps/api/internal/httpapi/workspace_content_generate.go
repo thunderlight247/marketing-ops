@@ -121,8 +121,16 @@ func generateWorkspaceContentHandler(ws WorkspaceStore, gen ContentGenerator, ti
 			Workspace:    workspaceContext(workspace, brand),
 		})
 		if err != nil {
-			// ProviderError text is already safe; anything else stays generic.
-			writeJSONError(w, http.StatusBadGateway, err.Error())
+			// Only classified provider errors may surface their text; anything
+			// else (e.g. a custom provider implementation erroring out) stays
+			// generic so no internal detail can leak into the response. The
+			// same convention guards the agent routes.
+			message := "the AI provider could not be reached"
+			var providerErr *aiprovider.ProviderError
+			if errors.As(err, &providerErr) {
+				message = providerErr.Error()
+			}
+			writeJSONError(w, http.StatusBadGateway, message)
 			return
 		}
 

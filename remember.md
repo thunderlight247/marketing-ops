@@ -1,810 +1,1233 @@
-# Marketing Operations Platform --- Project Memory and Milestones
-
-**Project status:** Milestone 1 complete (data layer); Milestone 2 complete (workspaces + brand + content); Milestone 3 complete (Integration registry and capability checks); Milestone 4 COMPLETE and live-verified against the real provider (OpenRouter / openai/gpt-4o); Milestone 5 COMPLETE (approval workflow, publishing guard, preview, review flow)\
-**Current milestone:** Milestone 6 --- First real publishing adapter: Sanity (Nutrition Guide pilot)\
-**Project type:** Private internal tool for managing marketing work
-across client businesses\
-**Primary first integration:** Nutrition Guide (`nutritionguide.xyz`), a
-Next.js website using Sanity for blog content\
-**Owner/operator:** The founder manages only businesses and accounts for
-which they have authorized access.
-
-------------------------------------------------------------------------
-
-## 1. Project purpose
-
-Build one internal platform that helps the operator plan, create,
-approve, publish, and measure marketing content for multiple authorized
-client businesses from one dashboard.
-
-The platform should reduce repetitive work without assuming every client
-website or social platform uses the same technology. It should detect
-and record the capabilities available for each connected integration and
-use reusable adapters rather than creating a one-off publishing
-implementation for every client.
-
-This is an internal operations tool, not a public SaaS product. A client
-portal is not part of the initial scope.
-
-## 2. Core product capabilities
-
-1.  **Client workspaces:** Separate each business's profile, brand
-    guidelines, integrations, content, campaigns, publishing history,
-    and reports.
-2.  **Integration management:** Connect supported websites, CMSs,
-    Git-based publishing workflows, and social platforms through
-    authorized credentials.
-3.  **Capability detection:** Record whether an integration supports
-    reading content, creating drafts, publishing, scheduling,
-    deleting/updating, analytics, or lead tracking. Never claim a
-    capability is supported until the adapter verifies it.
-4.  **AI-assisted content:** Draft SEO-oriented articles, social posts,
-    titles, descriptions, calls to action, and campaign ideas using each
-    client's business context and brand rules.
-5.  **Human approval:** Generated content remains a draft until an
-    authorized operator explicitly approves it for publishing. No silent
-    auto-publishing in the initial release.
-6.  **Publishing:** Publish approved content through the appropriate
-    adapter; record status, destination URL/ID, timestamps, errors, and
-    retries.
-7.  **Scheduling:** Queue approved content for future publication, with
-    safe retries and duplicate prevention.
-8.  **SEO and performance:** Track available search, website, social,
-    content, and enquiry metrics. Clearly label unavailable or estimated
-    metrics.
-9.  **Lead/enquiry tracking:** Capture enquiries only through configured
-    and authorized integrations; record source and status without
-    inventing attribution.
-10. **Reports:** Summarize work completed, content published,
-    traffic/engagement metrics available, and leads recorded for a
-    client and period.
-11. **Audit and security:** Record important actions, protect
-    credentials, isolate client data, and provide understandable
-    integration/error states.
-
-## 3. Agreed technical direction
-
--   **Frontend:** Next.js, TypeScript, Tailwind CSS.
--   **Backend:** Go, with clear separation between transport/handlers,
-    application services, domain logic, integration adapters, and
-    persistence.
--   **Database:** PostgreSQL.
--   **Asynchronous work:** A background job/worker mechanism for
-    scheduled publishing, retries, and longer-running tasks. Choose a
-    maintainable implementation during the architecture phase; do not
-    add infrastructure without a demonstrated need.
--   **AI:** Provider interface so a model provider can be changed
-    without rewriting content workflows. Keep model keys server-side.
--   **Integrations:** Adapter/interface pattern with capability
-    discovery and explicit per-integration status.
--   **Deployment:** Local development first; production deployment
-    decisions can be made after the core workflow is working.
--   **Quality:** Migrations, configuration validation, structured logs,
-    tests for business-critical behavior, and documented local setup.
-
-Do not introduce microservices, Kubernetes, or unnecessary
-infrastructure for the first version. A modular Go backend and a single
-web application are sufficient unless evidence later shows otherwise.
-
-## 4. Architecture principles
-
--   **Client data isolation:** Every client-owned record must be scoped
-    to a workspace. Enforce this in application queries and tests.
--   **Least privilege:** Request only the permissions needed for each
-    integration.
--   **Secrets:** Never commit tokens or credentials; never send
-    server-side secrets to the browser; redact them from logs. Use
-    environment variables locally and a suitable secret store in
-    deployment.
--   **Approval gate:** Publishing jobs must verify that the content
-    version being published has been approved. Editing approved content
-    invalidates that approval until re-approved.
--   **Idempotency:** Retried jobs must not accidentally publish
-    duplicate posts or duplicate records.
--   **Observable failures:** Store meaningful failure state and safe
-    diagnostics; provide retry controls where appropriate.
--   **Capability-aware UI:** Show supported, unsupported, unconfigured,
-    and failed capabilities accurately.
--   **Adapter reuse:** Support different client stacks through
-    interfaces/adapters, not by forcing all websites into one CMS.
--   **No destructive discovery:** Integration checks must be read-only
-    unless the operator explicitly starts an authorized write test.
--   **Human control:** Do not publish automatically without the
-    operator's approval in the initial release.
-
-## 5. Milestone roadmap
-
-Milestones are ordered deliverables, not promises of a particular
-calendar duration. Complete each milestone with working code, tests
-appropriate to its scope, and an update to this file. Do not skip ahead
-by implementing every integration before the core workflow is reliable.
-
-### Milestone 0 --- Project setup and engineering foundation
-
-**Status: IMPLEMENTED, VERIFICATION PENDING** (see section 9 for exactly what
-was and was not verified)
-
-Deliver: - Create repository and documented directory structure. -
-Initialize Next.js + TypeScript + Tailwind frontend. - Initialize Go
-backend module with health endpoint and configuration
-loading/validation. - Set up PostgreSQL connection and first migration
-mechanism. - Add `.env.example`, `.gitignore`, formatter/linter
-conventions, and basic tests. - Add local development instructions and a
-simple health/status view. - Add a project README linking to this
-milestone file.
-
-Acceptance: - A developer can follow the README to run the app
-locally. - Frontend and backend start successfully. - Backend health
-endpoint responds. - Database connection can be checked without exposing
-credentials. - No real client credentials are committed.
-
-### Milestone 1 --- Domain model and database foundation
-
-Deliver: - Define core entities: Workspace/Client, User/Operator
-(initially single-operator-friendly but with sound authorization
-boundaries), Integration, IntegrationCapability, BrandProfile,
-ContentItem, ContentVersion, Approval, PublishingJob, PublishedArtifact,
-AuditEvent. - Add PostgreSQL migrations and repository/data-access
-layer. - Define ownership relationships and workspace scoping. - Add
-seed/demo data that contains no real client secrets.
-
-Acceptance: - Migrations run from a clean database and are documented. -
-Domain and database rules are tested. - Cross-workspace access tests
-show one workspace cannot access another workspace's records.
-
-### Milestone 2 --- Initial dashboard and workspace management
-
-Deliver: - Responsive dashboard shell and navigation. -
-List/create/view/edit client workspaces. - Client profile with business
-description, website, audience, services, tone, brand rules, prohibited
-claims, and calls to action. - Workspace-specific integrations and
-content sections.
-
-Acceptance: - Operator can create and manage multiple workspaces. - Each
-view is clearly scoped to the selected workspace. - Empty, loading,
-success, and error states exist.
-
-### Milestone 3 --- Integration registry and capability checks
-
-Deliver: - Integration interface and registry. - Connection
-configuration/status lifecycle: unconfigured, connected, limited, error,
-disconnected. - Capability model: read content, create draft, publish,
-update, schedule, analytics, lead/enquiry intake. - Read-only
-test/health checks by default. - Secure credential handling and redacted
-diagnostic messages.
-
-Acceptance: - UI can show what each integration supports and why a
-capability is unavailable. - Failed checks do not damage client sites or
-expose secrets. - A new adapter can be added without changing core
-content workflow code.
-
-### Milestone 4 --- Content planning and AI-assisted drafting
-
-Deliver: - Content calendar/planning records and content briefs. - AI
-provider abstraction and server-side model invocation. - Generate blog
-articles and social posts from workspace context. - Editable title,
-slug, excerpt, body, metadata, channel-specific copy, CTA, and suggested
-schedule. - Store prompt/configuration metadata needed for debugging
-without unnecessarily retaining sensitive input.
-
-Acceptance: - Drafts are stored before any publishing action. -
-Generated content is editable and associated with the correct
-workspace. - Model failure, timeout, or malformed output is handled
-safely. - No AI output is published automatically.
-
-### Milestone 5 --- Review, versioning, and approval workflow
-
-Deliver: -
-Draft/review/approved/rejected/queued/publishing/published/failed
-lifecycle, with transitions defined centrally. - Content version history
-and approval records. - Explicit approval action and approval
-invalidation when approved content changes. - Preview of content before
-approval. - Audit events for approvals and publishing actions.
-
-Acceptance: - A publishing job cannot publish unapproved or changed
-content. - The operator can compare versions and understand current
-status. - Approval decisions are traceable.
-
-### Milestone 6 --- First real publishing adapter: Sanity
-
-**Pilot integration:** Nutrition Guide's existing Next.js + Sanity blog.
-
-Deliver: - Sanity adapter using the supported Sanity APIs and
-least-privilege server-side credentials. - Connection check and
-capability reporting. - Create or update a draft, publish only after
-approval, and retrieve the resulting document/slug/URL. - Handle image
-upload if required and supported by the chosen implementation. - Safe
-retries, duplicate prevention, and useful error handling. - Verification
-step that checks the resulting public article URL when possible.
-
-Acceptance: - Existing website content and routes continue to work. - A
-test draft can be created without appearing publicly before approval. -
-An approved article can be published once, with the destination
-recorded. - Credentials remain server-side and are not logged. - Test
-first with a clearly identified test article or other safe test content
-agreed by the operator; do not alter/delete existing client content
-without explicit permission.
-
-### Milestone 7 --- Reusable website publishing adapters
-
-Deliver adapters based on actual client needs, prioritizing: -
-Sanity/CMS API adapter pattern. - Git-based publishing adapter for
-repositories where content is committed as files and deployed through an
-authorized workflow. - Generic/custom API adapter where a client
-provides an authorized content API. - Clear manual/export workflow when
-safe automation is not possible. - Adapter documentation and contract
-tests.
-
-Acceptance: - Core content/approval workflows do not depend on a
-particular CMS. - Unsupported sites are identified clearly instead of
-receiving a false promise of automatic publishing. - Every adapter
-declares its supported capabilities and limitations.
-
-### Milestone 8 --- Social publishing integrations
-
-Deliver: - Integration framework for selected social platforms, based on
-official APIs and platform permissions. - Channel-specific post previews
-and formatting. - Approval, scheduling, publication status, post
-IDs/URLs, and retry handling. - Clear handling of expired/revoked
-permissions and platform limitations.
-
-Acceptance: - Only platforms with valid authorized access can be
-connected. - No password scraping or unofficial automation that violates
-platform rules. - Unsupported actions are disclosed and may fall back to
-a manual checklist/export.
-
-### Milestone 9 --- Scheduler, workers, retries, and operations
-
-Deliver: - Background worker and persistent job queue. - Schedule
-approved content using timezone-aware timestamps. - Retry policy with
-backoff, idempotency keys, lock/concurrency handling, and terminal
-failure state. - Operator controls to cancel or retry eligible jobs. -
-Operational logs and job history.
-
-Acceptance: - Restarting the app does not silently lose scheduled
-jobs. - Duplicate job execution does not create duplicate posts. -
-Timezones and daylight-saving behavior are handled explicitly where
-relevant. - A failed job is visible and diagnosable without exposing
-secrets.
-
-### Milestone 10 --- SEO and website analytics
-
-Deliver: - Integrations for available data sources such as Google Search
-Console and analytics providers, where the operator has authorization. -
-Track clicks, impressions, queries, landing pages, traffic and content
-metrics that the connected source actually provides. - SEO metadata
-checks for generated articles. - Baseline and date-range comparisons.
-
-Acceptance: - Metrics show source, time period, and last successful
-sync. - Missing permissions/data are reported rather than fabricated. -
-SEO recommendations are distinguishable from measured results.
-
-### Milestone 11 --- Lead/enquiry tracking and campaign management
-
-Deliver: - Campaigns linked to content and publishing channels. -
-Capture enquiries through configured forms/APIs or authorized imports. -
-Lead status, source, notes, and follow-up date. - UTM conventions and
-attribution only where tracking data supports it. - Respect data
-minimization and client-specific access.
-
-Acceptance: - Lead records have a traceable source or are marked
-unknown. - Data is workspace-isolated. - No claim of perfect attribution
-where the underlying tracking cannot support it.
-
-### Milestone 12 --- Reporting and content performance
-
-Deliver: - Workspace and date-range reports. - Published content,
-planned vs completed items, available analytics, leads, and integration
-health. - Export/shareable reports for the operator to send to
-clients. - Clear definitions for metrics and caveats.
-
-Acceptance: - Reports only include data actually available. - Report
-calculations are tested and reproducible. - Client-specific data cannot
-leak into another workspace's report.
-
-### Milestone 13 --- Security, reliability, and UX hardening
-
-Deliver: - Review authentication and authorization for the actual
-deployment model. - Rate limits and validation for sensitive
-endpoints. - Secure secret storage, rotation/revocation instructions,
-log redaction, backups, restore procedure, and data-retention
-decisions. - Accessibility, mobile responsiveness, loading/error states,
-and audit review. - Dependency and configuration review.
-
-Acceptance: - Security-sensitive flows have tests and documented
-operational procedures. - Backups can be restored in a tested
-environment. - No known cross-workspace data leakage in the tested
-paths. - Operator can disconnect an integration and revoke its
-credentials.
-
-### Milestone 14 --- Deployment, pilot, and release
-
-Deliver: - Deployment configuration and environment documentation. -
-Production database migration and backup plan. - Monitoring/alerts for
-failed jobs and integrations. - Pilot with Nutrition Guide and a small
-number of other authorized clients. - Feedback-driven fixes and final
-operator guide.
-
-Acceptance: - Production deployment is repeatable. - Pilot workflows
-work end-to-end from content brief through approval, publication,
-verification, and reporting. - Recovery and rollback steps are
-documented. - Only then consider additional advanced automation.
-
-## 6. Out of scope until the core system works
-
--   Public SaaS subscriptions and billing.
--   Client-facing self-service portal.
--   Automatic publishing of unreviewed AI content.
--   Unsupported unofficial social media automation.
--   Complex multi-agent workflows, microservices, Kubernetes, or
-    expensive infrastructure without a proven need.
--   Claims that every website/platform can be fully automated.
-
-## 7. Initial end-to-end success scenario
-
-1.  Operator opens the dashboard and selects Nutrition Guide.
-2.  The system uses its saved workspace profile and authorized
-    integration.
-3.  Operator creates a content brief or asks AI to draft an article.
-4.  The article is stored as a draft and reviewed/edited.
-5.  Operator approves the exact version.
-6.  The Sanity adapter publishes the approved version.
-7.  The system records the Sanity document ID, public URL, time, and
-    result.
-8.  The operator verifies the page and later sees available performance
-    data.
-
-This scenario is the first practical definition of a successful release.
-Build the general foundation first, then implement this pilot without
-hard-coding Nutrition Guide into the platform.
-
-## 8. How any AI assistant/developer should continue
-
-At the beginning of a session: 1. Read this file and `README.md`. 2.
-Inspect the actual repository and current Git status before changing
-files. 3. Check completed milestones against code, migrations, tests,
-and working behavior; do not trust status labels alone. 4. Identify the
-current milestone and its acceptance criteria. 5. Work on the smallest
-useful next step. Do not repeat discovery questions already answered
-here. 6. Do not rewrite working architecture or make unrelated changes.
-7. Never expose or request secrets in chat. 8. Run relevant tests and
-report the exact commands and results. 9. Update the milestone status,
-decisions, files changed, tests, and next action in this file. 10. Ask
-the operator only when a decision genuinely blocks progress or would
-create a consequential external/production change.
-
-## 9. Current state and next action
-
-### 9.1 Project history before Milestone 0
-
-**Completed** - Product purpose and internal-only scope established. -
-Initial stack selected: Next.js/TypeScript/Tailwind, Go, PostgreSQL. -
-Reusable integration/adapter direction established. - Nutrition Guide
-identified as the first pilot: Next.js frontend with Sanity blog. -
-Read-only local Sanity query succeeded and found one post: - Title:
-`5 Simple Ways to Enjoy Ghanaian Foods While Losing Weight` - Slug:
-`5-simple-ways-to-enjoy-ghanaian-foods-while-losing-weight` - This
-confirms read access from the local project; it does not prove
-write/publish permissions or production deployment behavior. - No
-marketing-platform repository has been created yet. - No
-marketing-platform code has been written. - No changes have been made to
-the Nutrition Guide production site as part of this investigation.
-
-### 9.2 Milestone 0 --- what was built
-
-The repository foundation exists in the project root (monorepo). Files created:
-
-- Root: `README.md`, `remember.md`, `Makefile`, `.gitignore`, `.editorconfig`
-- `infra/`: `docker-compose.yml` (local PostgreSQL only), `.env.example`
-- `docs/`: `architecture.md`, `local-development.md`, `decisions.md`
-- `apps/api/` (Go 1.23, module `marketingops/api`, only dependency `pgx/v5`):
-  - `cmd/api/main.go` (server, graceful shutdown), `cmd/migrate/main.go` (`up`, `status`)
-  - `internal/config` (validated env config, credential-safe output) + tests
-  - `internal/health` (status report logic) + tests
-  - `internal/httpapi` (routes `GET /api/v1/health`, `GET /api/v1/ready`; recover/log/security-header/CORS middleware) + tests
-  - `internal/database` (lazy pgx pool), `internal/migrate` (forward-only runner) + loader tests
-  - `migrations/0001_app_metadata.sql` (baseline only), `migrations/embed.go`, `.env.example`
-- `apps/web/` (Next.js 15 App Router, React 19, TypeScript, Tailwind v4):
-  - Overview page with live API/database status panel; placeholder routes with empty states for Workspaces, Content, Calendar, Integrations, Analytics, Settings
-  - `src/lib/{config,health,navigation}.ts` with Vitest tests
-  - ESLint, Prettier, Vitest, TypeScript config; `.env.example`
-
-Key decisions are in `docs/decisions.md` (D1 to D15). Notable: `/health` always returns
-200 with a status body and `/ready` returns 503 when degraded; `DATABASE_URL` is optional
-outside production; migrations are forward-only and embedded; no animation libraries and
-no authentication in this milestone.
-
-### 9.3 Milestone 0 --- verification status (honest record)
-
-**VERIFIED COMPLETE on 2026-10-18 on the operator's machine (Go toolchain, Node,
-network, Docker all available).** No compile or test fixes were needed.
-
-Verification results:
-
-- `make api-tidy` produced `go.sum`; `api-fmt-check` reports no unformatted files.
-- `make api-vet` and `make api-test`: pass (config, health, httpapi, migrate tests).
-- `make web-fmt-check`, `web-lint`, `web-typecheck`: pass. Real Vitest run: 26 tests
-  in 3 files (`config`, `health`, `navigation`) pass.
-- `make web-build` (`next build` 15.5.28): succeeds; all 8 routes + not-found build.
-- `make db-up`: PostgreSQL 16 container healthy. `make migrate-status` shows
-  `0001 app_metadata` applied; `make migrate-up` reports nothing pending. The
-  migration runner has connected to PostgreSQL.
-- Live API check (run on `API_PORT=8081`, see note below): `GET /api/v1/health` →
-  200 with `status: ok`, database `connected`, latencyMs 14; `GET /api/v1/ready` →
-  200. Structured request logs contain no credentials.
-- Degraded-mode check: starting the API with a wrong `DATABASE_URL` password gives
-  `GET /api/v1/ready` → 503 with `status: degraded`, database `unavailable`, and no
-  credentials in the response (lint-style redaction claim confirmed at runtime).
-- Initial git repository created (`git init -b main`) and root commit `53f3823`
-  "Milestone 0: project foundation and verification" made with `go.sum` and
-  `package-lock.json` committed; `apps/api/.env`, `apps/web/.env.local`,
-  `infra/.env` confirmed untracked.
-
-Note: **port 8080 is occupied on this machine by an unrelated server**
-(`/app/schoolhub-server`, root-owned), so the API was verified on `API_PORT=8081`
-instead. `make api-run` on this machine will fail to bind 8080 until either that
-other server is stopped or `API_PORT` in `apps/api/.env` is changed; the code is
-fine, this is purely a local-port conflict.
-
-### 9.4 Verification commands run (2026-10-18)
-
-```bash
-make db-up && make migrate-status && make migrate-up   # healthy; 0001 applied
-API_PORT=8081 make api-run        # health 200, ready 200 (8080 taken by other app)
-API_PORT=8082 (bad DATABASE_URL)  # ready -> 503 degraded, no secrets in body/logs
-make web-build                    # next build succeeds, 10/10 pages
-make check                        # all format/lint/type/test checks green
-```
-
-### 9.5 Milestone 0 acceptance checklist
-
-| Criterion | Status |
-| --- | --- |
-| README lets a developer run the app locally | Done (docs exist; flow executed via ARLS migration) |
-| Frontend and backend start successfully | API verified live on :8081; `next build` + dev routes build; dashboard page itself not manually clicked through in a browser |
-| Backend health endpoint responds | Verified live: `/health` 200, `/ready` 200 when DB up, 503 degraded when DB unreachable |
-| DB connection checkable without exposing credentials | Verified: migration applied against PostgreSQL; degraded response and JSON logs contain no credentials |
-| No real client credentials committed | Verified: `.env`/.env.local/infra .env untracked; only `.env.example` files committed |
-| Tests and format/lint documented | Done: gofmt clean, vet + Go tests pass, Vitest 26/26, lint/typecheck/prettier pass |
-| Git repository | Done: initialized, root commit `53f3823` |
-
-### 9.6 Current milestone and next action
-
-**Current milestone:** Milestone 1 --- domain model and database foundation.
-
-**Deferred decisions settled (2026-10-18, recorded as D16/D17 in `docs/decisions.md`):**
-
-1. Operator authentication: none for now; middleware stays the single choke point so a
-   login layer can wrap requests later without touching handlers (revisit in Milestone 13).
-2. Client integration credentials: encrypted at rest in PostgreSQL (AES-GCM ciphertext
-   without the nonce, key from env, `key_version` column for rotation). Plaintext is the
-   failure mode; the key never enters the database.
-
-**Milestone 1 first increment (implemented 2026-10-18):**
-
-- `apps/api/migrations/0002_domain.sql`: full core schema --- operators, workspaces,
-  brand_profiles, integrations, integration_capabilities, integration_credential_sets
-  (ciphertext bytes + key_version), content_items, content_versions, approvals,
-  publishing_jobs (idempotency_key unique), published_artifacts, audit_events. Status and
-  kind columns are text with CHECK constraints; every client-owned table carries
-  `workspace_id` with a foreign key and index.
-- `apps/api/migrations/0003_seed_demo.sql`: two clearly-labelled demo workspaces
-  (`demo-studio`, `demo-cafe`) with sample brand profiles; no real client names, no secrets.
-- `apps/api/internal/store`: repository foundation (pgx pool wrapper). Workspace-scoped
-  content queries filter on `workspace_id` in SQL. Sentinel errors `ErrNotFound` and
-  `ErrSlugTaken` returned to callers instead of driver errors.
-- `apps/api/internal/store/store_test.go`: integration tests that self-apply migrations and
-  skip when no database is configured. Tests cover workspace lifecycle plus the
-  **cross-workspace isolation acceptance test**: workspace B cannot list or read workspace
-  A's content even with a valid item id; deleting a workspace cascades its content away.
-  Also verifies new content items must start as drafts.
-- `Makefile`: `api-test` now sources `apps/api/.env`, so `make check` runs the integration
-  tests against the local Docker PostgreSQL when it is up.
-
-**Milestone 1 second increment (implemented 2026-10-18) --- the remaining repositories:**
-
-- `internal/store/brands.go`: workspace-scoped brand profile get/upsert.
-- `internal/store/integrations.go`: scoped integration create/list/get, lifecycle status
-  updates, deletes; capability upsert/list (validates value pairs in code before SQL);
-  encrypted credential set put/get/delete (ciphertext + key_version only, never plaintext).
-- `internal/store/workflow.go`: content versions inserted as numbered snapshots per item
-  (order and reads joined through `content_items` for scoping); record approval
-  only when item+version+workspace all match (cross-workspace or cross-item approval is
-  impossible at the SQL level); secret-free audit events with per-workspace listing.
-- `internal/store/publishing.go`: publishing job creation guarded by joins through the
-  owning item + version + workspace integration (so unapproved/mismatched or
-  cross-workspace job creation cannot happen at this layer), idempotency key lookup,
-  published artifact recording (waiting Milestone 9 for the workflow that drives them).
-- `internal/secretcipher`: AES-256-GCM encrypt/decrypt with hex-encoded 32-byte key from
-  env (D17), nonce-per-message, errors deliberately non-distinguishing, key loading
-  validated in unit tests (no database needed).
-- `internal/store` now has 8 integration tests: workspace lifecycle, cross-workspace
-  isolation (content), integrations scoped to workspace, capabilities + credential
-  roundtrip, version numbering, approval guards, audit scoping, and publishing job
-  scoping/idempotency/artifacts. All pass against the Docker database.
-
-**Verified:** `make migrate-up` applied 0002 + 0003; both increments confirmed by
-`make check` exit 0 (all Go packages including store integration tests and secretcipher
-unit tests; all web checks 26/26). Tests still skip cleanly without DATABASE_URL.
-
-**Milestone 2 first increment (implemented 2026-10-18) --- workspaces API and dashboard UI:**
-
-- API: `GET /api/v1/workspaces` (list active workspaces) and `POST /api/v1/workspaces`
-  (create; slug/name/websiteUrl validated server-side: slug pattern, name ≤ 120 chars,
-  8 KB body cap, trailing-slash trim; 201/400/409/500 mapped from store sentinels;
-  501 when no database is configured).
-- `httpapi.Deps` gains an optional `Workspaces WorkspaceStore` (interface, fake-tested);
-  `cmd/api/main.go` builds the store from the pool when configured.
-- Web: `src/lib/workspaces.ts` (parse/validate/fetch/create, never-throw states) with
-  Vitest tests; `src/components/workspaces-panel.tsx` client panel (list, refresh,
-  create form with inline validation + error states); Workspaces page now renders real
-  data instead of a placeholder route.
-- Live verification against the Docker DB, all as designed: `GET` returned the two demo
-  workspaces, `POST` created 201, duplicate slug 409, invalid slug 400. Test rows left
-  in the demo database by earlier failing test runs were cleaned up by hand; integration
-  test cleanups verified to leave only the two demo workspaces after a full
-  `make check`.
-- Verified: `make check` exit 0 (Go vet, all Go packages, web 37/37 Vitest tests).
-
-**Milestone 2 second increment (implemented 2026-10-18) --- workspace detail and brand profile:**
-
-- API: `GET /api/v1/workspaces/{id}` (workspace + brand profile, brand `null` when never
-  saved; 404 for unknown ids) and `PUT /api/v1/workspaces/{id}/brand` (upsert; text fields
-  trimmed, blank → null, 20k char and list-size caps, 32 KB body cap). The
-  `WorkspaceStore` interface grows accordingly; router registers the sub-routes.
-- A live check caught a real bug the fake-backed tests could not: omitting `rules`/
-  string lists reached PostgreSQL as SQL NULL and violated NOT NULL defaults. Fixed at
-  the store boundary (nil → empty map/slice), with a store integration test covering
-  exactly that case plus the scoped brand read and the "no profile yet" behavior.
-- Web: `fetchWorkspaceDetail`/`saveBrandProfile` helpers with modeled states (loaded /
-  missing / unavailable; saved / rejected / unavailable) and unit tests; the
-  `/workspaces/[id]` page renders workspace facts and a full brand-profile editor
-  (description, audience, services, tone, prohibited claims and CTAs as line lists)
-  with loading, not-found, error, and "last saved" states; workspace names in the list
-  are links to their detail page.
-- Verified: live curl round-trip on the real database (detail 200 with seeded brand,
-  PUT 200 with trimmed values and blank→null, read-back 200, unknown id 404); demo data
-  restored afterwards; `make check` exit 0 (web now 42/42 tests).
-
-**Milestone 2 third increment (implemented 2026-10-18) --- workspace facts editing and guarded delete:**
-
-- API: `PATCH /api/v1/workspaces/{id}` edits name/websiteUrl/status (omitted fields keep
-  current values, blank-website nulls it, bad names/statuses are 400, store-level
-  `ErrNameRequired` maps to 400, unknown id 404). `DELETE /api/v1/workspaces/{id}` requires
-  a body `{"confirmSlug": "<workspace-slug>"}` --- wrong/missing/blank confirmations are
-  refused with 400; success is 204 with no body.
-- Both actions record `audit_events` (`workspace.updated`, `workspace.deleted`). Audit
-  failures are logged as a warning class and do not mask the request result. The deletion
-  event carries a null workspace_id (the FK is ON DELETE SET NULL, so the deletion trail
-  survives the cascade) plus the slug in details.
-- Store fix found by live checks: `published_artifacts.integration_id` has no ON DELETE
-  action (intentional --- disconnecting an integration must not erase its historical
-  artifacts), so a workspace with any published artifact could never be deleted. Now,
-  `DeleteWorkspace` runs in one transaction: artifacts belonging to the workspace's jobs
-  are deleted explicitly, then the workspace cascades. Previously every store test run
-  leaked its workspaces into the demo database for this reason; test cleanups now assert
-  successful deletion instead of ignoring errors.
-- Web: facts editor (name/website/status) and a red danger-zone card that requires typing
-  the workspace slug before "Delete workspace forever" lights up; after deleting it
-  navigates back to the list. Helper functions `updateWorkspaceFacts`/`deleteWorkspace`/
-  `validateWorkspaceFacts` with modeled results and unit tests (web now 48/48).
-- Verified live: PATCH rename applied (+fresh updatedAt, demo data restored afterwards),
-  bad status 400, wrong confirmSlug 400 twice (demo data untouched), throwaway workspace
-  POST → DELETE 204 → GET 404, `workspace.deleted` audit row with cleared workspace link,
-  demo workspaces intact. `make check` exit 0 with zero test-row leakage after the fix.
-
-**Milestone 2 fourth increment (implemented 2026-10-18) --- workspace-scoped content section:**
-
-- API: `GET /api/v1/workspaces/{id}/content` (returns all content items scoped to `{id}`;
-  404 if workspace does not exist) and `POST /api/v1/workspaces/{id}/content` (creates draft
-  content item; title required ≤ 200 chars, kind required from `blog_article`, `social_post`,
-  `snippet`, optional slug validated against `slugPattern`; status forced to 'draft' at
-  domain boundary; returns 201 Created; duplicate slug in workspace returns 409 Conflict;
-  writes `content.created` audit event).
-- Router: CORS preflight allowed methods expanded to `GET, POST, PUT, PATCH, DELETE, OPTIONS`.
-- Web: `apps/web/src/lib/content.ts` (helpers `fetchWorkspaceContent`, `createWorkspaceContent`,
-  `validateContentInput`, `formatContentKind`, `formatContentStatus` with typed states) and
-  14 unit tests in `src/lib/content.test.ts` (Vitest suite now 62/62 passing).
-- Web UI: `WorkspaceContentSection` component embedded in `/workspaces/[id]` (shows content items,
-  kind tags, draft badges, formatted dates, empty state, and new draft creation form with
-  inline error and server error alerts). `/content` route upgraded from placeholder to
-  `ContentDashboard` with an active workspace selector that renders the workspace's scoped
-  content drafts.
-- Live verification: live curl checks against real PostgreSQL database on `:8081`:
-  empty content list 200, draft creation 201, duplicate slug 409, bad kind 400, unknown
-  workspace 404, cross-workspace isolation verified (workspace B cannot see workspace A's
-  drafts). Test rows cleaned up cleanly; full `make check` exit 0; `make web-build` exit 0 (10/10 routes).
-
-**Milestone 3 (implemented 2026-10-18) --- integration registry, capability checks, and encrypted credentials:**
-
-- `apps/api/internal/integration`: Adapter interface, CapabilityReport model (7 canonical capabilities:
-  `read_content`, `create_draft`, `publish`, `update_content`, `schedule`, `analytics`, `lead_intake`),
-  lifecycle status model (`unconfigured`, `connected`, `limited`, `error`, `disconnected`),
-  and Registry with built-in adapters:
-  - `SanityAdapter` (`sanity`): pilot for Nutrition Guide Next.js+Sanity blog. Inspects `projectId` and `dataset`.
-    Supports public read without token (status `limited`), supports draft/publish write mutations when token is present (status `connected`).
-    Explains clearly why `schedule`, `analytics`, and `lead_intake` are unsupported.
-  - `GenericAPIAdapter` (`generic_api`): custom client REST API. Validates baseUrl, supports mutations with auth key/token.
-  - `ManualExportAdapter` (`manual_export`): checklist workflow for non-automated sites.
-  - Unit tests covering registry and all 3 adapters.
-- Config: `CREDENTIAL_ENCRYPTION_KEY` loaded as 32-byte AES-GCM key (64 hex characters) from environment.
-  Deterministic fallback used in non-production environments for zero-friction local development; strictly
-  required when `APP_ENV=production`. Logs redact the key and only report `credential_key_configured: true`.
-- API endpoints in `apps/api/internal/httpapi/workspace_integrations.go`:
-  - `GET /api/v1/integrations/adapters`: lists available adapter descriptors.
-  - `GET /api/v1/workspaces/{id}/integrations`: lists integrations scoped to workspace with capability statuses and `hasCredentials: bool`.
-  - `POST /api/v1/workspaces/{id}/integrations`: creates integration with validated adapter kind, initializes default capabilities, and logs `integration.created` audit event.
-  - `GET /api/v1/workspaces/{id}/integrations/{integrationId}`: returns single integration details.
-  - `PUT /api/v1/workspaces/{id}/integrations/{integrationId}/credentials`: receives secret credentials, encrypts them at rest with `secretcipher.Encrypt` (AES-256-GCM), triggers read-only capability check, updates status and capabilities in DB, logs `integration.credentials_updated` audit event with secrets redacted, returns updated integration without leaking secrets.
-  - `POST /api/v1/workspaces/{id}/integrations/{integrationId}/check`: executes read-only capability check on demand, updates status and capability rows, logs `integration.checked` audit event, returns safe diagnostic.
-  - `DELETE /api/v1/workspaces/{id}/integrations/{integrationId}`: disconnects integration and logs `integration.deleted` audit event.
-- Web: `apps/web/src/lib/integrations.ts` (API client helpers with typed results) and 16 unit tests in
-  `src/lib/integrations.test.ts` (Vitest suite now 78/78 passing).
-- UI: `WorkspaceIntegrationsSection` embedded in `/workspaces/[id]` detail page and `/integrations` route
-  upgraded from placeholder to `IntegrationsDashboard` with workspace selector. Displays connection status badges,
-  credentials pill, 7-capability matrix with tooltips/explanations for why each capability is supported or unavailable,
-  "Run check" button, secure credentials drawer, and "+ Connect integration" form.
-- Live verification: verified live against real PostgreSQL container on `:8081`:
-  - Adapter listing (200), creation of Sanity integration (201).
-  - Capability check before token returned `limited` with public read supported and write unsupported (200).
-  - Credential saving stored ciphertext in PostgreSQL, token NOT leaked in JSON response body (200).
-  - Capability check after token returned `connected` with draft & publish write capabilities supported (200).
-  - Integration deletion succeeded (204). Test audit events cleaned up.
-- All acceptance criteria for Milestone 3 satisfied:
-  - UI shows what each integration supports and why capabilities are unavailable.
-  - Checks are strictly read-only and never expose secrets.
-  - New adapters implement `Adapter` and register via `Registry.Register` without touching core workflow code.
-- Verification checks: `make check` exit 0 (vet, Go tests, Prettier, ESLint, typecheck, 78 Vitest tests); `make web-build` exit 0 (10/10 routes).
-
-**Milestone 4 first increment (implemented 2026-10-19) --- draft briefs, planning records, and versioned editing:**
-
-- Migration `0004_content_briefs.sql`: `content_versions` gains `call_to_action text` and
-  `channel_copy jsonb NOT NULL DEFAULT '{}'` (CHECK jsonb object); `content_items` gains
-  `planned_publish_at timestamptz` --- the suggested schedule lives on the planning record
-  (calendar input), the brief lives on the immutable version snapshots.
-- Store (`internal/store/drafts.go`): `SaveContentDraft` does the planning-record UPDATE and a
-  new immutable version INSERT in one transaction. A `FOR UPDATE` status check distinguishes
-  `ErrNotFound` (no such item in workspace) from the new `ErrNotEditable` sentinel (item exists
-  but is approved/published --- drafts frozen until the Milestone 5 approval flow). Omitted brief
-  fields carry forward from the newest version; duplicate replacement slugs surface as
-  `ErrSlugTaken`; `InsertContentVersion` normalizes nil map columns to `{}` (the new NOT NULL
-  constraint caught legacy inserts otherwise).
-- API: `GET /api/v1/workspaces/{id}/content/{itemId}` (item + newest version, `version: null`
-  before the first save) and `PATCH /api/v1/workspaces/{id}/content/{itemId}` (merge-on-omit
-  semantics per field: title/slug/plannedPublishAt/excerpt/body/callToAction/channelCopy/
-  metadata; pattern/size/timestamp validation; drafts only; writes `content.updated` audit
-  event with the new version number; 404/400/409/413 mapped deliberately).
-- Web: Draft editor page/strenghtening route `/content/[workspaceId]/[itemId]` with a client
-  `DraftEditor` (title, slug, UTC datetime-local suggested publish time, excerpt, body, CTA,
-  add/remove channel-specific copy rows, save/reset); content list titles link to it; "drafts
-  are never auto-published" reminder shown in the editor. `lib/content.ts` gained
-  `ContentVersion`, `fetchWorkspaceDraft`, `saveWorkspaceDraft`, `validateDraftInput` with typed
-  results; 24 content tests (suite 88/88).
-- Live verification on the real database: create → PATCH (version 1 with excerpt/body/CTA/
-  channelCopy) → detail returns newest → second PATCH `versionNumber=2`; cross-workspace PATCH
-  404; approved item PATCH 409; bad `plannedPublishAt` 400; `content.created`/`content.updated`
-  audit rows verified. Test rows removed; `content_items` count back to 0 demo baseline.
-- Verified: `make check` exit 0 (Go vet + all packages incl. new store/httpapi draft tests;
-  web prettier/eslint/tsc + 88 Vitest). Migration 0004 self-applied by the store tests and
-  confirmed applied by the migrate command.
-
-**Milestone 4 second increment (implemented 2026-10-19) --- AI provider abstraction and guided generation:**
-
-- `internal/aiprovider`: small `Provider` interface (`Name`, `Generate`) with a structured
-  `GenerateRequest` (kind/topic/channel/instructions + non-secret `WorkspaceContext` assembled
-  from the workspace and its brand profile) and `GenerateResponse`. Failures are classified
-  `ProviderError` kinds: timeout / network / provider / malformed / empty / not_ready /
-  unsupported --- every message is safe text with no keys or provider payloads.
-  - `OpenRouter` adapter: OpenAI-compatible `POST /chat/completions` against
-    `https://openrouter.ai/api/v1` (`X-Title` attribution header; static). The prompt demands a
-    single JSON object; replies are parsed leniently (code-fence/outermost-object extraction),
-    keys normalized (slug slugified, channel keys lowercased), and only a sha256 hash of the raw
-    reply is kept in metadata for debugging. Non-2xx replies never echo request keys.
-  - `StubProvider`: deterministic offline drafts labeled "[Stub]" so development and tests run
-    with no network and no key.
-  - Unit tests cover stub behavior and the OpenRouter parse/malformed/empty/401/timeout/network
-    classification paths (including key-fragment redaction in error text).
-- Config: `OPENROUTER_API_KEY` selects `openrouter` (with optional `AI_MODEL`), otherwise the
-  stub; `AI_GENERATE_TIMEOUT` seconds (default 90, allowed 5-600); production refuses the stub
-  and requires a key. LogValue reports `ai_provider`/`ai_model`/`ai_key_configured` only --- the
-  key is never logged. `.env.example` documents all three.
-- API: `POST /api/v1/workspaces/{id}/content/generate` (router Deps gains `AIGenerator` and
-  `GenerateTimeout`; nil generator answers 501). The handler enforces the server-side timeout,
-  assembles the workspace/brand prompt context, and maps failures to 502 with the provider's
-  safe message. The generated draft is stored FIRST as a draft item plus version 1 (via
-  `InsertContentItem` + `SaveContentDraft`) with metadata `source=ai`, provider, model, and
-  `topic_length` (scalar-only), then audited as `content.generated`. Nothing is queued or
-  published automatically; slug conflicts surface as 409 asking for a topic reword.
-- `cmd/api` builds the configured provider; the HTTP `WriteTimeout` now outlasts the generation
-  timeout so long drafts are not cut off mid-response.
-- Web: `generateWorkspaceContent` lib helper with typed results (created/rejected/conflict/
-  failed/unavailable; only social_post sends a channel) plus a "✨ Draft with AI" form in the
-  content section (kind, topic, per-channel field for posts, extra instructions, generation
-  pending state noting the up-to-90-second wait). Vitest suite now 93/93.
-- Live verification (stub path): generate returned 201 with a `[Stub]` marked draft whose CTA
-  came from the demo workspace's brand profile (prompt context flows through), duplicate topic
-  409, bad kind 400, unknown workspace 404, and `content.generated` audit row present. Test rows
-  removed afterwards; `content_items` count back to the 0 demo baseline.
-- Note: one live round hit 405 because the API process was started from a stale build before the
-  route registration; restarting from a fresh binary fixed it (no code problem).
-- Verified: `make check` exit 0 (all Go packages incl. aiprovider/config/httpapi tests; web
-  prettier/eslint/tsc + 93 Vitest tests).
-- **Real-provider verification (2026-10-19, key from the operator in apps/api/.env, not in
-  chat or git):** with `AI_MODEL=openai/gpt-4o` the OpenRouter adapter drafts live:
-  blog_article "The Story Behind Our Ginger Tea at Demo Cafe" (2040-char body, 7.6s) and
-  social_post "Weekend Specials at Demo Cafe Tasting Bar" (with facebook/instagram/twitter
-  channelCopy, 3.9s) --- both stored as draft items + version 1 with provider/model/duration/
-  reply-hash metadata, both audited, and both kept in the demo workspace as the first real
-  drafts for the operator to review in the UI. Log scan: zero key fragments.
-- **Real-bug found by the real call:** OpenRouter refuses requests whose max_tokens budget
-  exceeds the key's remaining credits (HTTP 402 "can only afford 4000"); the adapter did not
-  set max_tokens, so OpenRouter assumed the model maximum (16384). Fixed at the adapter: an
-  explicit `max_tokens` (default 4000, `OpenRouter.MaxTokens` override) is always sent. Any
-  key whose balance later runs out still surfaces as the safe 502 "the model provider refused
-  the request" message.
-
-**Milestone 5 first increment (implemented 2026-10-19) --- approval workflow, lifecycle transitions, and the publishing guard:**
-
-- Central lifecycle: `contentStatusTransitions` map in `internal/store/approvals.go` is the single
-  definition (draft→review/approved/rejected; review→approved/rejected/draft; approved→draft via
-  invalidation; rejected→draft/review). Queued/publishing/published/failed stay reserved for the
-  Milestone 9 scheduler.
-- `store.DecideApproval` (one transaction, row-locked): validates the decision (approve/reject),
-  requires the item to be in draft/review, targets the implicit newest version (older snapshots
-  can never regain approval after an edit), records the guarded approval row (duplicate decision
-  → `ErrAlreadyDecided`), and flips the item status (`ErrInvalidStatus` when the transition is
-  not allowed; `ErrVersionNotLatest` when no version exists). `ListApprovalsByItem` returns the
-  per-item decision history.
-- Approval invalidation: `SaveContentDraft` now accepts draft **and** approved/rejected items;
-  editing an approved item resets it to `draft` and stores a new version, so stale approvals
-  cannot survive an edit. The PATCH handler records a `content.approval_invalidated` audit row
-  when the previous status was approved.
-- Publishing guard (M5 acceptance): `InsertPublishingJob` now verifies at the store layer that
-  the targeted version carries an `approved` decision **and** is still the item's newest version;
-  unapproved or superseded (changed) content returns `ErrNotApproved`. Tested for both cases.
-- `store.EnsureOperator`: resolves (or seeds) the single operator row for decision attribution in
-  unauthenticated mode (D16); becomes the session identity in Milestone 13.
-- API: `POST /api/v1/workspaces/{id}/content/{itemId}/decision` (approve/reject + optional note,
-  200/400/404/409 mapped, audit `content.approval_approve_recorded` / `content.approval_reject_recorded`)
-  and `GET /api/v1/workspaces/{id}/content/{itemId}/history` (all versions + their decisions).
-- Web: the draft editor now has a Decision panel (Approve/Reject with optional note, note until
-  now only relevant for reject), a "your edits invalidated the approval" banner after editing an
-  approved item, an approved-status status banner, and a version-history section pairing each
-  snapshot with its decision badge and note. Lib helpers `fetchContentHistory` /
-  `decideContentApproval` with typed results; Vitest suite 98/98.
-- Live verification on the real demo draft: approve → 200 (status approved, decidedAt recorded),
-  re-decide → 409, edit → status back to draft with version 2, history shows v1 approved + v2
-  undecided, audit trail `content.approval_approve_recorded` + `content.approval_invalidated` +
-  `content.updated` all present. Test residue removed afterwards (the generated draft restored to
-  its original single version with the real content intact).
-- Verified: `make check` exit 0 (all Go packages incl. new store approval-lifecycle + central
-  transition tests and handler tests; web prettier/eslint/tsc + 98 Vitest tests).
-
-**Milestone 5 second increment (implemented 2026-10-19) --- preview before approval and review-flow polish (Milestone 5 COMPLETE):**
-
-- Rendered draft preview: a dependency-free preview parser (`apps/web/src/lib/preview.ts`) turns
-  the markdown-ish AI output into typed blocks (h1/h2/h3, paragraphs with soft-wrap joining,
-  bullet/ordered lists, horizontal rules, inline `**bold**` segments). The draft editor gains an
-  Edit/Preview toggle: Preview renders the CURRENT form values (title, slug, planned slot,
-  excerpt, body, CTA, channel copy) without any markdown library and without ever injecting raw
-  HTML — everything is React text nodes, so crafted body text cannot script the operator.
-  Preview tests plus a parser edge-case suite (unmatched bold markers stay literal).
-- Review-flow transitions: `store.TransitionContentItemStatus` moves an item through the central
-  map enforcing only the API-exposed subset (`review`/`draft`), row-locked and workspace-scoped
-  (`ErrInvalidStatus` otherwise). API `POST /api/v1/workspaces/{id}/content/{itemId}/status` with
-  a `content.status_changed` audit row; Web "Submit for review" (draft) / "Back to draft" (review)
-  buttons in the review-flow panel with a `transitionContentStatus` lib helper.
-- The decision panel copy now distinguishes draft ("submit for review or decide right away") from
-  review ("decide or send back to draft").
-- Live verification: draft→review 200, review→draft 200, review→approved refused 400 (not in the
-  exposed subset), `published` target 400, two `content.status_changed` audit rows recorded and
-  cleaned up, demo draft data intact.
-- Verified: `make check` exit 0 (all Go packages incl. transition store/handler tests; web
-  prettier/eslint/tsc + 105 Vitest tests).
-
-**Next action:** Milestone 6 --- the first real publishing adapter: Sanity for the Nutrition Guide
-pilot (`draft → approval-gated publish`, connection check, artifact recording, credentials).
-
-Local-environment note carried forward: port 8080 on this machine is occupied by an
-unrelated server, so local API runs use `API_PORT=8081` in the untracked local `.env`;
-the committed `.env.example` keeps 8080 as the default.
+# Marketing Operations Platform — Complete Project Memory and Milestone History
+
+**Document purpose:** Preserve the project's original direction, sequential milestone roadmap, technical decisions, implementation history, verification evidence, unresolved work, and next steps so a future AI assistant can continue development without restarting, confusing projects, or claiming unfinished work is complete.
+
+**Project:** Marketing Operations Platform
+**Pilot business:** Nutrition Guide — `https://nutritionguide.xyz`
+**Reference date for latest recorded progress:** 22 October 2026
+**Repository location:** Must be confirmed from the current development environment
+**Current implementation state:** Multiple milestones and increments have been reported as implemented. The repository must be audited before treating the entire roadmap as complete.
+
+---
+
+## 1. Project identity and purpose
+
+The Marketing Operations Platform is an internal tool for managing marketing operations across multiple client businesses that the operator is authorized to manage.
+
+Its purpose is to bring the main marketing workflow into one place:
+
+1. Manage client workspaces and their business profiles.
+2. Discover and configure available marketing integrations.
+3. Plan marketing campaigns and content.
+4. Generate AI-assisted marketing drafts.
+5. Review and approve exact content versions.
+6. Publish approved content through supported integrations.
+7. Schedule publication and manage background jobs.
+8. Record publishing outcomes and errors.
+9. Track leads and marketing performance.
+10. Produce reports and maintain an audit trail.
+
+The initial pilot is **Nutrition Guide**, whose website is `nutritionguide.xyz`. The site uses Next.js and Sanity, with deployment connected to Vercel.
+
+The project is intended to become a reusable operations platform rather than a one-off integration for Nutrition Guide. New integrations must fit the existing architecture instead of introducing a separate publishing system for each platform.
+
+###
+
+---
+
+## 2. Core technical direction
+
+### Frontend
+
+- Next.js
+- TypeScript
+- Tailwind CSS
+- Responsive operator-facing interface
+- Existing frontend test and lint tooling
+
+### Backend
+
+- Go
+- Modular API architecture
+- PostgreSQL
+- Database migrations
+- Background jobs and workers
+- Provider-neutral integration and publishing contracts
+
+### AI
+
+AI functionality must use a provider abstraction rather than coupling core business logic to one AI provider.
+
+AI-generated output remains a draft until it passes the applicable review and approval workflow.
+
+The SEO Specialist advisory feature described later is an advisory extension of the platform. It does not replace the main roadmap or authorize unrestricted agent activity.
+
+### Database and domain concepts
+
+The original architecture identifies the following core domain concepts:
+
+- `Workspace` / `Client`
+- `User` / `Operator`
+- `Integration`
+- `IntegrationCapability`
+- `BrandProfile`
+- `ContentItem`
+- `ContentVersion`
+- `Approval`
+- `PublishingJob`
+- `PublishedArtifact`
+- `AuditEvent`
+
+Campaigns and leads were subsequently added to the recorded implementation scope.
+
+The current repository must be checked to establish the exact implemented table names, relationships, constraints, and migration history. The domain concepts above are the intended model, not a substitute for inspecting the live schema.
+
+### Integration approach
+
+Integrations should be implemented behind reusable contracts and adapters.
+
+Examples include:
+
+- Sanity and other content-management systems
+- Client websites using APIs
+- Git-connected website deployments
+- Google Search Console
+- Analytics providers
+- Facebook and Instagram publishing
+- Lead intake sources
+
+A website may use a CMS, a custom API, a Git-based workflow, or another deployment arrangement. The platform must detect and respect each integration's actual capabilities.
+
+### Engineering principles
+
+1. **Workspace isolation:** One client's data must not leak into another workspace.
+2. **Least privilege:** Only use the permissions required for a specific integration.
+3. **Secret protection:** Do not commit tokens, expose them to the browser, or leak them through logs.
+4. **Human approval:** Publishing must follow the configured approval requirements.
+5. **Version correctness:** Approval must apply to the exact content version reviewed.
+6. **Idempotency:** Retried jobs must not casually create duplicate publications or records.
+7. **Observable failures:** Failures, retries, and external responses must be recorded appropriately.
+8. **Capability-aware UI:** Do not offer actions an integration cannot support.
+9. **Reusable adapters:** Add providers through existing contracts where practical.
+10. **Safe verification:** Start with read-only discovery. Use production writes only when explicitly authorized and controlled.
+11. **Honest status reporting:** A passing unit test is not proof of live production behavior.
+12. **Incremental development:** Continue from the current architecture unless repository evidence demonstrates a compelling reason to change it.
+
+---
+
+## 3. Why the milestones are sequential
+
+The milestone order is intentional. Each stage establishes capabilities that later stages depend on.
+
+| Milestone range | Main purpose                                       | Why the order matters                                                                          |
+| --------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| M0–M1           | Engineering foundation and data model              | Later features need a working application, persistent storage, and a consistent domain model.  |
+| M2–M3           | Workspace operations and integration registry      | The platform must know which business is being managed and what its integrations can do.       |
+| M4–M5           | Content drafting and approvals                     | Content needs a lifecycle and a review gate before publication can be trusted.                 |
+| M6–M7           | First publishing integration and reusable adapters | A working end-to-end publishing path provides the basis for other destinations.                |
+| M8              | Social publishing                                  | Social channels can reuse the publishing contract, approval model, and job infrastructure.     |
+| M9              | Scheduling and background processing               | Time-based publication needs reliable jobs, retries, and status tracking.                      |
+| M10             | SEO and analytics                                  | Measurement is more useful after content can be published and its destination recorded.        |
+| M11             | Campaigns and leads                                | Marketing activities and incoming leads need workspace ownership and persistent relationships. |
+| M12             | Reporting                                          | Reports depend on trustworthy records from publishing, analytics, campaigns, and leads.        |
+| M13             | Security, reliability, and usability hardening     | Cross-cutting risks must be addressed before a broader operational rollout.                    |
+| M14             | Deployment and pilot release                       | The integrated product must be validated as a complete operational workflow.                   |
+
+This table explains the roadmap's dependency structure. It does **not** mean that every milestone is fully complete or that every dependency has already been verified.
+
+---
+
+# Part I — Original roadmap
+
+## Milestone 0 — Project setup and engineering foundation
+
+**Purpose:** Establish the application structure and local development environment so later work can proceed consistently.
+
+### Planned deliverables
+
+- Frontend application using Next.js, TypeScript, and Tailwind CSS.
+- Go backend/API with configuration and a health endpoint.
+- PostgreSQL connection and migration mechanism.
+- `.env.example` documenting required environment variables without real secrets.
+- `.gitignore` that excludes local credentials and generated files.
+- Basic formatting, linting, and testing conventions.
+- README with local setup and development instructions.
+- Simple health or status view.
+- Initial tests for foundational behavior.
+
+### Acceptance criteria
+
+- A developer can follow the README to start the application.
+- Frontend and backend start successfully.
+- The API health endpoint responds correctly.
+- The backend can verify its database connection.
+- Database migrations can be applied to a clean database.
+- No credentials are committed to source control.
+
+### Recorded status
+
+The roadmap originally identified this as the next implementation stage. Later progress indicates that the application evolved substantially beyond initial setup.
+
+### What must still be verified
+
+- Current repository structure and startup commands.
+- Current health/readiness endpoints.
+- Whether a clean database can be migrated from scratch.
+- Whether setup instructions still match the repository.
+- Whether CI or local checks cover the actual current code.
+
+**Important:** Do not restart M0 automatically. Audit the current code first and only reopen it if a specific foundation requirement is missing or broken.
+
+---
+
+## Milestone 1 — Domain model and database foundation
+
+**Purpose:** Establish the persistent data model needed to manage multiple businesses, their integrations, content, approvals, publishing jobs, and audit history.
+
+### Planned deliverables
+
+- Database migrations for the core domain.
+- Repository or data-access layer.
+- Workspace/client ownership relationships.
+- Operator/user relationships where required.
+- Integration and capability records.
+- Brand profiles.
+- Content items and version history.
+- Approval records.
+- Publishing jobs and publication artifacts.
+- Audit events.
+- Safe seed data for local development.
+
+### Acceptance criteria
+
+- Migrations apply successfully to a clean database.
+- The data-access layer can create and retrieve the main domain records.
+- Records are scoped to their intended workspace.
+- Cross-workspace access is prevented by the relevant application and database rules.
+- Tests exercise important data relationships and isolation behavior.
+
+### Why M1 precedes later milestones
+
+Without a stable data model, the dashboard, approval system, integrations, publishing, and reporting would each invent their own representations of clients and content.
+
+### Recorded status
+
+Later milestones rely on this foundation, and the reported M11 work includes migrations `0001` through `0007`. This is evidence of a developed database history, but the current repository and schema still need inspection before the entire M1 acceptance checklist can be marked verified.
+
+---
+
+## Milestone 2 — Dashboard and workspace management
+
+**Purpose:** Give the operator a usable interface for selecting and managing client businesses.
+
+### Planned deliverables
+
+- Responsive dashboard.
+- Workspace list.
+- Create, view, and edit workspace operations.
+- Business profile fields such as:
+  - Business description
+  - Website
+  - Target audience
+  - Services
+  - Brand tone
+  - Brand rules
+  - Prohibited claims
+  - Calls to action
+- Workspace-level sections for integrations and content.
+- Empty, loading, success, and error states.
+
+### Acceptance criteria
+
+- The operator can manage multiple workspaces.
+- The currently selected workspace controls the displayed data.
+- Workspace changes do not accidentally expose data from another client.
+- Form validation and error states are understandable.
+- The main workspace workflow works without requiring direct database edits.
+
+### Why M2 precedes integrations and content
+
+The platform must know which business it is operating on before it can safely configure accounts, draft content, or publish anything.
+
+### Recorded status
+
+A later browser-based test reportedly verified workspace navigation and campaign/lead screens. That demonstrates some workspace-facing UI functionality, but the full original M2 checklist should be rechecked against the current repository.
+
+---
+
+## Milestone 3 — Integration registry and capability detection
+
+**Purpose:** Represent available integrations consistently and determine what each integration can actually do.
+
+### Planned deliverables
+
+- Integration records associated with workspaces.
+- Provider identification and configuration.
+- Connection status.
+- Capability information.
+- Provider-neutral integration interfaces.
+- Safe connection checks where supported.
+- Error reporting for invalid or incomplete configurations.
+- UI that distinguishes configured integrations from unavailable or unsupported capabilities.
+
+### Acceptance criteria
+
+- Integrations can be associated with the correct workspace.
+- Provider capabilities are represented explicitly.
+- Missing or invalid configuration produces a useful error.
+- Unsupported actions are not presented as if they were available.
+- Integration failures do not expose credentials.
+- A provider can be added without rewriting the whole application.
+
+### Why M3 precedes content publishing
+
+A publishing action must know which destination is configured, whether it is authorized, and which operations that destination supports.
+
+### Recorded status
+
+Later work on Sanity and Meta uses provider-specific integration paths and a shared publishing contract. The exact status of the entire integration registry must still be verified in the repository.
+
+---
+
+## Milestone 4 — Content planning and AI-assisted drafting
+
+**Purpose:** Help the operator create marketing content while keeping business-specific requirements and editorial control.
+
+### Planned deliverables
+
+- Content creation and editing workflow.
+- Content types and relevant metadata.
+- Content associated with a workspace.
+- Draft and version lifecycle.
+- Business profile and brand guidance supplied as context.
+- AI provider abstraction.
+- AI-generated drafts saved as drafts rather than published automatically.
+- Validation and understandable error handling.
+
+### Acceptance criteria
+
+- Content belongs to the correct workspace.
+- Drafts can be saved and retrieved.
+- The system distinguishes drafts from approved content.
+- AI output can be reviewed and edited.
+- Provider errors do not destroy existing content.
+- Sensitive integration credentials are not sent to an AI provider as unnecessary context.
+
+### Why M4 precedes M5
+
+The approval system needs a defined content object and version lifecycle. Approving an undefined or mutable draft would not provide a reliable publishing gate.
+
+### Recorded status
+
+The original roadmap includes AI-assisted marketing content. The SEO Specialist advisory extension was implemented later, but that extension does not, by itself, prove that every M4 content-planning requirement is complete.
+
+---
+
+## Milestone 5 — Review and approvals
+
+**Purpose:** Ensure that content is reviewed before publication and that approval refers to the exact version being published.
+
+### Planned deliverables
+
+- Review status and approval records.
+- A review interface.
+- Clear distinction between draft, submitted, approved, rejected, and other supported states.
+- Version-aware approval.
+- Audit history for approval actions.
+- Protection against publishing an edited version using an approval granted to an earlier version.
+
+### Acceptance criteria
+
+- The operator can review content before publication.
+- Approval applies to the exact content version.
+- Editing content after approval invalidates or otherwise correctly handles the previous approval.
+- Publishing actions respect the approval gate.
+- Approval outcomes are traceable.
+
+### Why M5 precedes M6 and M8
+
+Publishing integrations must not independently bypass the central approval policy. The first website publisher and later social publishers should reuse the same approval rules.
+
+### Recorded status
+
+The recorded M8 implementation uses an approval-gated publishing workflow. The precise completeness of the entire approval lifecycle still needs repository-level verification.
+
+---
+
+## Milestone 6 — First website publishing integration: Sanity
+
+**Purpose:** Prove that approved content can travel through the platform into a real supported content destination.
+
+### Planned deliverables
+
+- Initial Sanity publishing adapter.
+- Connection and configuration validation.
+- Mapping between platform content and Sanity documents.
+- Publishing through the approved content workflow.
+- Recording destination identifiers and publication results.
+- Error handling and verification.
+- A safe test procedure for the pilot site.
+
+### Acceptance criteria
+
+- A configured Sanity integration can be checked safely.
+- An approved content version can be submitted through the adapter.
+- The result is recorded, including a destination identifier where supported.
+- Failures are visible and do not falsely report success.
+- The workflow does not bypass approval.
+- A real publishing test is conducted only with authorization and an appropriate test document.
+
+### Pilot site technical context
+
+The Nutrition Guide website was previously audited with the following reported details:
+
+- Next.js `14.2.15`.
+- Vercel Git-connected deployment.
+- Sanity packages, including `sanity`, `next-sanity`, and `@sanity/image-url`.
+- Sanity Studio at `/studio`.
+- Blog-related queries, pages, slugs, and sitemap.
+- Relevant source files included:
+  - `src/sanity/client.ts`
+  - `src/sanity/queries.ts`
+  - `src/sanity/schemas/post.ts`
+  - `src/app/blog/`
+  - `src/app/sitemap.ts`
+
+The environment was reported to have the required configuration, and a read-only query found an existing post titled **“5 Simple Ways to Enjoy Ghanaian Foods While Losing Weight”**.
+
+This establishes that the site has a Sanity-backed content workflow and that read-only discovery was possible. It does **not** prove that the Marketing Operations Platform successfully created or published a document through the write API.
+
+### Recorded status
+
+The project has treated Sanity as its first website-publishing integration. A controlled write/publish verification remains an important item unless the current repository and execution records prove that it has since been completed.
+
+---
+
+## Milestone 7 — Reusable website adapters and provider-neutral publishing
+
+**Purpose:** Avoid building an isolated publishing workflow for every client website.
+
+### Planned deliverables
+
+- A provider-neutral publishing contract.
+- Reusable adapter conventions.
+- Consistent input and output models.
+- Common validation and error mapping.
+- A way to determine which operations each provider supports.
+- A foundation for adding additional website and CMS providers.
+
+### Acceptance criteria
+
+- Provider-specific logic is contained in adapters.
+- The application uses a common publishing interface.
+- A new adapter can be added without duplicating the entire job and approval workflow.
+- Provider-specific limitations are reported accurately.
+- Unsupported actions are not treated as successful publications.
+
+### Recorded implementation
+
+The roadmap update reported that the **first increment of M7 — the provider-neutral publishing contract — was implemented**.
+
+The recorded status refers to the first increment, not necessarily every possible website adapter or every provider-specific capability.
+
+### Important distinction
+
+A common publishing contract makes it possible to support multiple destinations. It does not mean all websites can be published automatically. Some may require a CMS API, others a custom API, and others a controlled Git-based deployment workflow.
+
+---
+
+## Milestone 8 — Social publishing
+
+**Purpose:** Extend the existing content publishing workflow to supported social platforms while reusing approval, validation, and job infrastructure.
+
+### Planned deliverables
+
+- Facebook Page publishing.
+- Instagram professional-account publishing where supported.
+- Workspace-specific social integration configuration.
+- Channel selection.
+- Approval-gated publishing.
+- Immediate and scheduled publication through the shared pipeline.
+- Duplicate protection and error mapping.
+- Fake-server contract tests.
+- Clear reporting of platform limitations.
+
+### Recorded implementation
+
+The first Meta publishing increment was reported as implemented and tested.
+
+Reported behavior includes:
+
+- Use of the existing adapter/job pipeline.
+- A configured Facebook Page or Instagram professional account per integration.
+- Social publishing UI.
+- Channel selection.
+- Approval-gated **Publish post now** action.
+- Scheduled publishing using UTC through the same scheduler.
+- Fake-server tests covering connection checks, missing/rejected tokens, invalid configuration, Facebook and Instagram request shapes, duplicate reuse, error mapping, draftless-content handling, and publisher validation.
+
+### Reported verification
+
+- `go vet ./...`
+- `go test -count=1 ./...`
+- Frontend Vitest: 152/152 tests passed in the recorded run.
+- ESLint passed.
+- `tsc --noEmit` passed.
+- Prettier passed.
+
+These results establish the reported test status for that implementation increment. They do not establish successful live publishing to a real client account.
+
+### Known limitations at the time of the report
+
+1. Real Meta credentials, app review, live publication, and public visibility were not verified.
+2. Facebook duplicate scanning covered only the most recent 25 posts.
+3. An interrupted Instagram retry after container/media creation could risk a duplicate.
+4. Insights were not supported in this increment.
+5. Destination-side scheduling was not supported.
+6. Token configuration was manual; a complete OAuth onboarding flow was not implemented.
+
+### Current status
+
+**Implemented increment; live-account validation and multi-client authorization remain open unless subsequently verified.**
+
+Do not describe Meta publishing as production-verified simply because fake-server tests passed.
+
+---
+
+## Milestone 9 — Scheduler, background workers, and retries
+
+**Purpose:** Make scheduled publishing reliable without depending on an operator keeping a browser window open.
+
+### Planned deliverables
+
+- Persistent publishing jobs.
+- Scheduling and due-job selection.
+- Background worker processing.
+- Retry policy.
+- Job states and failure reporting.
+- Duplicate protection and idempotency.
+- Recovery from temporary provider failures.
+- Operator-facing scheduling controls.
+- Clear visibility into scheduled and failed jobs.
+
+### Acceptance criteria
+
+- A scheduled job is persisted.
+- Due jobs can be processed independently of the frontend.
+- Failures are recorded and retried according to defined rules.
+- Duplicate job execution is handled safely.
+- The operator can understand whether a job is queued, running, successful, failed, or awaiting retry.
+- Time zones are handled consistently.
+- Approval and content-version rules are enforced when jobs execute.
+
+### Recorded implementation
+
+The project update reports that the **first scheduler/worker/retry increment was implemented**.
+
+Media support was also reported as implemented, including:
+
+- Main image support.
+- Body media support.
+
+The recorded roadmap still identified the **operator-facing scheduled-publish UI** as open at that point.
+
+### Current status
+
+Backend scheduling and worker behavior have a reported implementation, but the completeness of the operator-facing scheduling workflow must be verified.
+
+The UI may have progressed after the earlier status report. Inspect the repository before assuming it remains missing.
+
+### Special caution
+
+Idempotency must be assessed separately for each external provider. A job record being unique in the local database does not guarantee that a retry cannot duplicate an external post if the provider accepted the first request but the response was lost.
+
+---
+
+## Milestone 10 — SEO and analytics
+
+**Purpose:** Connect published marketing activity to search visibility and measurable performance.
+
+### Planned deliverables
+
+The original roadmap places SEO and analytics after the platform has a publishing workflow. The exact complete M10 acceptance checklist must be recovered from the original roadmap or verified against the repository before treating this milestone as fully specified.
+
+The intended capability area includes:
+
+- SEO-related information and workflows.
+- Google Search Console integration.
+- Analytics integration.
+- Retrieval and display of relevant performance information.
+- A relationship between published content and its performance records.
+- Useful error and connection states.
+
+### Recorded status
+
+Google Search Console and analytics work were part of the integration plan. However, **live OAuth-backed Google Search Console data was not verified** in the latest recorded context.
+
+### What is not yet established
+
+- That OAuth authorization is complete.
+- That the correct property is selected and bound to the correct workspace.
+- That live Search Console data is retrieved and displayed.
+- That analytics data is retrieved and displayed.
+- That reporting is based on verified production data rather than mock or fixture data.
+
+### Next verification
+
+Inspect the integration and authorization implementation, confirm its permissions and workspace binding, then run a safe read-only test using an account and property the operator is authorized to access.
+
+---
+
+## Milestone 11 — Campaigns and leads
+
+**Purpose:** Track marketing campaigns and the leads associated with them within the correct client workspace.
+
+### Planned deliverables
+
+- Campaign creation and listing.
+- Campaign updates.
+- Lead creation and listing.
+- Lead status updates.
+- Lead-to-campaign association.
+- Workspace isolation.
+- Input validation.
+- Duplicate and conflict handling.
+- Audit events for relevant operations.
+- Operator-facing campaign and lead screens.
+
+### Recorded verification — 22 October 2026
+
+A first increment was tested against a local PostgreSQL-backed environment.
+
+#### Database and API
+
+- Local PostgreSQL Compose environment reported healthy.
+- Migrations `0001` through `0007` were applied.
+- Database-backed campaign and lead tests passed.
+- Development API ran on port `8081`.
+- `GET /api/v1/ready` returned HTTP 200.
+
+Reported API smoke-test outcomes for the `demo-cafe` workspace:
+
+| Operation                           | Reported result |
+| ----------------------------------- | --------------- |
+| Create campaign                     | HTTP 201        |
+| List campaigns                      | HTTP 200        |
+| Update campaign                     | HTTP 200        |
+| Duplicate campaign name             | HTTP 409        |
+| Create lead                         | HTTP 201        |
+| List leads                          | HTTP 200        |
+| Update lead                         | HTTP 200        |
+| Invalid lead source                 | HTTP 400        |
+| Cross-workspace campaign assignment | HTTP 400        |
+
+#### Browser/UI
+
+Headless Chromium testing reportedly verified:
+
+- Workspace navigation.
+- Campaign and lead empty states.
+- Campaign creation.
+- Campaign persistence after refresh.
+- Lead creation associated with a campaign.
+- Lead status update to `Contacted`.
+
+The recorded Playwright end-to-end tests passed across three runs.
+
+#### Cleanup
+
+Temporary campaign, lead, and audit records created during the smoke tests were removed.
+
+The reported final counts were:
+
+- Campaigns: `0`
+- Leads: `0`
+- Smoke-test rows: `0`
+
+The report stated that demo records were not altered and that the API/UI remained available after cleanup.
+
+### What this proves
+
+This is evidence that the tested campaign/lead API and UI paths worked in the local environment at the time of testing.
+
+### What this does not prove
+
+- Real external lead intake.
+- Complete marketing attribution.
+- Production deployment behavior.
+- Every possible campaign/lead validation case.
+- The entire original roadmap being complete.
+
+### Current status
+
+**First increment verified in the recorded local test environment.** Continue from the existing implementation and avoid recreating the same CRUD features without identifying a specific gap.
+
+---
+
+## Milestone 12 — Reporting
+
+**Purpose:** Turn the platform's recorded marketing activity into useful summaries for the operator and client businesses.
+
+### Dependency
+
+Reporting relies on the quality and consistency of the records produced by earlier milestones, including:
+
+- Published content and publication results.
+- Campaigns.
+- Leads.
+- Search and analytics data.
+- Integration/job statuses.
+- Workspace relationships.
+
+### Work to establish
+
+The exact original M12 acceptance checklist is not established by the latest progress summary. Recover it from the original roadmap or repository documentation before expanding the scope.
+
+At minimum, audit whether the existing data can support useful reports without mixing workspaces or presenting unverified metrics as facts.
+
+### Acceptance criteria to verify
+
+- Reports are scoped to the selected workspace.
+- Reported figures have identifiable source records.
+- Missing integration data is distinguished from a genuine zero.
+- Date ranges and time zones are handled consistently.
+- Failures and stale data are communicated.
+- Any export or report-generation behavior matches the intended product scope.
+
+### Recorded status (updated 2026-10-24)
+
+**First increment implemented and verified.** The smallest operator-facing
+report now exists end to end:
+
+- `GET /api/v1/workspaces/{id}/reports?since=&until=` returns current-state
+  content/campaign/lead counts plus range-filtered publishing figures with
+  recent failures (all workspace-scoped in SQL, nothing fabricated).
+- Web typed client `apps/web/src/lib/reports.ts` + report panel section wired
+  into the workspace detail panel; Vitest coverage in
+  `apps/web/src/lib/reports.test.ts`.
+- Store aggregation tests in `apps/api/internal/store/reports_store_test.go`
+  and router tests in `apps/api/internal/httpapi/workspace_reports_test.go`.
+- **Live verification found and fixed a real bug** the fake-store router
+  tests could not catch: the publishing-jobs query joined
+  `publishing_jobs` to `content_items` and selected bare
+  `status`/`GROUP BY status` (ambiguous across both tables,
+  SQLSTATE 42702), so every report request returned 500. Fixed by
+  qualifying `pj.status` in `apps/api/internal/store/reports.go`; a probe
+  against the live local database confirmed all workspaces failed before
+  the fix and render 200 after it.
+- Verified live on the running local API: valid request → 200 with all
+  sections populated (empty map values are genuine zeros for an empty
+  workspace), ranged request → 200 with echoed bounds, inverted range →
+  400 `until must be after since`, malformed timestamp → 400.
+- Full API checks re-run green after the fix: `gofmt -s`, `go vet`,
+  `go test -race ./...` (with DATABASE_URL configured).
+
+**Still open in M12:** date-range presentation in the UI beyond the panel,
+export/report-generation behavior, stale-data/failure surfacing UX, and the
+final documented acceptance checklist from the original roadmap.
+
+**Purpose:** Make the integrated platform safer and more dependable before expanding its operational use.
+
+### Areas to audit
+
+- Workspace isolation and authorization.
+- Integration secret storage and redaction.
+- OAuth state validation and callback security where OAuth exists.
+- Token handling and revocation.
+- Audit events.
+- Publishing approval enforcement.
+- Content-version correctness.
+- Idempotency and retry behavior.
+- Error visibility and recovery.
+- Database constraints and migration safety.
+- UI validation, empty states, and error states.
+- Test coverage for high-risk workflows.
+- Operational documentation.
+
+### Acceptance criteria to verify
+
+- Unauthorized workspace access is rejected.
+- Credentials are never exposed to browser code or routine logs.
+- Publishing cannot bypass required approval.
+- Retries have documented behavior and appropriate duplicate protection.
+- Sensitive operations are auditable.
+- Important failure modes have tests.
+- The application can be diagnosed without exposing secrets.
+
+### Recorded status
+
+Security and reliability principles are part of the original architecture. That does not mean the entire hardening milestone has been completed.
+
+**M13 remains a milestone to verify and close systematically**, even if earlier milestones already implemented individual protections.
+
+### M13 systematic audit (recorded 2026-10-24, first pass)
+
+Verified-strong areas (with evidence):
+
+- **Workspace isolation:** every route is workspace-scoped — the campaigns,
+  leads, and report handlers use the shared `workspaceScope` check; the rest
+  look up parent workspaces/integrations/items through store methods that
+  filter on `workspace_id` and return `ErrNotFound` cross-workspace, and the
+  store integration tests assert that behavior (e.g. `workflow_test.go`,
+  `campaigns_leads_test.go`).
+- **Credential handling:** AES-256-GCM at rest (`secretcipher`), key only
+  from env, key version stored for rotation; credentials are never returned
+  to the browser (only `hasCreds` booleans); worker/handler logs use
+  `error_class`/`safeErrorText` instead of error details; config validation
+  never echoes `DATABASE_URL`.
+- **Approval + version correctness:** publish is gated on the newest version
+  being approved (store returns `ErrNotApproved` on insert and at retry,
+  mapped to 409); idempotency key embeds `(workspace, item, version,
+  integration)` with a DB `UNIQUE` constraint; duplicate publish → 409;
+  resume avoids duplicate inserts.
+- **Transport/logging:** CORS strict allowlist with preflight handling,
+  security headers, request logger without query strings/headers, panic
+  recovery, body-size limits on all JSON routes, RFC3339/UTC validation.
+- **DB constraints:** status CHECK constraints on campaigns/leads/publishing
+  rows, FK CASCADE, `UNIQUE (workspace_id, name)` (now several places),
+  `idempotency_key UNIQUE`.
+
+Gaps found (ranked, all small and actionable, none drop existing behavior):
+
+1. ~~HIGH — AI generate error surface~~ **FIXED 2026-10-24**
+   (`workspace_content_generate.go`): the 502 handler wrote `err.Error()`
+   unconditionally. Now it surfaces only classified `ProviderError` text
+   (asserted with `errors.As`, matching the agent-route convention) and
+   returns the generic "the AI provider could not be reached" otherwise.
+   Router test added: a non-provider error must not leak its details.
+2. ~~MEDIUM — missing audit rows~~ **FIXED 2026-10-24**: `workspace.created`
+   is now audited, and operator actions `publishing_job_cancelled` and
+   `publishing_job_retried` (with jobId + attempts) record audit rows;
+   router tests assert each.
+3. ~~LOW — silent decrypt failure~~ **FIXED 2026-10-24**: the check handler
+   now names the exact reason (no server key / decrypt failed / payload did
+   not parse) in `Diagnostic` with a `LifecycleError` result and records the
+   reason class as `credentialProblem` in the `integration.checked` audit
+   row; the publish path gained a distinct `ErrPublisherCredentialsUnreadable`
+   sentinel → 409 "re-enter them" instead of the misleading "missing".
+   Router tests cover both paths; the web client type carries the
+   machine-readable `credentialProblem` field.
+4. **MEDIUM — no authentication layer:** routes are unauthenticated by
+   design (D16 single-operator local mode; reports/decision route operator
+   handling answers 501). Required before M14 deployment: add operator auth
+   (session/token) middleware before any multi-operator or internet-facing
+   deployment.
+5. **LOW — worker concurrency:** the publishing worker runs in-process;
+   horizontal scaling would need a leader-election or lock guard. Fine for
+   the local/single-instance deployment in M14 increment 1; document it.
+
+Recommended next increment for M13: fix (1) and (2) — both are small,
+covered by existing test patterns, and close the highest-risk trails.
+---
+
+## Milestone 14 — Deployment and pilot release
+
+**Purpose:** Validate the integrated product as an operational tool for the pilot and prepare a controlled path to managing additional authorized client businesses.
+
+### Work to establish
+
+- Deployment architecture and environment configuration.
+- Database migration and recovery procedure.
+- Secrets management.
+- Health/readiness monitoring.
+- Worker operation and recovery.
+- Backup and restore expectations.
+- Deployment and rollback instructions.
+- Pilot acceptance workflow.
+- Operator documentation.
+- A clear record of integrations verified in live environments.
+
+### Pilot scenario
+
+The original end-to-end scenario is:
+
+1. Select the Nutrition Guide workspace.
+2. Load its business profile and authorized integrations.
+3. Draft a marketing article.
+4. Save and review the draft.
+5. Approve the exact content version.
+6. Publish through the Sanity adapter.
+7. Record the destination document ID, public URL, time, and result.
+8. Verify the publication.
+9. Later display performance information when a verified analytics integration is available.
+
+This scenario is a target workflow, not proof that all steps have already passed in a live environment.
+
+### Acceptance criteria to verify
+
+- A new operator can follow the documented process.
+- The pilot workflow works from beginning to end.
+- Live credentials and permissions are managed securely.
+- Publishing results are verified rather than assumed.
+- Failures and recovery paths are documented.
+- No unapproved production changes occur.
+- The operator can distinguish tested integrations from planned or simulated integrations.
+
+### Recorded status
+
+**Full M14 completion has not been established in the latest recorded project context.**
+
+---
+
+# Part II — Cross-cutting implementation history
+
+## 4. Nutrition Guide pilot audit
+
+Nutrition Guide was chosen as the first integration target because its existing site and CMS provide a concrete path to test the platform against a real client workflow.
+
+The recorded audit established the Next.js/Sanity structure and a successful read-only content query.
+
+### Continuing rules
+
+- Treat read-only discovery as distinct from write access.
+- Do not assume that environment variables being present means credentials are valid.
+- Do not assume that access to the Sanity Studio automatically proves the backend publishing integration works.
+- Do not edit, publish, or deploy client content without authorization.
+- Prefer a clearly identified test draft and a controlled verification process.
+- Verify the resulting document and public page after a write operation.
+
+### Next action
+
+Inspect the current Sanity adapter and determine whether a real, authorized test publication has ever succeeded. If not, plan a safe test without changing existing production content.
+
+---
+
+## 5. Agency Agents / SEO Specialist advisory extension
+
+Reference project:
+
+`https://github.com/msitarzewski/agency-agents`
+
+The project later incorporated the concept of agency-style specialist agents into the Marketing Operations Platform.
+
+### Recorded implementation
+
+- The SEO Specialist was selected as the first specialist.
+
+- A curated, internal advisory prompt profile was implemented.
+
+- It uses the existing provider interface.
+
+- Upstream agent files were not copied wholesale.
+
+- The specialist is advisory-only.
+
+- It does not have unrestricted network, filesystem, or general tool authority.
+
+- An endpoint was recorded:
+
+  `POST /api/v1/workspaces/{id}/agents/seo/advisory`
+
+- Audit rows were added for advisory activity.
+
+- A typed frontend panel was implemented.
+
+- Go and frontend tests were reported clean.
+
+### Limitations
+
+- Live AI-provider execution was not verified in the latest status.
+- OAuth-backed Google Search Console data was not verified.
+- A dedicated advisory run-history UI was not established as complete.
+
+### Architectural rule
+
+Treat this as a cross-cutting extension, not a replacement for the original milestone roadmap.
+
+Do not restart the platform around an agent framework. Do not grant the specialist tools or permissions beyond its documented purpose. Keep its recommendations distinguishable from executed actions.
+
+---
+
+## 6. Multi-client Meta account authorization
+
+The current Meta implementation has a path for publishing through a configured account, but multi-client authorization remains a major area to verify and extend.
+
+The intended direction is to support both:
+
+- Client-assisted onboarding, where the client completes official account authorization.
+- Admin-assisted onboarding, where an authorized operator helps connect the client's account without asking for or storing the client's password.
+
+### Proposed design
+
+1. Use Meta's official OAuth flow where supported.
+2. Bind the authorization request to the correct workspace.
+3. Validate OAuth `state`.
+4. Use registered redirect URIs.
+5. Request only necessary permissions.
+6. Store access credentials securely on the server.
+7. Never expose tokens to the frontend.
+8. Avoid secrets in prompts, errors, and logs.
+9. Support connection status and account selection.
+10. Support reconnect and disconnect flows.
+11. Audit authorization and connection changes.
+12. Reuse the existing publishing, approval, and scheduler pipeline.
+
+### Important status distinction
+
+This is the recorded target design, **not a claim that OAuth is already implemented**.
+
+Before coding, inspect the existing integration schema, token configuration, adapter, API routes, and tests. Reuse existing structures where appropriate.
+
+### Suggested acceptance criteria
+
+- A user cannot connect an account to a workspace they are not authorized to manage.
+- OAuth state and callback validation work.
+- The selected account is associated with the intended workspace.
+- Tokens are protected at rest and never returned to ordinary frontend responses.
+- Expired or revoked authorization is reported clearly.
+- Disconnecting an account prevents future publishing through that connection.
+- Publishing still follows the central approval and job pipeline.
+- Tests cover invalid state, denied authorization, missing permissions, token failure, and workspace mismatch.
+
+---
+
+# Part III — Consolidated status
+
+## 7. Recorded status by milestone
+
+The table below distinguishes reported implementation from verified end-to-end production behavior.
+
+| Milestone              | Recorded status                                                 | Important qualification                                              |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| M0 — Foundation        | Earlier foundation established; audit required                  | Verify clean setup and current instructions.                         |
+| M1 — Domain model      | Core domain and migrations developed                            | Audit current schema, constraints, and isolation.                    |
+| M2 — Workspace UI      | Workspace-facing UI exists in recorded testing                  | Verify the full original checklist.                                  |
+| M3 — Integrations      | Integration work exists                                         | Verify the registry and complete capability model.                   |
+| M4 — Drafting          | AI-assisted content is part of the architecture                 | Do not infer full completion from the SEO advisory feature.          |
+| M5 — Approvals         | Approval-gated publishing is reported                           | Audit exact-version approval behavior across providers.              |
+| M6 — Sanity            | Pilot integration is established as the first publishing target | Real write/publish success remains unconfirmed in the latest status. |
+| M7 — Adapter contract  | First increment implemented                                     | Do not assume all website adapters exist.                            |
+| M8 — Social publishing | First Meta increment implemented and fake-server tested         | Live publishing and OAuth onboarding remain unverified.              |
+| M9 — Scheduler         | First worker/retry increment implemented                        | Verify operator scheduling UI and real provider retry behavior.      |
+| M10 — SEO/analytics    | Planned and partially explored                                  | Live OAuth-backed data remains unverified.                           |
+| M11 — Campaigns/leads  | First increment tested locally                                  | External intake and production behavior remain unverified.           |
+| M12 — Reporting        | Not confirmed complete                                          | Recover exact acceptance criteria and inspect implementation.        |
+| M13 — Hardening        | Cross-cutting requirements identified                           | Full security/reliability closure is not established.                |
+| M14 — Pilot release    | Full completion not established                                 | Validate end-to-end deployment and operational workflow.             |
+
+**These are historical status notes.** The next assistant must check the current repository, because some UI or integration work may have advanced since these entries were recorded.
+
+---
+
+## 8. Testing and verification evidence
+
+The following evidence was reported in the project history.
+
+### Meta publishing increment
+
+- `go vet ./...`
+- `go test -count=1 ./...`
+- Fake-server contract tests for connection checks, token errors, invalid configuration, provider request shapes, duplicate handling, and error mapping.
+- Frontend Vitest: 152/152.
+- ESLint.
+- `tsc --noEmit`.
+- Prettier.
+
+**Interpretation:** These are reported test results for that increment. They do not establish real Meta account authorization or live public posting.
+
+### Campaigns and leads increment
+
+- Local PostgreSQL Compose environment healthy.
+- Migrations `0001`–`0007` applied.
+- Database-backed campaign and lead tests passed.
+- Readiness endpoint returned HTTP 200.
+- API smoke tests produced the reported status codes.
+- Browser-based campaign/lead workflow was tested.
+- Playwright end-to-end tests passed across three runs.
+- Temporary test records were cleaned up.
+
+**Interpretation:** The tested local workflow worked at the time of the recorded test. This is not evidence of complete production readiness.
+
+### SEO Specialist advisory increment
+
+- Go tests reportedly passed.
+- Frontend tests reportedly passed.
+- Advisory endpoint and audit behavior were implemented.
+- Live AI-provider execution and live Google Search Console retrieval remain unverified.
+
+### General verification policy
+
+For every feature, distinguish among:
+
+1. **Implemented:** Code exists.
+2. **Unit-tested:** Isolated logic passes tests.
+3. **Integration-tested:** Components work together in a controlled environment.
+4. **Locally smoke-tested:** A real local application path was exercised.
+5. **Externally verified:** A real authorized external integration was exercised.
+6. **Production-verified:** The intended deployed workflow was tested under the applicable operational conditions.
+
+Do not collapse these into one “done” status.
+
+---
+
+# Part IV — Remaining work and next steps
+
+## 9. Priority 1: Audit the current repository
+
+Before making changes, establish the actual state of the project.
+
+### Audit checklist
+
+- [ ] Confirm the correct repository and working directory.
+- [ ] Read the current README and project instructions.
+- [ ] Inspect Git status and recent commits.
+- [ ] Inspect the frontend and backend structure.
+- [ ] Inspect database migrations and schema.
+- [ ] Identify implemented API routes.
+- [ ] Identify integration adapters and their capabilities.
+- [ ] Inspect the approval and content-version workflow.
+- [ ] Inspect scheduler/worker startup and retry behavior.
+- [ ] Inspect campaign and lead models, routes, UI, and tests.
+- [ ] Inspect the SEO advisory endpoint and frontend panel.
+- [ ] Inspect current Meta configuration and publishing paths.
+- [ ] Inspect any OAuth implementation before designing a new one.
+- [ ] Run the existing test and quality-check commands.
+- [ ] Record what passes, fails, or cannot be run.
+- [ ] Compare the actual implementation against each milestone's acceptance criteria.
+
+Do not replace working code just because an older memory file says a milestone is incomplete.
+
+## 10. Priority 2: Close the most consequential integration gaps
+
+After the audit, determine the smallest high-value next change.
+
+### A. Multi-client Meta connection lifecycle
+
+If the repository confirms that OAuth onboarding is still missing, implement it through the existing integration architecture.
+
+Do not rewrite the Meta publisher or scheduler unnecessarily.
+
+### B. Live Meta verification
+
+Once authorization and permissions are properly configured, conduct a controlled test using an account the operator is authorized to manage.
+
+Verify the external result rather than relying only on a successful API response from a mock server.
+
+### C. Sanity write/publish verification
+
+Determine whether a real Sanity publication has already been completed. If not, arrange a safe, authorized test using a new test draft and verify the resulting document and public page.
+
+### D. Scheduling workflow
+
+Audit the operator-facing scheduled-publish UI and worker status reporting. Implement only the missing portion.
+
+### E. SEO and analytics
+
+Verify the existing OAuth and data-retrieval path before expanding the feature. Do not display mock data as if it came from a live client property.
+
+## 11. Priority 3: Complete the roadmap in dependency order
+
+Once the immediate integration gaps are addressed:
+
+1. Reassess M0–M7 using the original acceptance criteria.
+2. Finish any remaining M8–M9 workflow gaps.
+3. Verify M10 against live authorized data.
+4. Complete the required M11 campaign/lead scope.
+5. Establish and deliver the exact M12 reporting requirements.
+6. Conduct M13 security, reliability, and UX hardening.
+7. Validate M14 deployment and the pilot workflow.
+
+A milestone may be closed only when its required criteria have evidence. If the project deliberately defers a requirement, document the deferral instead of silently marking it complete.
+
+---
+
+# Part V — How a future AI assistant must continue
+
+## 12. Operating instructions
+
+The assistant continuing this project must follow these rules.
+
+### First: establish the current truth
+
+- Read this memory file.
+- Read the repository's current README and local agent/developer instructions.
+- Inspect the code and Git status.
+- Run appropriate checks where practical.
+- Compare the repository with the recorded milestone status.
+- Treat the repository and fresh test results as the primary evidence of current implementation.
+
+### Second: preserve project identity
+
+This is the **Marketing Operations Platform**, not LightDesk.
+
+Do not import LightDesk-specific architecture, paths, features, or milestone statuses unless the user explicitly asks for a cross-project comparison.
+
+### Third: make the smallest useful change
+
+- Continue from existing working code.
+- Reuse current contracts and adapters.
+- Avoid architecture rewrites without a demonstrated reason.
+- Do not duplicate features that already work.
+- Identify the milestone and acceptance criterion addressed by each change.
+
+### Fourth: protect client data and production systems
+
+- Do not expose credentials.
+- Do not commit real tokens.
+- Do not assume permission to publish or modify a client website.
+- Prefer read-only tests until write access and authorization are confirmed.
+- Use controlled test content for external write verification.
+- Never claim that a live integration works when only mocks or local tests have passed.
+
+### Fifth: maintain milestone history
+
+After meaningful work, update this memory file with:
+
+- Date.
+- Milestone and increment.
+- Files or components changed.
+- Behavior implemented.
+- Commands and tests executed.
+- Actual results.
+- External verification performed, if any.
+- Known limitations.
+- Remaining acceptance criteria.
+- Next recommended step.
+
+Keep historical facts and current status separate. Do not erase earlier milestones when adding a new one.
+
+### Sixth: report status clearly
+
+Use a consistent status vocabulary:
+
+- **Complete and verified:** Acceptance criteria have supporting evidence.
+- **Implemented, verification pending:** Code exists but sufficient verification is missing.
+- **In progress:** Only part of the milestone is implemented.
+- **Blocked:** Progress depends on credentials, permissions, an external service, or a decision.
+- **Not started:** No meaningful implementation has been established.
+- **Deferred:** Explicitly postponed, with a reason.
+
+Do not mark an entire milestone complete because its first increment passes tests.
+
+---
+
+## 13. Decisions that must not be silently changed
+
+1. The platform is an internal multi-client marketing operations tool.
+2. Nutrition Guide is the first pilot.
+3. The frontend uses Next.js, TypeScript, and Tailwind CSS.
+4. The backend uses Go.
+5. PostgreSQL is the primary database.
+6. Integrations should use reusable provider contracts and adapters.
+7. Approval and content-version correctness are central publishing requirements.
+8. Scheduled work must be persisted and observable.
+9. Client workspaces must remain isolated.
+10. AI specialist functionality is advisory unless an explicitly authorized workflow says otherwise.
+11. The project should progress incrementally, without unnecessary rewrites.
+12. Live integration claims require live evidence.
+13. The roadmap should retain its historical milestone sequence.
+14. This project remains separate from LightDesk.
+
+If a change to one of these decisions appears necessary, explain the reason and seek the user's agreement when it materially affects the architecture or project direction.
+
+---
+
+## 14. Immediate handover summary
+
+The project has progressed beyond its original foundation stage. The recorded work includes a provider-neutral publishing contract, a first Meta social-publishing increment, a scheduler/worker/retry increment, media support, a campaign-and-lead increment tested locally, and an SEO Specialist advisory extension.
+
+However, the latest recorded status does not establish that every milestone is complete. In particular, live Meta publishing, a complete multi-client Meta OAuth lifecycle, live Sanity write/publish verification, live OAuth-backed Google Search Console data, full reporting, complete hardening, and the final pilot release still require verification or implementation unless the current repository shows that the work has since been completed.
+
+**The next action is a repository audit—not a rewrite.** Confirm the current state, run the relevant checks, identify the highest-priority missing acceptance criterion, implement the smallest appropriate change, verify it, and update this document.
+
+This file is intended to preserve the reasoning behind the roadmap as well as its implementation history, so future assistants can continue the project without losing earlier work or confusing planned capabilities with verified behavior.

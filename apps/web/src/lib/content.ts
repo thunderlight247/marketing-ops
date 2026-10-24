@@ -48,6 +48,65 @@ export interface DraftInput {
   body?: string;
   callToAction?: string;
   channelCopy?: Record<string, string>;
+  /** Omitted keeps the previous version's metadata; provided replaces it. */
+  metadata?: Record<string, unknown>;
+}
+
+export type UploadImageResult =
+  | { kind: "uploaded"; ref: string; url: string }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "unavailable"; message: string };
+
+export const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Uploads one image through the API, which proxies it to the workspace's
+ * Sanity project and returns the asset reference plus CDN URL. Never throws.
+ */
+export async function uploadIntegrationImage(
+  baseUrl: string,
+  workspaceId: string,
+  integrationId: string,
+  file: File,
+  fetchImpl: typeof fetch = fetch,
+): Promise<UploadImageResult> {
+  const problems: string[] = [];
+  if (!IMAGE_MIME_TYPES.includes(file.type as (typeof IMAGE_MIME_TYPES)[number])) {
+    problems.push("only JPEG, PNG, WebP, or GIF images are supported");
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    problems.push("image is too large (max 8 MB)");
+  }
+  if (problems.length > 0) return { kind: "rejected", problems };
+
+  const url =
+    `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}` +
+    `/integrations/${encodeURIComponent(integrationId)}/media`;
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  try {
+    const res = await fetchImpl(url, { method: "POST", body: form });
+    if (res.status === 413) {
+      return { kind: "rejected", problems: ["image is too large (max 8 MB)"] };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `Upload failed (status ${res.status}).`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    if (typeof data.ref !== "string" || data.ref === "" || typeof data.url !== "string") {
+      return { kind: "unavailable", message: "Server returned a malformed upload result." };
+    }
+    return { kind: "uploaded", ref: data.ref, url: data.url };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
 }
 
 export type ContentListState =
@@ -439,6 +498,12 @@ export async function saveWorkspaceDraft(
     callToAction: clearToUndefined(input.callToAction) ?? "",
     channelCopy: input.channelCopy ?? {},
   };
+  if (input.metadata !== undefined) {
+    if (JSON.stringify(input.metadata).length > 16384) {
+      return { kind: "rejected", problems: ["metadata is too large (max 16384 bytes)"] };
+    }
+    payload.metadata = input.metadata;
+  }
   const planned = clearToUndefined(input.plannedPublishAt);
   if (planned) {
     payload.plannedPublishAt = planned;
@@ -795,6 +860,8 @@ export interface SanityPublishSuccess {
   publicUrl: string | null;
   urlVerified: boolean | null;
   message: string;
+  /** True when the server accepted a schedule and queued the job for the worker. */
+  scheduled: boolean;
 }
 
 export type SanityPublishResult =
@@ -809,6 +876,8 @@ export type SanityPublishResult =
  * mode "draft" writes (or replaces) the invisible Sanity draft — no approval
  * needed. mode "publish" pushes the approved version live; the server enforces
  * the approval gate and records the job/artifact. Never throws.
+ * A future scheduledAt queues the publish for the background worker instead of
+ * running it inline and answers 202 with the queued job id.
  */
 export async function pushToSanity(
   baseUrl: string,
@@ -816,6 +885,7 @@ export async function pushToSanity(
   itemId: string,
   integrationId: string,
   mode: SanityPublishMode,
+  scheduledAt?: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SanityPublishResult> {
   const problems: string[] = [];
@@ -826,12 +896,15 @@ export async function pushToSanity(
   }
   if (problems.length > 0) return { kind: "rejected", problems };
 
+  const payload: Record<string, unknown> = { integrationId: trimmedIntegration, mode };
+  if (scheduledAt) payload.scheduledAt = scheduledAt;
+
   const url = itemUrl(baseUrl, workspaceId, itemId) + "/publish";
   try {
     const res = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ integrationId: trimmedIntegration, mode }),
+      body: JSON.stringify(payload),
     });
     if (res.status === 400) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -865,7 +938,7 @@ export async function pushToSanity(
       };
     }
     const data = (await res.json()) as Record<string, unknown>;
-    const item = parseContentItem(data);
+    const item = parseContentItem(data.item);
     if (!item) {
       return { kind: "unavailable", message: "Server returned a malformed publish reply." };
     }
@@ -883,8 +956,222 @@ export async function pushToSanity(
             : null,
         urlVerified: typeof data.urlVerified === "boolean" ? data.urlVerified : null,
         message: typeof data.message === "string" ? data.message : "",
+        scheduled: res.status === 202,
       },
     };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+// ---- Publishing jobs (Milestone 9) --------------------------------------------
+
+export type PublishingJobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface PublishingJob {
+  id: string;
+  contentItemId: string;
+  contentVersionId: string;
+  integrationId: string;
+  status: PublishingJobStatus;
+  scheduledAt: string | null;
+  attempts: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ContentJobsState =
+  | { kind: "loading" }
+  | { kind: "missing"; message: string }
+  | { kind: "unavailable"; message: string }
+  | { kind: "loaded"; jobs: PublishingJob[] };
+
+export function formatPublishJobStatus(status: string): string {
+  switch (status) {
+    case "pending":
+      return "Queued";
+    case "running":
+      return "Running";
+    case "succeeded":
+      return "Published";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+function parsePublishingJob(raw: unknown): PublishingJob | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const j = raw as Record<string, unknown>;
+  if (
+    typeof j.id !== "string" ||
+    typeof j.contentItemId !== "string" ||
+    typeof j.contentVersionId !== "string" ||
+    typeof j.integrationId !== "string" ||
+    typeof j.status !== "string" ||
+    typeof j.attempts !== "number" ||
+    typeof j.createdAt !== "string" ||
+    typeof j.updatedAt !== "string"
+  ) {
+    return null;
+  }
+  const optionalString = (v: unknown): string | null =>
+    typeof v === "string" && v !== "" ? v : null;
+  return {
+    id: j.id,
+    contentItemId: j.contentItemId,
+    contentVersionId: j.contentVersionId,
+    integrationId: j.integrationId,
+    status: j.status as PublishingJobStatus,
+    scheduledAt: optionalString(j.scheduledAt),
+    attempts: j.attempts,
+    lastError: optionalString(j.lastError),
+    nextAttemptAt: optionalString(j.nextAttemptAt),
+    createdAt: j.createdAt,
+    updatedAt: j.updatedAt,
+  };
+}
+
+/**
+ * GET /content/{itemId}/jobs: this item's publishing history, newest first.
+ * Never throws.
+ */
+export async function fetchContentJobs(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ContentJobsState> {
+  try {
+    const res = await fetchImpl(`${itemUrl(baseUrl, workspaceId, itemId)}/jobs`, {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 404) {
+      return { kind: "missing", message: "Workspace or content item not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as { jobs?: unknown };
+    if (!Array.isArray(data.jobs)) {
+      return { kind: "unavailable", message: "Server returned malformed publishing jobs." };
+    }
+    const jobs: PublishingJob[] = [];
+    for (const raw of data.jobs) {
+      const parsed = parsePublishingJob(raw);
+      if (!parsed) {
+        return { kind: "unavailable", message: "Server returned malformed publishing jobs." };
+      }
+      jobs.push(parsed);
+    }
+    return { kind: "loaded", jobs };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+export type CancelJobResult =
+  | { kind: "cancelled"; job: PublishingJob }
+  | { kind: "conflict"; message: string }
+  | { kind: "unavailable"; message: string };
+
+/** POSTs /jobs/{jobId}/cancel for one queued or failed job. Never throws. */
+export async function cancelContentJob(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  jobId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CancelJobResult> {
+  if (!jobId) return { kind: "conflict", message: "A job id is required." };
+  return postJobAction(
+    baseUrl,
+    workspaceId,
+    itemId,
+    jobId,
+    "cancel",
+    (data): CancelJobResult => {
+      const job = parsePublishingJob(data.job);
+      return job && job.status === "cancelled"
+        ? { kind: "cancelled", job }
+        : { kind: "unavailable", message: "Server returned a malformed cancel result." };
+    },
+    fetchImpl,
+  );
+}
+
+export type RetryJobResult =
+  | { kind: "requeued"; job: PublishingJob }
+  | { kind: "conflict"; message: string }
+  | { kind: "unavailable"; message: string };
+
+/** POSTs /jobs/{jobId}/retry for one failed job. Never throws. */
+export async function retryContentJob(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  jobId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RetryJobResult> {
+  if (!jobId) return { kind: "conflict", message: "A job id is required." };
+  return postJobAction(
+    baseUrl,
+    workspaceId,
+    itemId,
+    jobId,
+    "retry",
+    (data): RetryJobResult => {
+      const job = parsePublishingJob(data.job);
+      return job && job.status === "pending"
+        ? { kind: "requeued", job }
+        : { kind: "unavailable", message: "Server returned a malformed retry result." };
+    },
+    fetchImpl,
+  );
+}
+
+async function postJobAction<T>(
+  baseUrl: string,
+  workspaceId: string,
+  itemId: string,
+  jobId: string,
+  action: "cancel" | "retry",
+  build: (data: Record<string, unknown>) => T,
+  fetchImpl: typeof fetch,
+): Promise<T | { kind: "conflict"; message: string } | { kind: "unavailable"; message: string }> {
+  const url = `${itemUrl(baseUrl, workspaceId, itemId)}/jobs/${encodeURIComponent(jobId)}/${action}`;
+  try {
+    const res = await fetchImpl(url, { method: "POST" });
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "conflict",
+        message: body?.error ?? "That job action is not allowed right now.",
+      };
+    }
+    if (res.status === 404) {
+      return { kind: "conflict", message: "That job no longer exists in this item's history." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    return build(data);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };

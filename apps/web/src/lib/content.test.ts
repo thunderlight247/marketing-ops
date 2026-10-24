@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  cancelContentJob,
   createWorkspaceContent,
   decideContentApproval,
   fetchContentHistory,
+  fetchContentJobs,
   fetchWorkspaceContent,
   generateWorkspaceContent,
   fetchWorkspaceDraft,
@@ -10,6 +12,7 @@ import {
   formatContentStatus,
   saveWorkspaceDraft,
   pushToSanity,
+  retryContentJob,
   transitionContentStatus,
   validateContentInput,
   validateDraftInput,
@@ -774,6 +777,7 @@ describe("pushToSanity", () => {
         itemId,
         integrationId,
         mode as "draft" | "publish",
+        undefined,
         mockFetch as unknown as typeof fetch,
       );
       expect(result.kind).toBe("rejected");
@@ -786,16 +790,18 @@ describe("pushToSanity", () => {
       status: 201,
       ok: true,
       json: async () => ({
-        id: "ci-9",
-        workspaceId: wsId,
-        kind: "blog_article",
-        status: "draft",
-        title: "Pilot post",
-        slug: "pilot-post",
-        createdAt: "2026-03-01T00:00:00Z",
-        updatedAt: "2026-03-01T00:00:00Z",
+        item: {
+          id: "ci-9",
+          workspaceId: wsId,
+          kind: "blog_article",
+          status: "draft",
+          title: "Pilot post",
+          slug: "pilot-post",
+          createdAt: "2026-03-01T00:00:00Z",
+          updatedAt: "2026-03-01T00:00:00Z",
+        },
         mode: "draft",
-        draftId: "drafts.mktops-ci-9-v1",
+        draftId: "drafts.mktops-ci-9",
         transactionId: "tx-1",
         message: "ok",
       }),
@@ -806,6 +812,7 @@ describe("pushToSanity", () => {
       itemId,
       "int-1",
       "draft",
+      undefined,
       mockFetch as unknown as typeof fetch,
     );
     expect(mockFetch).toHaveBeenCalledWith(
@@ -816,7 +823,7 @@ describe("pushToSanity", () => {
     expect(body).toEqual({ integrationId: "int-1", mode: "draft" });
     expect(result.kind).toBe("pushed");
     if (result.kind === "pushed") {
-      expect(result.success.draftId).toBe("drafts.mktops-ci-9-v1");
+      expect(result.success.draftId).toBe("drafts.mktops-ci-9");
       expect(result.success.publicUrl).toBeNull();
     }
   });
@@ -833,6 +840,7 @@ describe("pushToSanity", () => {
       itemId,
       "int-1",
       "publish",
+      undefined,
       mockFetch as unknown as typeof fetch,
     );
     expect(result.kind).toBe("failed");
@@ -853,6 +861,7 @@ describe("pushToSanity", () => {
       itemId,
       "int-1",
       "publish",
+      undefined,
       mockFetch as unknown as typeof fetch,
     );
     expect(result.kind).toBe("conflict");
@@ -865,14 +874,16 @@ describe("pushToSanity", () => {
       status: 200,
       ok: true,
       json: async () => ({
-        id: "ci-9",
-        workspaceId: wsId,
-        kind: "blog_article",
-        status: "published",
-        title: "Pilot post",
-        slug: "pilot-post",
-        createdAt: "2026-03-01T00:00:00Z",
-        updatedAt: "2026-03-01T00:00:00Z",
+        item: {
+          id: "ci-9",
+          workspaceId: wsId,
+          kind: "blog_article",
+          status: "published",
+          title: "Pilot post",
+          slug: "pilot-post",
+          createdAt: "2026-03-01T00:00:00Z",
+          updatedAt: "2026-03-01T00:00:00Z",
+        },
         mode: "publish",
         jobId: "job-1",
         transactionId: "tx-2",
@@ -887,6 +898,7 @@ describe("pushToSanity", () => {
       itemId,
       "int-1",
       "publish",
+      undefined,
       mockFetch as unknown as typeof fetch,
     );
     expect(result.kind).toBe("pushed");
@@ -896,5 +908,160 @@ describe("pushToSanity", () => {
       expect(result.success.urlVerified).toBe(true);
       expect(result.success.jobId).toBe("job-1");
     }
+  });
+
+  it("sends scheduledAt and marks the reply as scheduled on 202", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      status: 202,
+      ok: true,
+      json: async () => ({
+        item: {
+          id: "ci-9",
+          workspaceId: wsId,
+          kind: "blog_article",
+          status: "approved",
+          title: "Pilot post",
+          slug: "pilot-post",
+          createdAt: "2026-03-01T00:00:00Z",
+          updatedAt: "2026-03-01T00:00:00Z",
+        },
+        mode: "publish",
+        jobId: "job-7",
+        message: "The publish is queued",
+      }),
+    });
+    const result = await pushToSanity(
+      "http://api.local",
+      wsId,
+      itemId,
+      "int-1",
+      "publish",
+      "2026-12-01T09:00:00Z",
+      mockFetch as unknown as typeof fetch,
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({
+      integrationId: "int-1",
+      mode: "publish",
+      scheduledAt: "2026-12-01T09:00:00Z",
+    });
+    expect(result.kind).toBe("pushed");
+    if (result.kind === "pushed") {
+      expect(result.success.scheduled).toBe(true);
+      expect(result.success.jobId).toBe("job-7");
+    }
+  });
+
+  describe("publishing jobs", () => {
+    const jobPayload = {
+      id: "job-1",
+      contentItemId: "ci-9",
+      contentVersionId: "v-1",
+      integrationId: "int-1",
+      status: "failed",
+      scheduledAt: null,
+      attempts: 3,
+      lastError: "the Sanity API refused the request (HTTP 503)",
+      nextAttemptAt: "2026-10-21T09:30:00Z",
+      createdAt: "2026-10-20T09:00:00Z",
+      updatedAt: "2026-10-20T09:10:00Z",
+    };
+
+    it("lists the publishing history of one item", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          jobs: [jobPayload, { ...jobPayload, id: "job-2", status: "succeeded" }],
+        }),
+      });
+      const result = await fetchContentJobs(
+        "http://api.local",
+        wsId,
+        itemId,
+        mockFetch as unknown as typeof fetch,
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://api.local/api/v1/workspaces/ws-123/content/ci-9/jobs",
+        expect.objectContaining({ headers: { Accept: "application/json" } }),
+      );
+      expect(result.kind).toBe("loaded");
+      if (result.kind === "loaded") {
+        expect(result.jobs).toHaveLength(2);
+        expect(result.jobs[0].status).toBe("failed");
+        expect(result.jobs[0].lastError).toContain("503");
+        expect(result.jobs[1].status).toBe("succeeded");
+      }
+    });
+
+    it("flags malformed job lists as unavailable", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({ jobs: [{ id: "nope" }] }),
+      });
+      const result = await fetchContentJobs(
+        "http://api.local",
+        wsId,
+        itemId,
+        mockFetch as unknown as typeof fetch,
+      );
+      expect(result.kind).toBe("unavailable");
+    });
+
+    it("cancels a queued job and parses the returned job", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({ job: { ...jobPayload, status: "cancelled" } }),
+      });
+      const result = await cancelContentJob(
+        "http://api.local",
+        wsId,
+        itemId,
+        "job-1",
+        mockFetch as unknown as typeof fetch,
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://api.local/api/v1/workspaces/ws-123/content/ci-9/jobs/job-1/cancel",
+        { method: "POST" },
+      );
+      expect(result.kind).toBe("cancelled");
+    });
+
+    it("requeues a failed job and surfaces conflicts", async () => {
+      const okFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          job: { ...jobPayload, status: "pending", nextAttemptAt: "2026-10-20T09:20:00Z" },
+        }),
+      });
+      const result = await retryContentJob(
+        "http://api.local",
+        wsId,
+        itemId,
+        "job-1",
+        okFetch as unknown as typeof fetch,
+      );
+      expect(result.kind).toBe("requeued");
+
+      const conflictFetch = vi.fn().mockResolvedValue({
+        status: 409,
+        ok: false,
+        json: async () => ({ error: "the newest version must be approved again" }),
+      });
+      const conflict = await retryContentJob(
+        "http://api.local",
+        wsId,
+        itemId,
+        "job-1",
+        conflictFetch as unknown as typeof fetch,
+      );
+      expect(conflict.kind).toBe("conflict");
+      if (conflict.kind === "conflict") {
+        expect(conflict.message).toContain("approved");
+      }
+    });
   });
 });

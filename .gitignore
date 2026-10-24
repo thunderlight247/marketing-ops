@@ -19,6 +19,7 @@ pnpm-debug.log*
 
 # Next.js & frontend build artifacts
 .next/
+.next-e2e-*/
 out/
 dist/
 build/
@@ -38,6 +39,8 @@ apps/api/bin/
 
 # Testing & coverage
 coverage/
+playwright-report*/
+test-results*/
 *.lcov
 *.nyc_output/
 *.out

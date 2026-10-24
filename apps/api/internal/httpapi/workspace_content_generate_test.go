@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -189,6 +190,22 @@ func TestGenerateWorkspaceContent(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), "did not answer in time") {
 			t.Fatalf("expected a safe timeout message, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("non-provider errors stay generic in the 502", func(t *testing.T) {
+		gen := &fakeGenerator{fail: errors.New("boom: internal detail 10.0.0.1:53")}
+		h := NewRouter(Deps{Logger: testLogger, Workspaces: workspaceDeps(nil, nil), AIGenerator: gen})
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+wsID+"/content/generate", `{"kind":"snippet","topic":"t"}`)
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "boom") || strings.Contains(body, "10.0.0.1") {
+			t.Fatalf("non-provider error details leaked: %s", body)
+		}
+		if !strings.Contains(body, "the AI provider could not be reached") {
+			t.Fatalf("expected the generic provider message, got: %s", body)
 		}
 	})
 

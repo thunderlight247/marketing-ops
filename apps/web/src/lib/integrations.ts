@@ -50,6 +50,8 @@ export type CheckCapabilitiesResult =
       capabilities: CapabilityReport[];
       diagnostic: string;
       checkedAt: string;
+      /** Set when stored credentials exist but could not be applied (e.g. decrypt_failed). */
+      credentialProblem?: string;
     }
   | { kind: "unavailable"; message: string };
 
@@ -353,6 +355,7 @@ export async function checkIntegrationCapabilities(
       capabilities: unknown[];
       diagnostic: string;
       checkedAt: string;
+      credentialProblem?: string;
     };
 
     const caps: CapabilityReport[] = [];
@@ -377,6 +380,7 @@ export async function checkIntegrationCapabilities(
       capabilities: caps,
       diagnostic: data.diagnostic || "",
       checkedAt: data.checkedAt || new Date().toISOString(),
+      credentialProblem: data.credentialProblem || undefined,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
