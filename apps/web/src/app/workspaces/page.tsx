@@ -6,15 +6,15 @@ export const metadata: Metadata = { title: "Workspaces" };
 export default function WorkspacesPage() {
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">Workspaces</h1>
-      <p className="mt-1 max-w-prose text-slate-600">
-        Every client business gets its own workspace. Integrations, content, campaigns, and reports
-        live inside it — nothing is shared between workspaces.
-      </p>
-
-      <div className="mt-8">
-        <WorkspacesPanel />
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Workspaces</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Every client gets their own workspace. Content, integrations, campaigns, and publishing
+          history are isolated between workspaces.
+        </p>
       </div>
+
+      <WorkspacesPanel />
     </>
   );
 }

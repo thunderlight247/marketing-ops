@@ -278,7 +278,7 @@ export function BatchPublishPanel() {
                               [key]: event.target.value,
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
                         >
                           {sanityIntegrations.map((integration) => (
                             <option key={integration.id} value={integration.id}>
@@ -304,7 +304,7 @@ export function BatchPublishPanel() {
             type="button"
             onClick={() => void publishSelected()}
             disabled={selectedEntries.length === 0 || publishing || loadingEntries}
-            className="rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {publishing
               ? `Publishing ${selectedEntries.length} posts…`

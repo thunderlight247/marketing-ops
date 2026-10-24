@@ -8,6 +8,7 @@ export interface NavItem {
   summary: string;
   emptyTitle: string;
   emptyBody: string;
+  /** @deprecated no longer displayed */
   plannedFor: string;
 }
 
@@ -44,9 +45,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
     key: "calendar",
     href: "/calendar",
     label: "Calendar",
-    summary: "What is planned and scheduled to go out for each client.",
-    emptyTitle: "Nothing scheduled",
-    emptyBody: "Content planning and scheduled publishing will appear here.",
+    summary: "Scheduled and upcoming content across all your workspaces.",
+    emptyTitle: "Nothing scheduled yet",
+    emptyBody: "Content you schedule for publishing will appear here as a timeline. Create content in a workspace to get started.",
     plannedFor: "Milestones 4 and 9",
   },
   {
@@ -63,18 +64,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
     key: "analytics",
     href: "/analytics",
     label: "Analytics",
-    summary: "Search, traffic, and enquiry numbers reported by connected sources.",
-    emptyTitle: "No analytics data",
-    emptyBody: "Numbers appear here only when a connected source provides them.",
+    summary: "Search rankings, traffic, and lead data from connected sources.",
+    emptyTitle: "No analytics data yet",
+    emptyBody: "Connect an integration that supports analytics — such as Google Search Console — and numbers will appear here automatically.",
     plannedFor: "Milestone 10",
   },
   {
     key: "settings",
     href: "/settings",
     label: "Settings",
-    summary: "Operator preferences and security settings.",
-    emptyTitle: "No settings yet",
-    emptyBody: "Settings will be added alongside the features that need them.",
+    summary: "Operator preferences and platform configuration.",
+    emptyTitle: "No settings configured",
+    emptyBody: "Platform settings will be available here. For now, configuration is done through environment variables.",
     plannedFor: "Added as needed",
   },
 ];

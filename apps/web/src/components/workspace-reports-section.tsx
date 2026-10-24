@@ -11,7 +11,7 @@ import {
 } from "@/lib/reports";
 
 const inputClasses =
-  "rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
+  "rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
 
 function CountRows({ counts }: { counts: ReportCounts }) {
   const entries = Object.entries(counts);

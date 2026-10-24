@@ -7,7 +7,7 @@ import { fetchWorkspaces, type Workspace, type WorkspacesState } from "@/lib/wor
 import { WorkspaceIntegrationsSection } from "@/components/workspace-integrations-section";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
 
 export function IntegrationsDashboard() {
   const [workspacesState, setWorkspacesState] = useState<WorkspacesState>({ kind: "loading" });
@@ -28,25 +28,26 @@ export function IntegrationsDashboard() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-          <p className="mt-1 max-w-prose text-slate-600">
-            Connections to client websites, CMS platforms, and publishing channels. Every
-            integration verifies and declares what capabilities it actually supports before any
-            automated action.
-          </p>
-        </div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Integrations</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Connections to client websites, CMS platforms, and publishing channels.
+        </p>
       </div>
 
       {workspacesState.kind === "loading" && (
-        <p className="py-8 text-center text-sm text-slate-500">Loading workspaces…</p>
+        <div className="flex items-center gap-2 py-8">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
+          <p className="text-sm text-slate-500">Loading workspaces…</p>
+        </div>
       )}
 
       {workspacesState.kind === "unavailable" && (
-        <div className="rounded-md bg-red-50 p-4 ring-1 ring-inset ring-red-700/15">
-          <p className="text-sm font-medium text-red-900">Could not load workspaces</p>
-          <p className="mt-1 text-sm text-red-800">{workspacesState.reason}</p>
+        <div className="rounded-xl border border-red-100 bg-red-50 px-5 py-4">
+          <p className="text-sm font-medium text-red-800">Could not load workspaces</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Check that the API is reachable and try refreshing.
+          </p>
         </div>
       )}
 
@@ -59,7 +60,7 @@ export function IntegrationsDashboard() {
           <div className="mt-4">
             <Link
               href="/workspaces"
-              className="inline-flex rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+              className="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
             >
               Go to Workspaces
             </Link>

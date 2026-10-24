@@ -6,9 +6,9 @@ import { getApiBaseUrl } from "@/lib/config";
 import { contentKinds, requestContentDraft, type CreatorDraftState } from "@/lib/agents";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
+  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
 const PRIMARY_BUTTON =
-  "rounded-md bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
 
 export function WorkspaceContentCreatorSection({
   workspaceId,
@@ -105,7 +105,7 @@ function DraftView({
 }) {
   const { draft } = state;
   return (
-    <div className="mt-4 rounded-md border border-teal-100 bg-teal-50/50 px-4 py-3 text-sm text-slate-800">
+    <div className="mt-4 rounded-md border border-indigo-300 bg-teal-50/50 px-4 py-3 text-sm text-slate-800">
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span className="rounded bg-white px-2 py-0.5 ring-1 ring-inset ring-slate-300">
           {draft.item.kind.replace(/_/g, " ")} · {draft.item.status}

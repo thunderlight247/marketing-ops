@@ -18,10 +18,10 @@ import {
 } from "@/lib/content";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
+  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
 const labelClasses = "block text-sm font-medium text-slate-700";
 const PRIMARY_BUTTON =
-  "rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
 
 function kindBadgeClass(kind: ContentKind): string {
   switch (kind) {
@@ -159,14 +159,14 @@ export function WorkspaceContentSection({
           <button
             type="button"
             onClick={() => setShowGenerate((prev) => !prev)}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
           >
             {showGenerate ? "Cancel" : "✨ Draft with AI"}
           </button>
           <button
             type="button"
             onClick={() => setShowForm((prev) => !prev)}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
           >
             {showForm ? "Cancel" : "+ New draft"}
           </button>
@@ -176,7 +176,7 @@ export function WorkspaceContentSection({
       {showGenerate && (
         <form
           onSubmit={(e) => void handleGenerate(e)}
-          className="mt-4 rounded-md border border-teal-200 bg-teal-50/50 p-4"
+          className="mt-4 rounded-md border border-indigo-300 bg-teal-50/50 p-4"
         >
           <h3 className="text-sm font-semibold text-slate-800">Draft with AI</h3>
           <p className="mt-1 text-xs text-slate-600">
@@ -424,7 +424,7 @@ export function WorkspaceContentSection({
                     <td className="py-3 pr-4 font-medium text-slate-900">
                       <Link
                         href={`/content/${item.workspaceId}/${item.id}`}
-                        className="font-medium text-slate-900 underline-offset-2 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+                        className="font-medium text-slate-900 underline-offset-2 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
                       >
                         {item.title}
                       </Link>

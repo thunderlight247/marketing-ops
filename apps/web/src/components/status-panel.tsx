@@ -5,16 +5,16 @@ import { getApiBaseUrl } from "@/lib/config";
 import { describeDatabase, fetchHealth, type HealthState, type Tone } from "@/lib/health";
 
 const toneClasses: Record<Tone, { badge: string; dot: string }> = {
-  good: { badge: "bg-emerald-50 text-emerald-900 ring-emerald-700/25", dot: "bg-emerald-600" },
-  warn: { badge: "bg-amber-50 text-amber-900 ring-amber-700/25", dot: "bg-amber-600" },
-  bad: { badge: "bg-red-50 text-red-900 ring-red-700/25", dot: "bg-red-600" },
+  good: { badge: "bg-emerald-50 text-emerald-800 ring-emerald-600/20", dot: "bg-emerald-500" },
+  warn: { badge: "bg-amber-50 text-amber-800 ring-amber-600/20", dot: "bg-amber-500" },
+  bad: { badge: "bg-red-50 text-red-800 ring-red-600/20", dot: "bg-red-500" },
 };
 
 function Badge({ label, tone }: Readonly<{ label: string; tone: Tone }>) {
   const classes = toneClasses[tone];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-sm font-medium ring-1 ring-inset ${classes.badge}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${classes.badge}`}
     >
       <span aria-hidden="true" className={`size-1.5 rounded-full ${classes.dot}`} />
       {label}
@@ -24,8 +24,8 @@ function Badge({ label, tone }: Readonly<{ label: string; tone: Tone }>) {
 
 function Row({ term, children }: Readonly<{ term: string; children: React.ReactNode }>) {
   return (
-    <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4">
-      <dt className="text-sm font-medium text-slate-700">{term}</dt>
+    <div className="grid gap-1 py-3 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-xs font-medium text-slate-500 sm:pt-0.5">{term}</dt>
       <dd className="min-w-0 text-sm text-slate-800">{children}</dd>
     </div>
   );
@@ -47,77 +47,82 @@ export function StatusPanel() {
   return (
     <section
       aria-labelledby="status-heading"
-      className="rounded-lg border border-slate-200 bg-white"
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-        <h2 id="status-heading" className="text-base font-semibold">
+      <div className="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3">
+        <h2 id="status-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
           System status
         </h2>
         <button
           type="button"
           onClick={() => void refresh()}
           disabled={state.kind === "loading"}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Check again
+          {state.kind === "loading" ? "Checking…" : "Refresh"}
         </button>
       </div>
 
       <div aria-live="polite" className="px-5">
         {state.kind === "loading" ? (
-          <p className="py-6 text-sm text-slate-600">Checking the API...</p>
+          <div className="flex items-center gap-2 py-5">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
+            <p className="text-sm text-slate-500">Connecting to the API…</p>
+          </div>
         ) : null}
 
         {state.kind === "unavailable" ? (
           <div className="py-5">
-            <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+            <div className="flex items-center gap-2">
               <Badge label="API unavailable" tone="bad" />
-            </p>
-            <p className="mt-3 text-sm text-slate-800">{state.reason}</p>
-            <p className="mt-2 text-sm text-slate-600">
-              The dashboard cannot load workspaces or publish until the API is running. From the
-              repository root, run{" "}
-              <code className="rounded bg-slate-100 px-1 font-mono">make api-run</code>. If the API
-              is running on a different address, set{" "}
-              <code className="rounded bg-slate-100 px-1 font-mono">NEXT_PUBLIC_API_BASE_URL</code>{" "}
-              in <code className="rounded bg-slate-100 px-1 font-mono">apps/web/.env.local</code> to
-              that API&apos;s base URL, then restart the web app.
+            </div>
+            <p className="mt-3 text-sm text-slate-600">
+              The platform API is not reachable. Check that it is running and that the correct API
+              address is configured.
             </p>
           </div>
         ) : null}
 
         {state.kind === "loaded" ? (
           <>
-            <dl className="divide-y divide-slate-200">
+            <dl className="divide-y divide-slate-100">
               <Row term="API">
-                <Badge label="Running" tone="good" />
-                <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
-                  {state.health.service} {state.health.version}, {state.health.environment}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge label="Operational" tone="good" />
+                  <span className="text-xs text-slate-500">
+                    {state.health.service}{state.health.version ? ` ${state.health.version}` : ""}{" "}
+                    · {state.health.environment}
+                  </span>
+                </div>
               </Row>
               <Row term="Database">
-                <Badge
-                  label={describeDatabase(state.health.database.status).label}
-                  tone={describeDatabase(state.health.database.status).tone}
-                />
-                <span className="mt-1 block text-slate-600 sm:ml-2 sm:inline">
-                  {state.health.database.message}
-                  {state.health.database.latencyMs !== undefined
-                    ? ` (${state.health.database.latencyMs} ms)`
-                    : ""}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    label={describeDatabase(state.health.database.status).label}
+                    tone={describeDatabase(state.health.database.status).tone}
+                  />
+                  <span className="text-xs text-slate-500">
+                    {state.health.database.message}
+                    {state.health.database.latencyMs !== undefined
+                      ? ` · ${state.health.database.latencyMs} ms`
+                      : ""}
+                  </span>
+                </div>
               </Row>
               <Row term="Last checked">
-                <time dateTime={state.health.checkedAt}>
+                <time dateTime={state.health.checkedAt} className="text-xs text-slate-500">
                   {new Date(state.health.checkedAt).toLocaleString()}
                 </time>
               </Row>
             </dl>
             {state.health.database.status === "unconfigured" ? (
-              <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
-                The API is running, but no database is configured. Set <code>DATABASE_URL</code> for
-                the API and restart it before creating persistent business workspaces.
-              </p>
+              <div className="border-t border-amber-100 bg-amber-50 px-5 py-3 -mx-5">
+                <p className="text-xs text-amber-800">
+                  The API is running but no database is connected. Configure{" "}
+                  <code className="rounded bg-amber-100 px-1 font-mono">DATABASE_URL</code> and
+                  restart the API to enable data persistence.
+                </p>
+              </div>
             ) : null}
           </>
         ) : null}
