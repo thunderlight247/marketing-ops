@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/config";
 export type IntegrationStatus = "unconfigured" | "connected" | "limited" | "error" | "disconnected";
 
 export type CapabilityStatus = "supported" | "unsupported" | "unverified" | "failed";
@@ -180,7 +181,7 @@ export async function fetchAdapters(
 ): Promise<AdapterDescriptor[]> {
   const url = `${baseUrl.replace(/\/+$/, "")}/api/v1/integrations/adapters`;
   try {
-    const res = await fetchImpl(url, { headers: { Accept: "application/json" } });
+    const res = await fetchImpl(url, { headers: withAuth({ Accept: "application/json" }) });
     if (!res.ok) return [];
     const data = (await res.json()) as { adapters?: unknown[] };
     if (!Array.isArray(data.adapters)) return [];
@@ -210,7 +211,7 @@ export async function fetchWorkspaceIntegrations(
 ): Promise<IntegrationsState> {
   const url = `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`;
   try {
-    const res = await fetchImpl(url, { headers: { Accept: "application/json" } });
+    const res = await fetchImpl(url, { headers: withAuth({ Accept: "application/json" }) });
     if (res.status === 404) {
       return { kind: "missing", message: "Workspace not found." };
     }
@@ -252,10 +253,10 @@ export async function createWorkspaceIntegration(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: {
+      headers: withAuth({
         "Content-Type": "application/json",
         Accept: "application/json",
-      },
+      }),
       body: JSON.stringify({
         name: input.name.trim(),
         adapterKind: input.adapterKind.trim(),
@@ -302,10 +303,10 @@ export async function saveIntegrationCredentials(
   try {
     const res = await fetchImpl(url, {
       method: "PUT",
-      headers: {
+      headers: withAuth({
         "Content-Type": "application/json",
         Accept: "application/json",
-      },
+      }),
       body: JSON.stringify({ credentials }),
     });
 
@@ -339,7 +340,7 @@ export async function checkIntegrationCapabilities(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: { Accept: "application/json" },
+      headers: withAuth({ Accept: "application/json" }),
     });
 
     if (!res.ok) {
@@ -396,7 +397,7 @@ export async function deleteIntegration(
 ): Promise<{ success: boolean; message?: string }> {
   const url = `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(integrationId)}`;
   try {
-    const res = await fetchImpl(url, { method: "DELETE" });
+    const res = await fetchImpl(url, { method: "DELETE", headers: withAuth() });
     if (res.status === 204) return { success: true };
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     return {

@@ -14,6 +14,14 @@ import (
 	"marketingops/api/internal/integration"
 )
 
+// Default rate-limit for expensive AI/agent endpoints: 20 requests per minute
+// per IP. This prevents accidental runaway calls while never impeding normal
+// single-operator use.
+const (
+	defaultAIRateLimit   = 20
+	defaultAIRateWindow  = time.Minute
+)
+
 // HealthChecker is implemented by *health.Service.
 type HealthChecker interface {
 	Check(ctx context.Context) health.Report
@@ -28,6 +36,11 @@ type Deps struct {
 	Integrations         *integration.Registry
 	CredentialKey        []byte
 	CredentialKeyVersion int
+
+	// APIKey is the operator's Bearer token. When non-empty every request
+	// except /health and /ready must supply it. Empty means development mode
+	// (no auth enforced); production startup rejects an empty key via config.
+	APIKey string
 
 	// Operators resolves the acting operator in single-operator mode (D16);
 	// nil makes the decision route answer 501 alongside the store check.
@@ -48,6 +61,11 @@ type Deps struct {
 	AgentRunner  agents.PromptRun
 	GSCLoader    GSCLoader
 	AgentTimeout time.Duration
+
+	// AIRateLimit / AIRateWindow set the per-IP cap on AI/agent endpoints.
+	// Zero values use the package defaults (20 req/min).
+	AIRateLimit  int
+	AIRateWindow time.Duration
 }
 
 // NewRouter returns the API handler with middleware applied.
@@ -55,6 +73,16 @@ func NewRouter(d Deps) http.Handler {
 	if d.Integrations == nil {
 		d.Integrations = integration.NewDefaultRegistry()
 	}
+	// AI rate limiter: caps expensive model calls per IP.
+	aiLimit, aiWindow := d.AIRateLimit, d.AIRateWindow
+	if aiLimit <= 0 {
+		aiLimit = defaultAIRateLimit
+	}
+	if aiWindow <= 0 {
+		aiWindow = defaultAIRateWindow
+	}
+	aiLimiter := NewRateLimiter(aiLimit, aiWindow)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", healthHandler(d.Health))
 	mux.HandleFunc("GET /api/v1/ready", readyHandler(d.Health))
@@ -76,13 +104,16 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/decision", decideWorkspaceContentHandler(d.Workspaces, d.Operators))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/status", transitionWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/publish", publishWorkspaceContentHandler(d.Workspaces, d.CredentialKey, d.Integrations, d.SanityOpsBase, d.HTTPClient))
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/generate", generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))
+	mux.Handle("POST /api/v1/workspaces/{id}/content/generate",
+		aiLimiter.Middleware(http.HandlerFunc(generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))))
 	// Agency Agents milestone: the first curated specialist (SEO advisor).
 	// Advisory-only, workspace-scoped; nil runner answers 501.
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/seo/advisory", seoAdvisoryHandler(d.Workspaces, d.AgentRunner, d.GSCLoader, d.AgentTimeout))
+	mux.Handle("POST /api/v1/workspaces/{id}/agents/seo/advisory",
+		aiLimiter.Middleware(http.HandlerFunc(seoAdvisoryHandler(d.Workspaces, d.AgentRunner, d.GSCLoader, d.AgentTimeout))))
 	// Second curated specialist: content creator. Files a draft into the
 	// existing approval workflow; nil runner answers 501.
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/content-creator/draft", contentCreatorDraftHandler(d.Workspaces, d.AgentRunner, d.AgentTimeout))
+	mux.Handle("POST /api/v1/workspaces/{id}/agents/content-creator/draft",
+		aiLimiter.Middleware(http.HandlerFunc(contentCreatorDraftHandler(d.Workspaces, d.AgentRunner, d.AgentTimeout))))
 	// Campaigns and leads (Milestone 11); workspace-scoped throughout.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/campaigns", listWorkspaceCampaignsHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/campaigns", createWorkspaceCampaignHandler(d.Workspaces))
@@ -103,11 +134,12 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations/{integrationId}/check", checkIntegrationCapabilitiesHandler(d.Workspaces, d.Integrations, d.CredentialKey))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/integrations/{integrationId}", deleteWorkspaceIntegrationHandler(d.Workspaces))
 
-	// Outermost first: recover -> log -> security headers -> CORS -> routes.
+	// Outermost first: recover -> log -> security headers -> CORS -> auth -> routes.
 	return recoverer(d.Logger)(
 		requestLogger(d.Logger)(
 			securityHeaders(
-				cors(d.AllowedOrigins)(mux))))
+				cors(d.AllowedOrigins)(
+					authMiddleware(d.APIKey)(mux)))))
 }
 
 // healthHandler always answers 200 while the process is up. The body says

@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/config";
 export type ContentKind = "blog_article" | "social_post" | "snippet";
 
 export type ContentStatus =
@@ -87,7 +88,7 @@ export async function uploadIntegrationImage(
   form.append("file", file, file.name);
 
   try {
-    const res = await fetchImpl(url, { method: "POST", body: form });
+    const res = await fetchImpl(url, { method: "POST", headers: withAuth(), body: form });
     if (res.status === 413) {
       return { kind: "rejected", problems: ["image is too large (max 8 MB)"] };
     }
@@ -341,7 +342,7 @@ export async function fetchWorkspaceContent(
 ): Promise<ContentListState> {
   const url = `${baseUrl.replace(/\/+$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/content`;
   try {
-    const res = await fetchImpl(url, { headers: { Accept: "application/json" } });
+    const res = await fetchImpl(url, { headers: withAuth({ Accept: "application/json" }) });
     if (res.status === 404) {
       return { kind: "missing", message: "Workspace not found." };
     }
@@ -392,10 +393,7 @@ export async function createWorkspaceContent(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(bodyPayload),
     });
 
@@ -443,7 +441,7 @@ export async function fetchWorkspaceDraft(
 ): Promise<DraftState> {
   try {
     const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId), {
-      headers: { Accept: "application/json" },
+      headers: withAuth({ Accept: "application/json" }),
     });
     if (res.status === 404) {
       return { kind: "missing", message: "Workspace or content item not found." };
@@ -512,7 +510,7 @@ export async function saveWorkspaceDraft(
   try {
     const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
     });
     if (res.status === 409) {
@@ -584,7 +582,7 @@ export async function generateWorkspaceContent(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
     });
     if (res.status === 400) {
@@ -673,7 +671,7 @@ export async function fetchContentHistory(
 ): Promise<ContentHistoryState> {
   try {
     const res = await fetchImpl(approvalUrl(baseUrl, workspaceId, itemId, "/history"), {
-      headers: { Accept: "application/json" },
+      headers: withAuth({ Accept: "application/json" }),
     });
     if (res.status === 404) {
       return { kind: "missing", message: "Workspace or content item not found." };
@@ -743,7 +741,7 @@ export async function decideContentApproval(
   try {
     const res = await fetchImpl(approvalUrl(baseUrl, workspaceId, itemId, "/decision"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
     });
     if (res.status === 409) {
@@ -813,7 +811,7 @@ export async function transitionContentStatus(
   try {
     const res = await fetchImpl(itemUrl(baseUrl, workspaceId, itemId) + "/status", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify({ status }),
     });
     if (res.status === 409) {
@@ -903,7 +901,7 @@ export async function pushToSanity(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
     });
     if (res.status === 400) {
@@ -1050,7 +1048,7 @@ export async function fetchContentJobs(
 ): Promise<ContentJobsState> {
   try {
     const res = await fetchImpl(`${itemUrl(baseUrl, workspaceId, itemId)}/jobs`, {
-      headers: { Accept: "application/json" },
+      headers: withAuth({ Accept: "application/json" }),
     });
     if (res.status === 404) {
       return { kind: "missing", message: "Workspace or content item not found." };
@@ -1152,7 +1150,7 @@ async function postJobAction<T>(
 ): Promise<T | { kind: "conflict"; message: string } | { kind: "unavailable"; message: string }> {
   const url = `${itemUrl(baseUrl, workspaceId, itemId)}/jobs/${encodeURIComponent(jobId)}/${action}`;
   try {
-    const res = await fetchImpl(url, { method: "POST" });
+    const res = await fetchImpl(url, { method: "POST", headers: withAuth() });
     if (res.status === 409) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       return {

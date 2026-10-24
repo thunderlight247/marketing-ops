@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/config";
 export interface Workspace {
   id: string;
   slug: string;
@@ -189,6 +190,7 @@ export async function fetchWorkspaceDetail(
   try {
     const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${encodeURIComponent(id)}`, {
       signal: controller.signal,
+      headers: withAuth(),
       cache: "no-store",
     });
     if (response.status === 404) {
@@ -243,7 +245,7 @@ export async function updateWorkspaceFacts(
   try {
     const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${urlencodeId(id)}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: withAuth({ "Content-Type": "application/json" }),
       signal: controller.signal,
       cache: "no-store",
       body: JSON.stringify({
@@ -283,7 +285,7 @@ export async function deleteWorkspace(
   try {
     const response = await fetchImpl(`${baseUrl}/api/v1/workspaces/${urlencodeId(id)}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: withAuth({ "Content-Type": "application/json" }),
       signal: controller.signal,
       cache: "no-store",
       body: JSON.stringify({ confirmSlug }),
@@ -317,7 +319,7 @@ export async function saveBrandProfile(
       `${baseUrl}/api/v1/workspaces/${encodeURIComponent(id)}/brand`,
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: withAuth({ "Content-Type": "application/json" }),
         signal: controller.signal,
         cache: "no-store",
         body: JSON.stringify(input),
@@ -355,6 +357,7 @@ export async function fetchWorkspaces(
   try {
     const response = await fetchImpl(`${baseUrl}/api/v1/workspaces`, {
       signal: controller.signal,
+      headers: withAuth(),
       cache: "no-store",
     });
     if (!response.ok) {
@@ -387,7 +390,7 @@ export async function createWorkspace(
   try {
     const response = await fetchImpl(`${baseUrl}/api/v1/workspaces`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: withAuth({ "Content-Type": "application/json" }),
       signal: controller.signal,
       cache: "no-store",
       body: JSON.stringify({

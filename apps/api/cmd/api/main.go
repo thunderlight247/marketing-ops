@@ -117,6 +117,7 @@ func run() error {
 			Integrations:         registry,
 			CredentialKey:        cfg.CredentialKey,
 			CredentialKeyVersion: cfg.CredentialKeyVersion,
+			APIKey:               cfg.APIKey,
 			Operators:            operatorProvider,
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,

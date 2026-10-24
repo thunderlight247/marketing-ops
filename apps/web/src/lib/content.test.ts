@@ -1024,7 +1024,7 @@ describe("pushToSanity", () => {
       );
       expect(mockFetch).toHaveBeenCalledWith(
         "http://api.local/api/v1/workspaces/ws-123/content/ci-9/jobs/job-1/cancel",
-        { method: "POST" },
+        { method: "POST", headers: {} },
       );
       expect(result.kind).toBe("cancelled");
     });

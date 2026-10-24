@@ -38,6 +38,7 @@ func TestLoadValidValues(t *testing.T) {
 		"CORS_ALLOWED_ORIGINS":      "https://ops.example.com/, https://admin.example.com",
 		"CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32),
 		"OPENROUTER_API_KEY":        "router-key-1",
+		"API_KEY":                   "test-operator-key",
 	}))
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -96,6 +97,7 @@ func TestLoadAIDefaults(t *testing.T) {
 		"DATABASE_URL":              "postgres://u:p@localhost:5432/db",
 		"CORS_ALLOWED_ORIGINS":      "https://ops.example.com",
 		"CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("cd", 32),
+		"API_KEY":                   "prod-secret",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "real AI provider is required") {
 		t.Fatalf("expected the production AI error, got %v", err)
@@ -140,11 +142,12 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"db missing name", map[string]string{"DATABASE_URL": "postgres://localhost:5432"}, "DATABASE_URL is invalid"},
 		{"wildcard origin", map[string]string{"CORS_ALLOWED_ORIGINS": "*"}, "CORS_ALLOWED_ORIGINS is invalid"},
 		{"origin with path", map[string]string{"CORS_ALLOWED_ORIGINS": "https://a.example.com/app"}, "CORS_ALLOWED_ORIGINS is invalid"},
-		{"prod without db", map[string]string{"APP_ENV": "production", "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32)}, "DATABASE_URL is required"},
-		{"prod without origins", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32)}, "CORS_ALLOWED_ORIGINS is required"},
-		{"prod without credential key", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com"}, "CREDENTIAL_ENCRYPTION_KEY is required"},
+		{"prod without db", map[string]string{"APP_ENV": "production", "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32), "API_KEY": "secret"}, "DATABASE_URL is required"},
+		{"prod without origins", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32), "API_KEY": "secret"}, "CORS_ALLOWED_ORIGINS is required"},
+		{"prod without credential key", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com", "API_KEY": "secret"}, "CREDENTIAL_ENCRYPTION_KEY is required"},
+		{"prod without api key", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32)}, "API_KEY is required"},
 		{"invalid credential key", map[string]string{"CREDENTIAL_ENCRYPTION_KEY": "not-hex"}, "CREDENTIAL_ENCRYPTION_KEY is invalid"},
-		{"prod with sanity override", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32), "SANITY_OPS_BASE": "http://localhost:9999"}, "SANITY_OPS_BASE must not be set"},
+		{"prod with sanity override", map[string]string{"APP_ENV": "production", "DATABASE_URL": validDB, "CORS_ALLOWED_ORIGINS": "https://a.example.com", "CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32), "API_KEY": "secret", "SANITY_OPS_BASE": "http://localhost:9999"}, "SANITY_OPS_BASE must not be set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,6 +172,40 @@ func TestLoadReportsAllProblemsTogether(t *testing.T) {
 			t.Errorf("error %q is missing %q", err.Error(), want)
 		}
 	}
+}
+
+func TestLoadAPIKey(t *testing.T) {
+	t.Run("loaded from env", func(t *testing.T) {
+		cfg, err := Load(env(map[string]string{"API_KEY": "my-secret-key"}))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.APIKey != "my-secret-key" {
+			t.Errorf("APIKey = %q, want %q", cfg.APIKey, "my-secret-key")
+		}
+	})
+	t.Run("empty in development is allowed", func(t *testing.T) {
+		cfg, err := Load(env(map[string]string{}))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.APIKey != "" {
+			t.Errorf("APIKey = %q, want empty in dev", cfg.APIKey)
+		}
+	})
+	t.Run("required in production", func(t *testing.T) {
+		_, err := Load(env(map[string]string{
+			"APP_ENV":                   "production",
+			"DATABASE_URL":              "postgres://u:p@localhost:5432/db",
+			"CORS_ALLOWED_ORIGINS":      "https://ops.example.com",
+			"CREDENTIAL_ENCRYPTION_KEY": strings.Repeat("ab", 32),
+			"OPENROUTER_API_KEY":        "key",
+			// API_KEY intentionally absent
+		}))
+		if err == nil || !strings.Contains(err.Error(), "API_KEY is required") {
+			t.Fatalf("expected API_KEY error, got %v", err)
+		}
+	})
 }
 
 func TestErrorsDoNotLeakSecrets(t *testing.T) {

@@ -40,6 +40,11 @@ type Config struct {
 	CredentialKey        []byte
 	CredentialKeyVersion int
 
+	// APIKey is the operator's Bearer token used by the auth middleware.
+	// Required when APP_ENV=production; optional (auth disabled) in development.
+	// Never log it.
+	APIKey string
+
 	// AI drafting. AIProvider selects the adapter: "openrouter" when a key is
 	// configured, or "stub" for offline development. AIModel is the routed
 	// model name (provider-specific, e.g. "anthropic/claude-3.5-haiku").
@@ -137,6 +142,9 @@ func Load(getenv func(string) string) (Config, error) {
 			cfg.AllowedOrigins = origins
 		}
 	}
+
+	// API key authentication (Milestone 13).
+	cfg.APIKey = strings.TrimSpace(getenv("API_KEY"))
 
 	cfg.CredentialKeyVersion = 1
 	credKeyRaw := strings.TrimSpace(getenv("CREDENTIAL_ENCRYPTION_KEY"))
@@ -237,6 +245,9 @@ func Load(getenv func(string) string) (Config, error) {
 		if len(cfg.CredentialKey) == 0 {
 			add("CREDENTIAL_ENCRYPTION_KEY is required when APP_ENV=production")
 		}
+		if cfg.APIKey == "" {
+			add("API_KEY is required when APP_ENV=production (set it to a long random string)")
+		}
 		if strings.TrimSpace(getenv("SANITY_OPS_BASE")) != "" {
 			add("SANITY_OPS_BASE must not be set when APP_ENV=production")
 		}
@@ -331,6 +342,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("database_target", c.DatabaseTarget()),
 		slog.Any("allowed_origins", c.AllowedOrigins),
 		slog.Bool("credential_key_configured", len(c.CredentialKey) > 0),
+		slog.Bool("api_key_configured", c.APIKey != ""),
 		slog.String("ai_provider", c.AIProvider),
 		slog.String("ai_model", c.AIModel),
 		slog.Bool("ai_key_configured", c.AIKey != ""),

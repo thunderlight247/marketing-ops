@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/config";
 // Campaign and lead client library (Milestone 11, first increment).
 // Network layer mirrors lib/integrations.ts: explicit result kinds, strict
 // response parsing, and no thrown errors on clean failures.
@@ -227,10 +228,10 @@ export async function fetchWorkspaceCampaignsLeads(
   try {
     const [campaignsRes, leadsRes] = await Promise.all([
       fetchImpl(`${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/campaigns`, {
-        headers: { Accept: "application/json" },
+        headers: withAuth({ Accept: "application/json" }),
       }),
       fetchImpl(`${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/leads`, {
-        headers: { Accept: "application/json" },
+        headers: withAuth({ Accept: "application/json" }),
       }),
     ]);
     if (campaignsRes.status === 404 || leadsRes.status === 404) {
@@ -279,7 +280,7 @@ export async function createCampaign(
   try {
     res = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify({
         name: input.name.trim(),
         status: input.status,
@@ -339,7 +340,7 @@ export async function createLead(
   try {
     res = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(cleanLeadPayload(input)),
     });
   } catch (err) {
@@ -383,7 +384,7 @@ export async function updateLead(
   try {
     res = await fetchImpl(url, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(input),
     });
   } catch (err) {

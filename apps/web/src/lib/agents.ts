@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/config";
 // Agency Agents client library (first specialist: SEO advisor).
 // Mirrors lib/campaigns.ts: explicit result kinds, strict response parsing,
 // and no thrown errors on clean failures.
@@ -64,7 +65,7 @@ export async function requestSeoAdvisory(
       `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/seo/advisory`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
         body: JSON.stringify(focus.trim() === "" ? {} : { focus: focus.trim() }),
       },
     );
@@ -180,7 +181,7 @@ export async function requestContentDraft(
       `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/content-creator/draft`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
         body: JSON.stringify({
           kind,
           ...(focus.trim() === "" ? {} : { focus: focus.trim() }),
