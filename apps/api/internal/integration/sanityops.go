@@ -3,9 +3,9 @@
 // anderror text is classified, never echoing credentials.
 //
 // Design notes:
-//   - Draft document ids are deterministic ("drafts.mktops-<itemId>-v<num>"),
-//     so re-submitting the same version replaces one draft instead of
-//     accumulating duplicates (duplicate prevention).
+//   - Sanity's draft ID is "drafts." + its published ID. Marketing Ops uses a
+//     stable published ID per item, so every version replaces that item's one
+//     draft rather than violating Sanity's draft/published document pairing.
 //   - Publishing is a Sanity transaction: createOrReplace the published id
 //     with the draft content, then delete the draft, then the workflow records
 //     the published artifact. The public URL is only VERIFIED (read-only GET);
@@ -43,6 +43,11 @@ type SanityWriteError struct {
 }
 
 func (e *SanityWriteError) Error() string {
+	return e.SafeMessage()
+}
+
+// SafeMessage returns a classified message that never includes response bodies or credentials.
+func (e *SanityWriteError) SafeMessage() string {
 	switch e.Kind {
 	case SanityFailNetwork:
 		return "the Sanity API could not be reached"
@@ -107,12 +112,49 @@ type PTBlock struct {
 	ListItem string        `json:"listItem,omitempty"`
 	MarkDefs []MarkDef     `json:"markDefs,omitempty"`
 	Children []PTChildSpan `json:"children"`
+
+	// Non-text blocks: exactly one of these is set, and MarshalJSON emits
+	// the Portable Text object for that block instead of a text span block.
+	Image *PTImageRef `json:"-"`
+	Embed *PTEmbed    `json:"-"`
+}
+
+// MarshalJSON renders image/embed blocks as their Portable Text objects and
+// text blocks with the: standard struct fields.
+func (b PTBlock) MarshalJSON() ([]byte, error) {
+	switch {
+	case b.Image != nil:
+		doc := map[string]any{
+			"_type": "image",
+			"asset": map[string]any{"_type": "reference", "_ref": b.Image.AssetRef},
+		}
+		if b.Image.Alt != "" {
+			doc["alt"] = b.Image.Alt
+		}
+		return json.Marshal(doc)
+	case b.Embed != nil:
+		return json.Marshal(map[string]any{"_type": b.Embed.Type, "url": b.Embed.URL})
+	}
+	type plainBlock PTBlock // avoid MarshalJSON recursion
+	return json.Marshal(plainBlock(b))
 }
 
 // MarkDef is, e.g., a "strong" mark.
 type MarkDef struct {
 	Key  string `json:"_key"`
 	Type string `json:"_type"`
+}
+
+// PTImageRef is an image block referencing an already-uploaded Sanity asset.
+type PTImageRef struct {
+	AssetRef string
+	Alt      string
+}
+
+// PTEmbed is a non-text embed block (e.g. a YouTube object in the schema).
+type PTEmbed struct {
+	Type string
+	URL  string
 }
 
 // SanityPost is the assembled document for one draft.
@@ -148,11 +190,14 @@ func ConvertBodyToBlocks(body string) []PTBlock {
 			if bold {
 				mark = key + "smark"
 				child.Marks = []string{mark}
+				// Each bold span gets one stable mark key and exactly one
+				// corresponding markDef; repeated bold runs may reuse the def.
+				if len(block.MarkDefs) == 0 {
+					block.MarkDefs = append(block.MarkDefs, MarkDef{Key: mark, Type: "strong"})
+				}
 			}
 			block.Children = append(block.Children, child)
 		}
-		// markDefs are filled when children are appended with marks; the def
-		// itself is registered by the caller function below through markIn.
 		return block, addChild
 	}
 
@@ -175,12 +220,6 @@ func ConvertBodyToBlocks(body string) []PTBlock {
 				addChild(part, i%2 == 1)
 			}
 		}
-		// Register markDefs for any bold spans this block produced.
-		for _, child := range block.Children {
-			if len(child.Marks) > 0 {
-				block.MarkDefs = append(block.MarkDefs, MarkDef{Key: child.Marks[0], Type: "strong"})
-			}
-		}
 		return block
 	}
 
@@ -189,6 +228,14 @@ func ConvertBodyToBlocks(body string) []PTBlock {
 		switch {
 		case trimmed == "":
 			// blank line: paragraph separator, nothing to emit
+		case strings.HasPrefix(trimmed, mediaImageMarkerPrefix):
+			if block, ok := parseMediaImageMarker(trimmed); ok {
+				blocks = append(blocks, *block)
+			}
+		case strings.HasPrefix(trimmed, mediaYoutubeMarkerPrefix):
+			if block, ok := parseMediaYoutubeMarker(trimmed); ok {
+				blocks = append(blocks, *block)
+			}
 		case strings.HasPrefix(trimmed, "####"), strings.HasPrefix(trimmed, "###"):
 			blocks = append(blocks, *build("h4", "", 0, strings.TrimLeft(trimmed, "# ")))
 		case strings.HasPrefix(trimmed, "##"):
@@ -211,6 +258,89 @@ func ConvertBodyToBlocks(body string) []PTBlock {
 		}
 	}
 	return blocks
+}
+
+// ---- Media inline markers ----------
+
+// Draft bodies can embed already-uploaded media with single-line markers the
+// editor inserts after an upload succeeds:
+//
+//	[media-image ref=<assetDocID> src=<cdnURL> alt="<text>"]
+//	[media-youtube src=<url>]
+//
+// The ref is the asset document id used for the Portable Text asset reference;
+// src is only for browser previews. Anything unparseable stays literal text.
+const (
+	mediaImageMarkerPrefix   = "[media-image "
+	mediaYoutubeMarkerPrefix = "[media-youtube "
+)
+
+// splitMarkerTokens splits "key=value" chips on unquoted spaces only, so
+// quoted values may contain spaces. Quotes are preserved for unquoting.
+func splitMarkerTokens(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '"':
+			inQuote = !inQuote
+			cur.WriteByte(c)
+		case c == ' ' && !inQuote:
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+func unquoteMarkerValue(v string) string {
+	if len(v) >= 2 && strings.HasPrefix(v, "\"") && strings.HasSuffix(v, "\"") {
+		return strings.ReplaceAll(v[1:len(v)-1], "\\\"", "\"")
+	}
+	return v
+}
+
+// markerFields reads the inner key=value chips of a marker.
+func markerFields(inner string) map[string]string {
+	fields := map[string]string{}
+	for _, token := range splitMarkerTokens(inner) {
+		if eq := strings.IndexByte(token, '='); eq > 0 {
+			fields[token[:eq]] = unquoteMarkerValue(token[eq+1:])
+		}
+	}
+	return fields
+}
+
+func parseMediaImageMarker(trimmed string) (*PTBlock, bool) {
+	if !strings.HasSuffix(trimmed, "]") {
+		return nil, false
+	}
+	fields := markerFields(trimmed[len(mediaImageMarkerPrefix) : len(trimmed)-1])
+	ref := fields["ref"]
+	if ref == "" {
+		return nil, false
+	}
+	return &PTBlock{Image: &PTImageRef{AssetRef: ref, Alt: fields["alt"]}}, true
+}
+
+func parseMediaYoutubeMarker(trimmed string) (*PTBlock, bool) {
+	if !strings.HasSuffix(trimmed, "]") {
+		return nil, false
+	}
+	fields := markerFields(trimmed[len(mediaYoutubeMarkerPrefix) : len(trimmed)-1])
+	url := fields["src"]
+	if url == "" {
+		return nil, false
+	}
+	return &PTBlock{Embed: &PTEmbed{Type: "youtube", URL: url}}, true
 }
 
 // ---- Mutate plumbing --------------------------------------------------------
@@ -263,14 +393,18 @@ func (s SanityOps) mutate(ctx context.Context, env mutationEnvelope) (string, er
 	return result.TransactionID, nil
 }
 
-// draftIDFor returns the deterministic draft document id for one version.
-func draftIDFor(itemID string, versionNumber int) string {
-	return fmt.Sprintf("drafts.mktops-%s-v%d", itemID, versionNumber)
+// draftIDFor returns Sanity's canonical draft ID for the item's published ID.
+// Sanity pairs drafts.foo with the published document foo; the version number
+// is intentionally excluded because Sanity permits only one draft per document.
+func draftIDFor(itemID string, _ int) string {
+	return "drafts." + publishedIDFor(itemID, 0)
 }
 
-// publishedIDFor returns the published id for one version.
-func publishedIDFor(itemID string, versionNumber int) string {
-	return strings.TrimPrefix(draftIDFor(itemID, versionNumber), "drafts.")
+// publishedIDFor returns the stable published document id for one content item.
+// Every approved version updates this same Sanity article; its draft is always
+// the paired `drafts.` + published ID, as required by Sanity.
+func publishedIDFor(itemID string, _ int) string {
+	return "mktops-" + itemID
 }
 
 // documentFromPayload turns a version's fields + body into the payload map
@@ -295,12 +429,35 @@ func (p SanityPost) documentPayload() map[string]any {
 	return doc
 }
 
-// CreateDraft writes (createOrReplace) the deterministic draft document for
-// one version. Re-running it REPLACES the same draft — no duplicates.
+// CreateDraft writes (createOrReplace) Sanity's canonical draft for one item.
+// Re-running replaces the same draft. Preserve _createdAt across replacement.
 func (s SanityOps) CreateDraft(ctx context.Context, itemID string, versionNumber int, post SanityPost) (draftID string, transactionID string, err error) {
 	draftID = draftIDFor(itemID, versionNumber)
 	payload := post.documentPayload()
 	payload["_id"] = draftID
+	if existing, fetchErr := s.fetchDraftDoc(ctx, draftID); fetchErr == nil {
+		if createdAt, ok := existing["_createdAt"].(string); ok && createdAt != "" {
+			payload["_createdAt"] = createdAt
+		}
+	} else {
+		var writeErr *SanityWriteError
+		if !errors.As(fetchErr, &writeErr) || writeErr.Kind != SanityFailDraftGone {
+			return "", "", fetchErr
+		}
+		// After a prior publish, there is no draft, but Sanity requires the
+		// published document and its next draft to share _createdAt. Preserve
+		// that value when starting another approved version.
+		if published, publishedErr := s.fetchDraftDoc(ctx, publishedIDFor(itemID, versionNumber)); publishedErr == nil {
+			if createdAt, ok := published["_createdAt"].(string); ok && createdAt != "" {
+				payload["_createdAt"] = createdAt
+			}
+		} else {
+			var publishedWriteErr *SanityWriteError
+			if !errors.As(publishedErr, &publishedWriteErr) || publishedWriteErr.Kind != SanityFailDraftGone {
+				return "", "", publishedErr
+			}
+		}
+	}
 	txID, err := s.mutate(ctx, mutationEnvelope{
 		Mutations: []map[string]any{{"createOrReplace": payload}},
 	})
@@ -310,8 +467,8 @@ func (s SanityOps) CreateDraft(ctx context.Context, itemID string, versionNumber
 	return draftID, txID, nil
 }
 
-// fetchDraftDoc reads the current draft document (needed to publish its exact
-// content).
+// fetchDraftDoc reads a draft or published document by ID without relying on
+// the query index's eventual consistency.
 func (s SanityOps) fetchDraftDoc(ctx context.Context, draftID string) (map[string]any, error) {
 	url := fmt.Sprintf("%s/%s/data/doc/%s/%s", s.apiBase(), s.version(), s.Creds.Dataset, draftID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -350,11 +507,10 @@ func (s SanityOps) fetchDraftDoc(ctx context.Context, draftID string) (map[strin
 	return wrapper.Documents[0], nil
 }
 
-// Publish runs the transaction: createOrReplace the published id with the
-// draft's exact content, then delete the draft. The published document id is
-// deterministic per version, so re-publishing the same version is idempotent;
-// publishing a DIFFERENT version writes a different id and does not clobber
-// the previously published article without the workflow saying so.
+// Publish runs one transaction: createOrReplace the stable published ID with
+// the exact approved backend version, then delete the canonical draft. It does
+// not trust a mutable Studio draft as the publication source. Re-publishing is
+// idempotent; later approved versions update the same published article.
 // VerifyPublicURL performs the read-only verification of the pilot site's
 // published article URL. Nothing is written; a 2xx GET means the page exists.
 // urlPrefix defaults to "/posts/" when empty.
@@ -400,14 +556,35 @@ func firstSafe(body []byte) string {
 	return strings.TrimSpace(line)
 }
 
-func (s SanityOps) Publish(ctx context.Context, itemID string, versionNumber int) (publishedID, transactionID string, err error) {
+func (s SanityOps) Publish(ctx context.Context, itemID string, versionNumber int, post SanityPost) (publishedID, transactionID string, err error) {
 	draftID := draftIDFor(itemID, versionNumber)
-	doc, err := s.fetchDraftDoc(ctx, draftID)
-	if err != nil {
-		return "", "", err
+	publishedID = publishedIDFor(itemID, versionNumber)
+	doc := post.documentPayload()
+	doc["_id"] = publishedID
+
+	// Sanity pairs the draft and published documents with a shared creation
+	// timestamp. Preserve it from the draft, or from the published document on
+	// retries after a successful write whose response was lost.
+	prior, priorErr := s.fetchDraftDoc(ctx, draftID)
+	if priorErr != nil {
+		var writeErr *SanityWriteError
+		if !errors.As(priorErr, &writeErr) || writeErr.Kind != SanityFailDraftGone {
+			return "", "", priorErr
+		}
+		prior, priorErr = s.fetchDraftDoc(ctx, publishedID)
+		if priorErr != nil {
+			var publishedErr *SanityWriteError
+			if !errors.As(priorErr, &publishedErr) || publishedErr.Kind != SanityFailDraftGone {
+				return "", "", priorErr
+			}
+		}
 	}
-	// Publish the exact draft content under the published id.
-	doc["_id"] = publishedIDFor(itemID, versionNumber)
+	if prior != nil {
+		if createdAt, ok := prior["_createdAt"].(string); ok && createdAt != "" {
+			doc["_createdAt"] = createdAt
+		}
+	}
+
 	txID, err := s.mutate(ctx, mutationEnvelope{
 		Mutations: []map[string]any{
 			{"createOrReplace": doc},
@@ -417,5 +594,9 @@ func (s SanityOps) Publish(ctx context.Context, itemID string, versionNumber int
 	if err != nil {
 		return "", "", err
 	}
-	return doc["_id"].(string), txID, nil
+	publishedID, ok := doc["_id"].(string)
+	if !ok || publishedID == "" {
+		return "", "", &SanityWriteError{Kind: SanityFailMalformed}
+	}
+	return publishedID, txID, nil
 }

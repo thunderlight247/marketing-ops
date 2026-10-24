@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"marketingops/api/internal/integration"
 	"marketingops/api/internal/secretcipher"
@@ -18,12 +19,6 @@ import (
 type pubResponse = publishResponse
 
 const maxPublishPayloadBytes = 8 * 1024
-
-// Sentinel setup errors distinguishable inside this handler.
-var (
-	errSanityNotConfigured = errors.New("the sanity integration has no projectId/dataset configured")
-	errSanityNoCredentials = errors.New("the sanity integration has no saved write token")
-)
 
 type publishResponse struct {
 	Item          contentItemJSON `json:"item"`
@@ -37,65 +32,53 @@ type publishResponse struct {
 	Message       string          `json:"message"`
 }
 
-// sanitySetup bundles the facts the Sanity ops client needs, resolved from the
-// integration row and its decrypted credentials.
-type sanitySetup struct {
-	ops        integration.SanityOps
-	docType    string
-	urlPrefix  string
-	apiVersion string
-}
-
-// buildSanitySetup decrypts credentials server-side and validates config. The
-// token is returned only inside the ops struct and never logged.
-func buildSanitySetup(ctx context.Context, ws WorkspaceStore, integrationRow store.Integration, key []byte, opsBase string, httpClient *http.Client) (sanitySetup, error) {
-	projectID, _ := integrationRow.Config["projectId"].(string)
-	dataset, _ := integrationRow.Config["dataset"].(string)
-	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(dataset) == "" {
-		return sanitySetup{}, errSanityNotConfigured
+// buildPublisher decrypts credentials server-side and delegates provider
+// configuration to the registered publishing adapter. Secret values are never
+// returned to the caller except inside the publisher implementation.
+func buildPublisher(ctx context.Context, ws WorkspaceStore, integrationRow store.Integration, key []byte, registry *integration.Registry, apiBase string, httpClient *http.Client) (integration.Publisher, error) {
+	if ws == nil {
+		return nil, errors.New("workspace store is unavailable")
+	}
+	if registry == nil {
+		return nil, errors.New("publishing adapters are unavailable")
+	}
+	adapter, ok := registry.Publisher(integrationRow.AdapterKind)
+	if !ok {
+		return nil, fmt.Errorf("%s integrations do not support publishing yet", integrationRow.AdapterKind)
+	}
+	if _, ok := registry.Get(integrationRow.AdapterKind); !ok {
+		return nil, fmt.Errorf("%s integrations are not registered", integrationRow.AdapterKind)
 	}
 
-	creds := map[string]string{}
+	credentials := map[string]string{}
 	credSet, err := ws.GetCredentialSet(ctx, integrationRow.ID)
-	if err != nil {
-		return sanitySetup{}, errSanityNoCredentials
-	}
-	if len(key) == 0 {
-		return sanitySetup{}, errSanityNoCredentials
+	if err != nil || len(key) == 0 {
+		return nil, integration.ErrPublisherCredentialsMissing
 	}
 	opened, err := secretcipher.Decrypt(key, credSet.Ciphertext)
+	// Decrypt/parse failure is NOT "missing": credentials are stored but
+	// unreadable with the current server key (it may have changed). The
+	// distinct sentinel tells the operator to re-enter them.
 	if err != nil {
-		return sanitySetup{}, errSanityNoCredentials
+		return nil, integration.ErrPublisherCredentialsUnreadable
 	}
-	if err := json.Unmarshal(opened, &creds); err != nil {
-		return sanitySetup{}, errSanityNoCredentials
+	if json.Unmarshal(opened, &credentials) != nil {
+		return nil, integration.ErrPublisherCredentialsUnreadable
 	}
-	token := strings.TrimSpace(creds["token"])
-	if token == "" {
-		return sanitySetup{}, errSanityNoCredentials
+	publisher, err := adapter.NewPublisher(integrationRow.Config, credentials, apiBase, httpClient)
+	if errors.Is(err, integration.ErrPublisherNotConfigured) {
+		return nil, err
 	}
-
-	configuredAPIVersion, _ := integrationRow.Config["apiVersion"].(string)
-	docType, _ := integrationRow.Config["docType"].(string)
-	urlPrefix, _ := integrationRow.Config["publicUrlPrefix"].(string)
-
-	return sanitySetup{
-		ops: integration.SanityOps{
-			Creds: integration.SanityCredentials{
-				ProjectID:  strings.TrimSpace(projectID),
-				Dataset:    strings.TrimSpace(dataset),
-				Token:      token,
-				APIVersion: strings.TrimSpace(configuredAPIVersion),
-			},
-			Base:   opsBase,
-			Client: httpClient,
-		},
-		docType:   strings.TrimSpace(docType),
-		urlPrefix: strings.TrimSpace(urlPrefix),
-	}, nil
+	if errors.Is(err, integration.ErrPublisherCredentialsMissing) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, errors.New("publishing adapter could not be configured")
+	}
+	return publisher, nil
 }
 
-// versionFacts packages what the publish flows need about the item being pushed.
+// versionFacts packages the immutable facts needed by any publisher.
 type versionFacts struct {
 	itemID         string
 	item           store.ContentItem
@@ -106,7 +89,9 @@ type versionFacts struct {
 	excerpt        string
 	body           string
 	callToAction   string
+	mainImage      *integration.PayloadMainImage
 	channelCopyStr map[string]string
+	videoURL       string
 }
 
 // resolveVersionFacts gathers the newest version's content for the Sanity post.
@@ -132,35 +117,65 @@ func resolveVersionFacts(item store.ContentItem, version store.ContentVersion) v
 			f.channelCopyStr[strings.ToLower(strings.TrimSpace(name))] = s
 		}
 	}
+	// An uploaded hero image is stored in the version metadata:
+	// {"mainImage": {"ref": "image-...", "src": "https://...", "alt": "..."}}.
+	// The asset reference and alt text travel to all publishers; the public
+	// CDN URL only matters to destinations that fetch the image themselves
+	// (Instagram), and it never includes credentials.
+	if raw, ok := version.Metadata["mainImage"].(map[string]any); ok {
+		if ref, ok := raw["ref"].(string); ok && ref != "" {
+			alt, _ := raw["alt"].(string)
+			src, _ := raw["src"].(string)
+			f.mainImage = &integration.PayloadMainImage{Ref: ref, URL: src, Alt: alt}
+		}
+	}
+	// A video destination (YouTube) points at a publicly fetchable video
+	// file through version metadata: {"videoUrl": "https://.../clip.mp4"}.
+	// Only the URL travels to publishers; the file is downloaded
+	// server-side at publish time and never stored here.
+	if raw, ok := version.Metadata["videoUrl"].(string); ok {
+		f.videoURL = strings.TrimSpace(raw)
+	}
 	return f
 }
 
-// sanityPostFromFacts assembles the Sanity document for one version.
-func sanityPostFromFacts(setup sanitySetup, f versionFacts) integration.SanityPost {
-	extra := map[string]any{}
-	if f.callToAction != "" {
-		extra["callToAction"] = f.callToAction
+// markReconnectionNeeded flips an integration into the error lifecycle and
+// records the publish capability as failed when the destination rejected the
+// saved credentials, so the dashboard can prompt reconnection instead of
+// leaving a dead integration looking connected (Milestone 10). Silent best
+// effort: the publish failure itself is still reported to the caller.
+func markReconnectionNeeded(ctx context.Context, ws WorkspaceStore, workspaceID, integrationID string, opsErr error) {
+	if ws == nil || !integration.PublisherNeedsReconnection(opsErr) {
+		return
 	}
-	if len(f.channelCopyStr) > 0 {
-		extra["marketingOpsChannels"] = f.channelCopyStr
+	if statusErr := ws.SetIntegrationStatus(ctx, workspaceID, integrationID, integration.LifecycleError); statusErr != nil {
+		return
 	}
-	return integration.SanityPost{
-		DocType:    setup.docType,
-		Title:      f.title,
-		Slug:       f.slug,
-		Excerpt:    f.excerpt,
-		BodyBlocks: integration.ConvertBodyToBlocks(f.body),
-		Extra:      extra,
+	detail := safePublisherErrorText(opsErr)
+	_ = ws.UpsertCapability(ctx, integrationID, store.IntegrationCapability{
+		IntegrationID: integrationID,
+		Capability:    integration.CapPublish,
+		Status:        integration.StatusFailed,
+		Details:       &detail,
+	})
+}
+
+// publisherPayload assembles one immutable approved content snapshot for any adapter.
+func publisherPayload(f versionFacts) integration.ContentPayload {
+	return integration.ContentPayload{
+		ItemID: f.itemID, Version: f.versionNumber, Title: f.title, Slug: f.slug,
+		Excerpt: f.excerpt, Body: f.body, CallToAction: f.callToAction,
+		ChannelCopy: f.channelCopyStr, MainImage: f.mainImage,
+		VideoURL: f.videoURL,
 	}
 }
 
 // POST /api/v1/workspaces/{id}/content/{itemId}/publish
 //
-// Body: {"integrationId": "<sanity integration>", "mode": "draft"|"publish"}.
-// mode=draft writes (or idempotently replaces) a Sanity DRAFT for the newest
-// version — invisible on the public site, no approval required. mode=publish
-// is approval-gated by the store and records the destination artifact.
-func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase string, httpClient *http.Client) http.HandlerFunc {
+// Body: {"integrationId": "<workspace integration>", "mode": "draft"|"publish"}.
+// Draft writes are destination-specific and do not change public content;
+// publishing is approval-gated by the store and records the destination artifact.
+func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, registry *integration.Registry, apiBase string, httpClient *http.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ws == nil {
 			writeJSONError(w, http.StatusNotImplemented, workspaceUnavailable)
@@ -192,12 +207,14 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 			writeJSONError(w, http.StatusBadRequest, "could not read the request body")
 			return
 		}
-		var req struct {
-			IntegrationID *string `json:"integrationId"`
-			Mode          *string `json:"mode"`
-		}
+		var req publishRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "request body is not valid JSON")
+			return
+		}
+		scheduledAt, hasSchedule, scheduleProblems := parsePublishingTime(req.ScheduledAt)
+		if len(scheduleProblems) > 0 {
+			writeJSONError(w, http.StatusBadRequest, strings.Join(scheduleProblems, "; "))
 			return
 		}
 		mode := strings.ToLower(trim(req.Mode))
@@ -223,30 +240,29 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 			}
 			return
 		}
-		if integrationRow.AdapterKind != "sanity" {
-			writeJSONError(w, http.StatusBadRequest, "sanity publishing is only wired for the sanity adapter in this milestone")
-			return
-		}
-
-		setup, setupErr := buildSanitySetup(r.Context(), ws, integrationRow, key, opsBase, httpClient)
+		publisher, setupErr := buildPublisher(r.Context(), ws, integrationRow, key, registry, apiBase, httpClient)
 		if setupErr != nil {
-			writeJSONError(w, http.StatusConflict, setupErr.Error())
+			if errors.Is(setupErr, integration.ErrPublisherNotConfigured) || errors.Is(setupErr, integration.ErrPublisherCredentialsMissing) || errors.Is(setupErr, integration.ErrPublisherCredentialsUnreadable) {
+				writeJSONError(w, http.StatusConflict, setupErr.Error())
+			} else {
+				writeJSONError(w, http.StatusBadRequest, setupErr.Error())
+			}
 			return
 		}
 
 		facts := resolveVersionFacts(item, *version)
-		ops := setup.ops
+		payload := publisherPayload(facts)
 
 		if mode == "draft" {
-			draftID, txID, opsErr := ops.CreateDraft(r.Context(), facts.itemID, facts.versionNumber,
-				sanityPostFromFacts(setup, facts))
+			draftID, txID, opsErr := publisher.CreateDraft(r.Context(), payload)
 			if opsErr != nil {
-				writeSanityFailure(w, opsErr)
+				markReconnectionNeeded(r.Context(), ws, workspaceID, integrationID, opsErr)
+				writePublisherFailure(w, opsErr)
 				return
 			}
 			audit(r.Context(), ws, store.AuditEvent{
 				WorkspaceID: &workspaceID,
-				Action:      "content.sanity_draft_created",
+				Action:      "content.publisher_draft_created",
 				EntityType:  "content_item",
 				EntityID:    &facts.itemID,
 				Details: map[string]any{
@@ -260,7 +276,7 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 				Mode:          mode,
 				DraftID:       &draftID,
 				TransactionID: &txID,
-				Message:       "Sanity draft created (or replaced) for this version. It is not visible publicly; publish still requires the publish step on the approved version.",
+				Message:       "Destination draft created or replaced. It is not visible publicly; publish still requires an approved version.",
 			}
 			writeJSON(w, http.StatusCreated, resp)
 			return
@@ -284,6 +300,14 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 			writeJSONError(w, http.StatusConflict,
 				"this exact version was already published through this integration; it is recorded in the publishing history")
 			return
+		case keyErr == nil && item.Status != "approved":
+			writeJSONError(w, http.StatusConflict,
+				"the newest version must still be approved before a failed publish can be retried")
+			return
+		case keyErr == nil && existing.Status == "running":
+			writeJSONError(w, http.StatusConflict,
+				"a publish attempt for this exact version is already running")
+			return
 		case keyErr == nil:
 			resume := existing
 			job = &resume
@@ -293,6 +317,8 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 				ContentVersionID: facts.versionID,
 				IntegrationID:    integrationID,
 				IdempotencyKey:   idempotencyKey,
+				ScheduledAt:      scheduleTimePointer(scheduledAt, hasSchedule),
+				NextAttemptAt:    scheduleTimePointer(scheduledAt, hasSchedule),
 			})
 			switch {
 			case insertErr == nil:
@@ -310,32 +336,71 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 			return
 		}
 
+		// A future schedule queues the job for the background worker instead of
+		// publishing inline right now. A past/absent schedule keeps the previous
+		// synchronous behavior. The scheduled request still creates a durable
+		// job — restarting the process cannot lose it (Milestone 9 acceptance).
+		if hasSchedule && scheduledAt.After(time.Now().UTC()) {
+			// No inline "running" claim is made, so the worker still owns it.
+			audit(r.Context(), ws, store.AuditEvent{
+				WorkspaceID: &workspaceID,
+				Action:      "content.publish_scheduled",
+				EntityType:  "content_item",
+				EntityID:    &facts.itemID,
+				Details: map[string]any{
+					"id":       facts.itemID,
+					"jobId":    job.ID,
+					"version":  facts.versionNumber,
+					"schedule": scheduledAt.UTC().Format(time.RFC3339),
+				},
+			})
+			result := publishResponse{
+				Item:    toContentItemJSON(item),
+				Mode:    mode,
+				JobID:   &job.ID,
+				Message: "The publish is queued; the background worker will run it at the scheduled time.",
+			}
+			writeJSON(w, http.StatusAccepted, result)
+			return
+		}
+
 		if err := ws.SetPublishingJobStatus(r.Context(), workspaceID, job.ID, "running", ""); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "publishing job bookkeeping failed")
 			return
 		}
 
-		publishedID, txID, opsErr := ops.Publish(r.Context(), facts.itemID, facts.versionNumber)
-		var sanityErr *integration.SanityWriteError
-		if errors.As(opsErr, &sanityErr) && sanityErr.Kind == integration.SanityFailDraftGone {
-			// The draft was never created (or was deleted): recreate it
-			// deterministically, then publish. Still approval-gated above.
-			if _, _, createErr := ops.CreateDraft(r.Context(), facts.itemID, facts.versionNumber,
-				sanityPostFromFacts(setup, facts)); createErr == nil {
-				publishedID, txID, opsErr = ops.Publish(r.Context(), facts.itemID, facts.versionNumber)
-			}
+		// Refresh the destination draft from the exact latest approved version,
+		// then publish that same immutable backend snapshot.
+		_, _, publishErr := publisher.CreateDraft(r.Context(), payload)
+		var outcome integration.PublishOutcome
+		if publishErr == nil {
+			outcome, publishErr = publisher.Publish(r.Context(), payload)
 		}
-		if opsErr != nil {
-			_ = ws.SetPublishingJobStatus(r.Context(), workspaceID, job.ID, "failed", safeText(opsErr))
-			writeSanityFailure(w, opsErr)
+		if publishErr != nil {
+			_ = ws.SetPublishingJobStatus(r.Context(), workspaceID, job.ID, "failed", safePublisherErrorText(publishErr))
+			markReconnectionNeeded(r.Context(), ws, workspaceID, integrationID, publishErr)
+			writePublisherFailure(w, publishErr)
 			return
 		}
+
+		// Verify the resulting URL read-only and store it with the artifact
+		// even if the destination site is not reachable yet.
+		verification := integration.URLVerification{}
+		if website := derefString(workspace.WebsiteURL); website != "" {
+			verification = publisher.VerifyPublicURL(r.Context(), website, facts.slug)
+		}
+		publicURL, ok, status := verification.URL, verification.Verified, verification.HTTPStatus
+		publishedID, txID := outcome.ExternalID, outcome.TransactionID
 
 		if err := ws.SetPublishingJobStatus(r.Context(), workspaceID, job.ID, "succeeded", ""); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "publishing succeeded but job bookkeeping failed; the artifact was not recorded")
 			return
 		}
-		if err := ws.RecordPublishedArtifact(r.Context(), job.ID, integrationID, &publishedID, nil); err != nil {
+		var externalURL *string
+		if publicURL != "" {
+			externalURL = &publicURL
+		}
+		if err := ws.RecordPublishedArtifact(r.Context(), job.ID, integrationID, &publishedID, externalURL); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "publishing succeeded but the artifact record failed")
 			return
 		}
@@ -343,13 +408,6 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "publishing succeeded but the item status update failed")
 			return
-		}
-
-		var publicURL string
-		var ok bool
-		var status int
-		if website := derefString(workspace.WebsiteURL); website != "" {
-			publicURL, ok, status = ops.VerifyPublicURL(r.Context(), website, setup.urlPrefix, facts.slug)
 		}
 
 		audit(r.Context(), ws, store.AuditEvent{
@@ -381,11 +439,22 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, opsBase strin
 	}
 }
 
+// scheduleTimePointer returns the write schema for a scheduled enqueue: both
+// scheduled_at and next_attempt_at carry the same value so the due worker scan
+// and the history view agree.
+func scheduleTimePointer(when time.Time, scheduled bool) *time.Time {
+	if !scheduled {
+		return nil
+	}
+	copied := when.UTC()
+	return &copied
+}
+
 func message(ok bool) string {
 	if ok {
-		return "Published: the Sanity transaction succeeded and the public URL answered 200."
+		return "Published: the destination accepted the approved content and the public URL answered successfully."
 	}
-	return "Published: the Sanity transaction succeeded. The public URL could not be verified from here — open it in a browser to confirm."
+	return "Published: the destination accepted the approved content. The public URL could not be verified from here — open it in a browser to confirm."
 }
 
 // derefString returns "" for nil pointers (workspace website URL).
@@ -396,13 +465,21 @@ func derefString(s *string) string {
 	return *s
 }
 
-// safeText keeps only the classified error text for storage.
-func safeText(err error) string {
-	return err.Error()
+// writePublisherFailure returns only errors that explicitly declare their
+// message safe; unknown adapter errors are never echoed to clients.
+func writePublisherFailure(w http.ResponseWriter, err error) {
+	var safeErr integration.SafePublisherError
+	if errors.As(err, &safeErr) {
+		writeJSONError(w, http.StatusBadGateway, safeErr.SafeMessage())
+		return
+	}
+	writeJSONError(w, http.StatusBadGateway, "the publishing destination failed; see server-side diagnostics")
 }
 
-// writeSanityFailure maps classified Sanity failures to a 502. Texts are
-// credential-free by construction.
-func writeSanityFailure(w http.ResponseWriter, err error) {
-	writeJSONError(w, http.StatusBadGateway, err.Error())
+func safePublisherErrorText(err error) string {
+	var safeErr integration.SafePublisherError
+	if errors.As(err, &safeErr) {
+		return safeErr.SafeMessage()
+	}
+	return "the publishing destination failed"
 }

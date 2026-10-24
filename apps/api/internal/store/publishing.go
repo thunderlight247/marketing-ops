@@ -23,10 +23,13 @@ type PublishingJob struct {
 	LastError        *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// NextAttemptAt is when the background worker may claim the job again.
+	// NULL on a failed job means the job is terminal until an operator retry.
+	NextAttemptAt *time.Time
 }
 
 const publishingJobColumns = `id, content_item_id, content_version_id, integration_id,
-	idempotency_key, status, scheduled_at, attempts, last_error, created_at, updated_at`
+	idempotency_key, status, scheduled_at, attempts, last_error, next_attempt_at, created_at, updated_at`
 
 // ValidJobStatuses mirrors the CHECK constraint in migration 0002.
 var validJobStatuses = map[string]bool{
@@ -52,6 +55,7 @@ func (s *Store) InsertPublishingJob(ctx context.Context, workspaceID string, j P
 		 JOIN content_items ci ON ci.id = cv.content_item_id
 		 WHERE ci.id = $1 AND ci.workspace_id = $2 AND cv.id = $3
 			AND a.decision = 'approved'
+			AND ci.status = 'approved'
 			AND cv.version_number = (
 				SELECT max(v2.version_number) FROM content_versions v2
 				WHERE v2.content_item_id = ci.id)`,
@@ -70,15 +74,15 @@ func (s *Store) InsertPublishingJob(ctx context.Context, workspaceID string, j P
 	}
 	row := s.pool.QueryRow(ctx,
 		`INSERT INTO publishing_jobs
-			(content_item_id, content_version_id, integration_id, idempotency_key, status, scheduled_at)
-		 SELECT ci.id, cv.id, in2.id, $5, $6, $7
+			(content_item_id, content_version_id, integration_id, idempotency_key, status, scheduled_at, next_attempt_at)
+		 SELECT ci.id, cv.id, in2.id, $5, $6, $7, $8
 		 FROM content_items ci
 		 JOIN content_versions cv ON cv.id = $2 AND cv.content_item_id = ci.id
 		 JOIN integrations in2 ON in2.id = $3 AND in2.workspace_id = ci.workspace_id
 		 WHERE ci.id = $1 AND ci.workspace_id = $4
 		 RETURNING `+publishingJobColumns,
 		j.ContentItemID, j.ContentVersionID, j.IntegrationID, workspaceID,
-		j.IdempotencyKey, j.Status, j.ScheduledAt)
+		j.IdempotencyKey, j.Status, j.ScheduledAt, j.NextAttemptAt)
 	out, err := scanPublishingJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublishingJob{}, ErrNotFound
@@ -92,7 +96,9 @@ func (s *Store) InsertPublishingJob(ctx context.Context, workspaceID string, j P
 func (s *Store) SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE publishing_jobs pj
-		 SET status = $3, last_error = NULLIF($4, ''), attempts = attempts + 1, updated_at = now()
+		 SET status = $3, last_error = NULLIF($4, ''),
+			attempts = attempts + CASE WHEN $3 = 'running' THEN 1 ELSE 0 END,
+			updated_at = now()
 		 FROM content_items ci
 		 WHERE pj.content_item_id = ci.id AND pj.id = $1 AND ci.workspace_id = $2`,
 		jobID, workspaceID, status, lastErr)
@@ -103,6 +109,27 @@ func (s *Store) SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RecoverStuckPublishingJobs is the post-crash sweep the worker runs once at
+// startup: rows still marked 'running' whose last update is older than
+// olderThan belong to a worker that died mid-attempt. Destination writes are
+// idempotent (the same approved snapshot replaces the same external id and the
+// artifact row is upserted), so requeueing at `now` cannot create a duplicate
+// post: the next worker scan simply re-runs the write and closes the job.
+func (s *Store) RecoverStuckPublishingJobs(ctx context.Context, olderThan time.Duration, now time.Time) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE publishing_jobs
+		 SET status = 'failed',
+		     last_error = 'the worker was interrupted during this attempt (process restart); the write is idempotent and will be retried',
+		     next_attempt_at = $1,
+		     updated_at = now()
+		 WHERE status = 'running' AND updated_at < $2`,
+		now, now.Add(-olderThan))
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // MarkContentPublished moves an approved item to published. Only the
@@ -123,13 +150,13 @@ func (s *Store) GetPublishingJobByID(ctx context.Context, workspaceID, jobID str
 	err := s.pool.QueryRow(ctx,
 		`SELECT pj.id, pj.content_item_id, pj.content_version_id, pj.integration_id,
 			pj.idempotency_key, pj.status, pj.scheduled_at, pj.attempts, pj.last_error,
-			pj.created_at, pj.updated_at
+			pj.next_attempt_at, pj.created_at, pj.updated_at
 		 FROM publishing_jobs pj
 		 JOIN content_items ci ON ci.id = pj.content_item_id
 		 WHERE pj.id = $1 AND ci.workspace_id = $2`, jobID, workspaceID,
 	).Scan(&j.ID, &j.ContentItemID, &j.ContentVersionID, &j.IntegrationID,
 		&j.IdempotencyKey, &j.Status, &j.ScheduledAt, &j.Attempts, &j.LastError,
-		&j.CreatedAt, &j.UpdatedAt)
+		&j.NextAttemptAt, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return PublishingJob{}, mapNotFound(err)
 	}
@@ -145,13 +172,13 @@ func (s *Store) GetPublishingJobByIdempotencyKey(ctx context.Context, workspaceI
 	err := s.pool.QueryRow(ctx,
 		`SELECT pj.id, pj.content_item_id, pj.content_version_id, pj.integration_id,
 			pj.idempotency_key, pj.status, pj.scheduled_at, pj.attempts, pj.last_error,
-			pj.created_at, pj.updated_at
+			pj.next_attempt_at, pj.created_at, pj.updated_at
 		 FROM publishing_jobs pj
 		 JOIN content_items ci ON ci.id = pj.content_item_id
 		 WHERE pj.idempotency_key = $1 AND ci.workspace_id = $2`, key, workspaceID,
 	).Scan(&j.ID, &j.ContentItemID, &j.ContentVersionID, &j.IntegrationID,
 		&j.IdempotencyKey, &j.Status, &j.ScheduledAt, &j.Attempts, &j.LastError,
-		&j.CreatedAt, &j.UpdatedAt)
+		&j.NextAttemptAt, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return PublishingJob{}, mapNotFound(err)
 	}
@@ -162,7 +189,7 @@ func scanPublishingJob(row pgx.Row) (PublishingJob, error) {
 	var j PublishingJob
 	if err := row.Scan(&j.ID, &j.ContentItemID, &j.ContentVersionID, &j.IntegrationID,
 		&j.IdempotencyKey, &j.Status, &j.ScheduledAt, &j.Attempts, &j.LastError,
-		&j.CreatedAt, &j.UpdatedAt); err != nil {
+		&j.NextAttemptAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
 		return PublishingJob{}, err
 	}
 	return j, nil

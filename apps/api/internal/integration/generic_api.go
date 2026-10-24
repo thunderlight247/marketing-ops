@@ -25,10 +25,10 @@ func (a *GenericAPIAdapter) Description() string {
 
 func (a *GenericAPIAdapter) DefaultCapabilities() []CapabilityReport {
 	return []CapabilityReport{
-		{Capability: CapReadContent, Status: StatusUnverified, Details: "Endpoint read unverified"},
-		{Capability: CapCreateDraft, Status: StatusUnverified, Details: "Endpoint draft mutation unverified"},
-		{Capability: CapPublish, Status: StatusUnverified, Details: "Endpoint publish mutation unverified"},
-		{Capability: CapUpdateContent, Status: StatusUnverified, Details: "Endpoint update mutation unverified"},
+		{Capability: CapReadContent, Status: StatusUnverified, Details: "Custom API read contract is not configured or verified"},
+		{Capability: CapCreateDraft, Status: StatusUnsupported, Details: "No custom draft endpoint contract has been implemented"},
+		{Capability: CapPublish, Status: StatusUnsupported, Details: "No custom publish endpoint contract has been implemented"},
+		{Capability: CapUpdateContent, Status: StatusUnsupported, Details: "No custom update endpoint contract has been implemented"},
 		{Capability: CapSchedule, Status: StatusUnsupported, Details: "Server-side scheduling not supported by standard REST API"},
 		{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Custom API does not report analytics"},
 		{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Custom API does not handle lead intake"},
@@ -75,13 +75,13 @@ func (a *GenericAPIAdapter) Check(ctx context.Context, config map[string]any, cr
 	if !hasAuth {
 		return CheckResult{
 			LifecycleStatus: LifecycleLimited,
-			Diagnostic:      fmt.Sprintf("API endpoint configured at %s without authorization credentials; mutations disabled.", u.Host),
+			Diagnostic:      fmt.Sprintf("API endpoint %s is configured without authorization; no custom endpoint contract has been verified.", u.Host),
 			CheckedAt:       now,
 			Capabilities: []CapabilityReport{
-				{Capability: CapReadContent, Status: StatusSupported, Details: "Public endpoint read configured"},
-				{Capability: CapCreateDraft, Status: StatusUnsupported, Details: "Requires authorization credentials (apiKey or token)"},
-				{Capability: CapPublish, Status: StatusUnsupported, Details: "Requires authorization credentials (apiKey or token)"},
-				{Capability: CapUpdateContent, Status: StatusUnsupported, Details: "Requires authorization credentials (apiKey or token)"},
+				{Capability: CapReadContent, Status: StatusUnverified, Details: "Custom API read contract is not configured or verified"},
+				{Capability: CapCreateDraft, Status: StatusUnsupported, Details: "No custom draft endpoint contract has been implemented"},
+				{Capability: CapPublish, Status: StatusUnsupported, Details: "No custom publish endpoint contract has been implemented"},
+				{Capability: CapUpdateContent, Status: StatusUnsupported, Details: "No custom update endpoint contract has been implemented"},
 				{Capability: CapSchedule, Status: StatusUnsupported, Details: "Server-side scheduling not supported"},
 				{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Not supported"},
 				{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Not supported"},
@@ -90,14 +90,14 @@ func (a *GenericAPIAdapter) Check(ctx context.Context, config map[string]any, cr
 	}
 
 	return CheckResult{
-		LifecycleStatus: LifecycleConnected,
-		Diagnostic:      fmt.Sprintf("Connected to API endpoint %s with authorization credentials.", u.Host),
+		LifecycleStatus: LifecycleLimited,
+		Diagnostic:      fmt.Sprintf("API endpoint %s and authorization are configured, but the custom request contract has not been verified.", u.Host),
 		CheckedAt:       now,
 		Capabilities: []CapabilityReport{
-			{Capability: CapReadContent, Status: StatusSupported, Details: "API read endpoint configured"},
-			{Capability: CapCreateDraft, Status: StatusSupported, Details: "API draft creation supported"},
-			{Capability: CapPublish, Status: StatusSupported, Details: "API publish mutation supported (gated by operator approval)"},
-			{Capability: CapUpdateContent, Status: StatusSupported, Details: "API update mutation supported"},
+			{Capability: CapReadContent, Status: StatusUnverified, Details: "Custom API read contract is not configured or verified"},
+			{Capability: CapCreateDraft, Status: StatusUnsupported, Details: "No custom draft endpoint contract has been implemented"},
+			{Capability: CapPublish, Status: StatusUnsupported, Details: "No custom publish endpoint contract has been implemented"},
+			{Capability: CapUpdateContent, Status: StatusUnsupported, Details: "No custom update endpoint contract has been implemented"},
 			{Capability: CapSchedule, Status: StatusUnsupported, Details: "Server-side scheduling not supported"},
 			{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Not supported"},
 			{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Not supported"},
