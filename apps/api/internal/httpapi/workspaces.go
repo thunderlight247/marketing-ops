@@ -37,6 +37,9 @@ type WorkspaceStore interface {
 	SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error
 	RecordPublishedArtifact(ctx context.Context, jobID, integrationID string, externalID, externalURL *string) error
 	MarkContentPublished(ctx context.Context, workspaceID, itemID string) (store.ContentItem, error)
+	ListPublishingJobs(ctx context.Context, workspaceID, itemID string) ([]store.PublishingJob, error)
+	CancelPublishingJob(ctx context.Context, workspaceID, jobID string) (store.PublishingJob, error)
+	RetryPublishingJob(ctx context.Context, workspaceID, jobID string, now time.Time) (store.PublishingJob, error)
 	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
 	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)
 	GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error)
@@ -48,6 +51,17 @@ type WorkspaceStore interface {
 	GetCredentialSet(ctx context.Context, integrationID string) (store.CredentialSet, error)
 	DeleteCredentialSet(ctx context.Context, integrationID string) error
 	AddAuditEvent(ctx context.Context, e store.AuditEvent) error
+	// Campaigns and leads (Milestone 11).
+	InsertCampaign(ctx context.Context, c store.Campaign) (store.Campaign, error)
+	ListCampaigns(ctx context.Context, workspaceID string) ([]store.Campaign, error)
+	GetCampaignInWorkspace(ctx context.Context, workspaceID, id string) (store.Campaign, error)
+	UpdateCampaign(ctx context.Context, c store.Campaign) (store.Campaign, error)
+	InsertLead(ctx context.Context, l store.Lead) (store.Lead, error)
+	ListLeads(ctx context.Context, workspaceID string) ([]store.Lead, error)
+	GetLeadInWorkspace(ctx context.Context, workspaceID, id string) (store.Lead, error)
+	UpdateLead(ctx context.Context, workspaceID, leadID string, in store.LeadUpdate) (store.Lead, error)
+	// Reports (Milestone 12, first increment).
+	WorkspaceReport(ctx context.Context, workspaceID string, rg store.ReportRange) (store.WorkspaceReport, error)
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`)
@@ -151,6 +165,13 @@ func createWorkspaceHandler(ws WorkspaceStore) http.HandlerFunc {
 		})
 		switch {
 		case err == nil:
+			audit(r.Context(), ws, store.AuditEvent{
+				WorkspaceID: &created.ID,
+				Action:      "workspace.created",
+				EntityType:  "workspace",
+				EntityID:    &created.ID,
+				Details:     map[string]any{"slug": created.Slug, "name": created.Name},
+			})
 			writeJSON(w, http.StatusCreated, toWorkspaceJSON(created))
 		case errors.Is(err, store.ErrSlugTaken):
 			writeJSONError(w, http.StatusConflict, "a workspace with that slug already exists")

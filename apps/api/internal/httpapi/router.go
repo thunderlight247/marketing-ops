@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"marketingops/api/internal/agents"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/integration"
 )
@@ -32,14 +33,21 @@ type Deps struct {
 	// nil makes the decision route answer 501 alongside the store check.
 	Operators OperatorProvider
 
-	// SanityOpsBase overrides the Sanity API host (tests only) and HTTPClient
-	// customizes the transport used by Sanity operations.
+	// SanityOpsBase overrides the Sanity API host in development/tests only;
+	// HTTPClient customizes publisher transport (and is used by safe tests).
 	SanityOpsBase string
 	HTTPClient    *http.Client
 
 	// AIGenerator drafts content; nil makes the generate route answer 501.
 	AIGenerator     ContentGenerator
 	GenerateTimeout time.Duration
+
+	// AgentRunner transports specialist prompts (agents.PromptRun); nil makes
+	// the advisory route answer 501. The loader supplies the workspace's own
+	// authorized Search Console snapshot, or nil for advisory/no-data mode.
+	AgentRunner  agents.PromptRun
+	GSCLoader    GSCLoader
+	AgentTimeout time.Duration
 }
 
 // NewRouter returns the API handler with middleware applied.
@@ -62,16 +70,36 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}", getWorkspaceContentItemHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}", updateWorkspaceContentItemHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/history", getWorkspaceContentHistoryHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/jobs", listContentJobsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/jobs/{jobId}/cancel", cancelContentJobHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/jobs/{jobId}/retry", retryContentJobHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/decision", decideWorkspaceContentHandler(d.Workspaces, d.Operators))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/status", transitionWorkspaceContentHandler(d.Workspaces))
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/publish", publishWorkspaceContentHandler(d.Workspaces, d.CredentialKey, d.SanityOpsBase, d.HTTPClient))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/publish", publishWorkspaceContentHandler(d.Workspaces, d.CredentialKey, d.Integrations, d.SanityOpsBase, d.HTTPClient))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/generate", generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))
+	// Agency Agents milestone: the first curated specialist (SEO advisor).
+	// Advisory-only, workspace-scoped; nil runner answers 501.
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/seo/advisory", seoAdvisoryHandler(d.Workspaces, d.AgentRunner, d.GSCLoader, d.AgentTimeout))
+	// Second curated specialist: content creator. Files a draft into the
+	// existing approval workflow; nil runner answers 501.
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/content-creator/draft", contentCreatorDraftHandler(d.Workspaces, d.AgentRunner, d.AgentTimeout))
+	// Campaigns and leads (Milestone 11); workspace-scoped throughout.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/campaigns", listWorkspaceCampaignsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/campaigns", createWorkspaceCampaignHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/campaigns/{campaignId}", getWorkspaceCampaignHandler(d.Workspaces))
+	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/campaigns/{campaignId}", patchWorkspaceCampaignHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/leads", listWorkspaceLeadsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/leads", createWorkspaceLeadHandler(d.Workspaces))
+	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/leads/{leadId}", patchWorkspaceLeadHandler(d.Workspaces))
+	// Reporting (Milestone 12, first increment); workspace-scoped.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/reports", getWorkspaceReportHandler(d.Workspaces))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations", listWorkspaceIntegrationsHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations", createWorkspaceIntegrationHandler(d.Workspaces, d.Integrations))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations/{integrationId}", getWorkspaceIntegrationHandler(d.Workspaces))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/integrations/{integrationId}/credentials", putIntegrationCredentialsHandler(d.Workspaces, d.Integrations, d.CredentialKey, d.CredentialKeyVersion))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations/{integrationId}/media", uploadIntegrationMediaHandler(d.Workspaces, d.CredentialKey, d.SanityOpsBase, d.HTTPClient))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/integrations/{integrationId}/check", checkIntegrationCapabilitiesHandler(d.Workspaces, d.Integrations, d.CredentialKey))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/integrations/{integrationId}", deleteWorkspaceIntegrationHandler(d.Workspaces))
 

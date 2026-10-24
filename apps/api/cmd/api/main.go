@@ -12,12 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"marketingops/api/internal/agents"
 	"marketingops/api/internal/aiprovider"
 	"marketingops/api/internal/config"
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
 	"marketingops/api/internal/integration"
+	"marketingops/api/internal/publishworker"
 	"marketingops/api/internal/store"
 )
 
@@ -50,6 +52,8 @@ func run() error {
 	var dbPinger health.Pinger
 	var workspaceStore httpapi.WorkspaceStore
 	var operatorProvider httpapi.OperatorProvider
+	var jobStore publishworker.RunStore
+	registry := integration.NewDefaultRegistry()
 	if cfg.DatabaseConfigured() {
 		pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 		if err != nil {
@@ -60,17 +64,38 @@ func run() error {
 		wsStore := store.New(pool)
 		workspaceStore = wsStore
 		operatorProvider = wsStore
+		jobStore = wsStore
 	} else {
 		logger.Warn("DATABASE_URL is not set; running without a database")
 	}
 
+	// Background publishing worker (Milestone 9): drains scheduled and
+	// retryable publishing jobs; disabled until a database is configured.
+	if jobStore != nil {
+		worker := publishworker.New(publishworker.Options{
+			Store:         jobStore,
+			Registry:      registry,
+			CredentialKey: cfg.CredentialKey,
+			APIBase:       cfg.SanityOpsBase,
+			Logger:        logger,
+			Interval:      cfg.PublishWorkerInterval,
+			MaxAttempts:   cfg.PublishWorkerMaxAttempts,
+			BaseDelay:     cfg.PublishWorkerBaseDelay,
+			MaxDelay:      cfg.PublishWorkerMaxDelay,
+		})
+		go worker.Run(ctx)
+	}
+
 	// AI drafting: real provider when a key is present, offline stub otherwise.
 	var aiGenerator httpapi.ContentGenerator
+	var agentRunner agents.PromptRun
 	switch cfg.AIProvider {
 	case "openrouter":
 		aiGenerator = aiprovider.OpenRouter{APIKey: cfg.AIKey, Model: cfg.AIModel}
+		agentRunner = aiprovider.OpenRouter{APIKey: cfg.AIKey, Model: cfg.AIModel}
 	default:
 		aiGenerator = aiprovider.StubProvider{}
+		agentRunner = aiprovider.StubProvider{}
 	}
 
 	healthService := health.NewService(health.Options{
@@ -89,12 +114,15 @@ func run() error {
 			Logger:               logger,
 			AllowedOrigins:       cfg.AllowedOrigins,
 			Workspaces:           workspaceStore,
-			Integrations:         integration.NewDefaultRegistry(),
+			Integrations:         registry,
 			CredentialKey:        cfg.CredentialKey,
 			CredentialKeyVersion: cfg.CredentialKeyVersion,
 			Operators:            operatorProvider,
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,
+			AgentRunner:          agentRunner,
+			GSCLoader:            httpapi.NewGSCAdvisoryLoader(workspaceStore, cfg.CredentialKey),
+			AgentTimeout:         cfg.GenerateTimeout,
 			SanityOpsBase:        cfg.SanityOpsBase,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

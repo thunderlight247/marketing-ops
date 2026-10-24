@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -242,6 +243,44 @@ func TestAuditEventsScoped(t *testing.T) {
 	}
 }
 
+func TestPublishingJobRequiresItemStillApproved(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+
+	ws, in := seedIntegration(t, s, "publish-gate")
+	item, err := s.InsertContentItem(ctx, ContentItem{
+		WorkspaceID: ws.ID, Kind: "blog_article", Title: "Gate probe",
+	})
+	if err != nil {
+		t.Fatalf("InsertContentItem: %v", err)
+	}
+	version, err := s.InsertContentVersion(ctx, ws.ID, ContentVersion{
+		ContentItemID: item.ID, Title: "Approved body", Body: "Ready",
+	})
+	if err != nil {
+		t.Fatalf("InsertContentVersion: %v", err)
+	}
+	operator := seedOperator(t, s)
+	if _, _, err := s.DecideApproval(ctx, ws.ID, item.ID, ApprovalDecisionInput{
+		Decision: "approve", OperatorID: operator,
+	}); err != nil {
+		t.Fatalf("DecideApproval: %v", err)
+	}
+
+	// An approval row alone is not enough: the item must still be approved.
+	// "Back to draft" invalidates the gate even when the version is still the
+	// newest and its decision stands.
+	if _, err := s.TransitionContentItemStatus(ctx, ws.ID, item.ID, "draft"); err != nil {
+		t.Fatalf("TransitionContentItemStatus: %v", err)
+	}
+	if _, err := s.InsertPublishingJob(ctx, ws.ID, PublishingJob{
+		ContentItemID: item.ID, ContentVersionID: version.ID, IntegrationID: in.ID,
+		IdempotencyKey: ws.Slug + ":gate-1",
+	}); !errors.Is(err, ErrNotApproved) {
+		t.Errorf("back-to-draft publish must be ErrNotApproved, got %v", err)
+	}
+}
+
 func TestPublishingJobsAreWorkspaceScopedAndKeyed(t *testing.T) {
 	s := requireStore(t)
 	ctx := context.Background()
@@ -262,8 +301,10 @@ func TestPublishingJobsAreWorkspaceScopedAndKeyed(t *testing.T) {
 		t.Fatalf("InsertContentVersion: %v", err)
 	}
 	operator := seedOperator(t, s)
-	if _, err := s.RecordApproval(ctx, wsA.ID, item.ID, version.ID, "approved", operator, nil); err != nil {
-		t.Fatalf("RecordApproval: %v", err)
+	if _, _, err := s.DecideApproval(ctx, wsA.ID, item.ID, ApprovalDecisionInput{
+		Decision: "approve", OperatorID: operator,
+	}); err != nil {
+		t.Fatalf("DecideApproval: %v", err)
 	}
 
 	key := fmt.Sprintf("%s:attempt-1", wsA.Slug)

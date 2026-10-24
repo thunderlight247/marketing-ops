@@ -55,6 +55,33 @@ type fakeWorkspaceStore struct {
 	integrationsByID       map[string]store.Integration
 	capabilitiesByInID     map[string][]store.IntegrationCapability
 	credentialSetsByInID   map[string]store.CredentialSet
+
+	// Campaigns and leads (Milestone 11).
+	insertCampaignErr error
+	insertedCampaigns []store.Campaign
+	updateCampaignErr error
+	updatedCampaigns  []store.Campaign
+	listCampaignsErr  error
+	campaignsList     []store.Campaign
+	campaignsByID     map[string]store.Campaign
+	listLeadsErr      error
+	insertLeadErr     error
+	insertedLeads     []store.Lead
+	updateLeadErr     error
+	updatedLeads      []leadUpdateCall
+	leadsList         []store.Lead
+	leadsByID         map[string]store.Lead
+
+	// Reports (Milestone 12).
+	reportCalls  []reportCall
+	reportErr    error
+	reportResult store.WorkspaceReport
+}
+
+type leadUpdateCall struct {
+	workspaceID string
+	leadID      string
+	update      store.LeadUpdate
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
@@ -325,7 +352,9 @@ func (f *fakeWorkspaceStore) InsertPublishingJob(ctx context.Context, workspaceI
 			break
 		}
 	}
-	if !decided {
+	// Mirrors the real store: the decision must be current AND the item must
+	// still be approved (manual "back to draft" kills the gate).
+	if !decided || item.Status != "approved" {
 		return store.PublishingJob{}, store.ErrNotApproved
 	}
 	if _, seen := f.jobsByKey[j.IdempotencyKey]; seen {
@@ -359,7 +388,10 @@ func (f *fakeWorkspaceStore) GetPublishingJobByIdempotencyKey(ctx context.Contex
 }
 
 func (f *fakeWorkspaceStore) RecordPublishedArtifact(ctx context.Context, jobID, integrationID string, externalID, externalURL *string) error {
-	f.recordedArtifacts = append(f.recordedArtifacts, recordedArtifact{jobID: jobID, integrationID: integrationID, externalID: derefString(externalID)})
+	f.recordedArtifacts = append(f.recordedArtifacts, recordedArtifact{
+		jobID: jobID, integrationID: integrationID,
+		externalID: derefString(externalID), externalURL: derefString(externalURL),
+	})
 	return nil
 }
 
@@ -367,6 +399,7 @@ type recordedArtifact struct {
 	jobID         string
 	integrationID string
 	externalID    string
+	externalURL   string
 }
 
 func (f *fakeWorkspaceStore) SetPublishingJobStatus(ctx context.Context, workspaceID, jobID, status, lastErr string) error {
@@ -397,6 +430,87 @@ func (f *fakeWorkspaceStore) MarkContentPublished(ctx context.Context, workspace
 	item.UpdatedAt = time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)
 	f.contentItemsByID[itemID] = item
 	return item, nil
+}
+
+func (f *fakeWorkspaceStore) ListPublishingJobs(ctx context.Context, workspaceID, itemID string) ([]store.PublishingJob, error) {
+	if item, ok := f.contentItemsByID[itemID]; !ok || item.WorkspaceID != workspaceID {
+		return nil, store.ErrNotFound
+	}
+	out := []store.PublishingJob{}
+	for _, job := range f.jobsByKey {
+		if job.ContentItemID == itemID {
+			out = append(out, job)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeWorkspaceStore) findJob(workspaceID, jobID string) (*store.PublishingJob, []store.Approval) {
+	pointerKey := ""
+	for key, job := range f.jobsByKey {
+		if job.ID != jobID {
+			continue
+		}
+		pointerKey = key
+	}
+	if pointerKey == "" {
+		return nil, nil
+	}
+	job := f.jobsByKey[pointerKey]
+	return &job, f.decisionsByItem[job.ContentItemID]
+}
+
+// jobApprovedThenSaved mirrors the real store's redundant approval re-check:
+// the targeted version must still be approved and newest.
+func (f *fakeWorkspaceStore) jobApprovedThenSaved(workspaceID, jobID string) bool {
+	job, _ := f.findJob(workspaceID, jobID)
+	if job == nil {
+		return false
+	}
+	item, ok := f.contentItemsByID[job.ContentItemID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return false
+	}
+	versions := f.contentVersionsByItem[job.ContentItemID]
+	if len(versions) == 0 || versions[len(versions)-1].ID != job.ContentVersionID {
+		return false
+	}
+	decided := false
+	for _, past := range f.decisionsByItem[job.ContentItemID] {
+		if past.ContentVersionID == job.ContentVersionID && past.Decision == "approved" {
+			decided = true
+			break
+		}
+	}
+	return decided && item.Status == "approved"
+}
+
+func (f *fakeWorkspaceStore) CancelPublishingJob(ctx context.Context, workspaceID, jobID string) (store.PublishingJob, error) {
+	job, _ := f.findJob(workspaceID, jobID)
+	if job == nil || (job.Status != "pending" && job.Status != "failed") {
+		return store.PublishingJob{}, store.ErrNotFound
+	}
+	original := *job
+	original.Status = "cancelled"
+	return original, nil
+}
+
+func (f *fakeWorkspaceStore) RetryPublishingJob(ctx context.Context, workspaceID, jobID string, now time.Time) (store.PublishingJob, error) {
+	job, _ := f.findJob(workspaceID, jobID)
+	if job == nil {
+		return store.PublishingJob{}, store.ErrNotFound
+	}
+	if job.Status != "failed" {
+		return store.PublishingJob{}, store.ErrInvalidStatus
+	}
+	if !f.jobApprovedThenSaved(workspaceID, jobID) {
+		return store.PublishingJob{}, store.ErrNotApproved
+	}
+	original := *job
+	original.Status = "pending"
+	when := now
+	original.NextAttemptAt = &when
+	return original, nil
 }
 
 func (f *fakeWorkspaceStore) EnsureOperator(ctx context.Context) (string, error) {
@@ -579,6 +693,9 @@ func TestCreateWorkspaceEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"slug":"demo-cafe"`) {
 		t.Errorf("response body missing slug: %s", rec.Body.String())
+	}
+	if len(store.auditEvents) != 1 || store.auditEvents[0].Action != "workspace.created" {
+		t.Errorf("audit row missing for create: %+v", store.auditEvents)
 	}
 }
 
@@ -830,4 +947,98 @@ func TestCreateWorkspaceConflictAndStoreError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "boom") {
 		t.Errorf("internal errors must be 500 without detail, got %d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+// ---- Campaigns and leads fakes (Milestone 11) -----------------------------
+
+var fakeCampaignTimes = []time.Time{time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC), time.Date(2026, 4, 2, 9, 0, 0, 0, time.UTC)}
+
+func (f *fakeWorkspaceStore) InsertCampaign(ctx context.Context, c store.Campaign) (store.Campaign, error) {
+	if f.insertCampaignErr != nil {
+		return store.Campaign{}, f.insertCampaignErr
+	}
+	c.ID = "22222222-2222-2222-2222-222222222222"
+	c.CreatedAt, c.UpdatedAt = fakeCampaignTimes[0], fakeCampaignTimes[1]
+	f.insertedCampaigns = append(f.insertedCampaigns, c)
+	return c, nil
+}
+
+func (f *fakeWorkspaceStore) ListCampaigns(ctx context.Context, workspaceID string) ([]store.Campaign, error) {
+	if f.listCampaignsErr != nil {
+		return nil, f.listCampaignsErr
+	}
+	return f.campaignsList, nil
+}
+
+func (f *fakeWorkspaceStore) GetCampaignInWorkspace(ctx context.Context, workspaceID, id string) (store.Campaign, error) {
+	c, ok := f.campaignsByID[id]
+	if !ok || c.WorkspaceID != workspaceID {
+		return store.Campaign{}, store.ErrNotFound
+	}
+	return c, nil
+}
+
+func (f *fakeWorkspaceStore) UpdateCampaign(ctx context.Context, c store.Campaign) (store.Campaign, error) {
+	if f.updateCampaignErr != nil {
+		return store.Campaign{}, f.updateCampaignErr
+	}
+	c.UpdatedAt = fakeCampaignTimes[1]
+	f.updatedCampaigns = append(f.updatedCampaigns, c)
+	return c, nil
+}
+
+func (f *fakeWorkspaceStore) InsertLead(ctx context.Context, l store.Lead) (store.Lead, error) {
+	if f.insertLeadErr != nil {
+		return store.Lead{}, f.insertLeadErr
+	}
+	l.ID = "44444444-4444-4444-4444-444444444444"
+	l.CreatedAt, l.UpdatedAt = fakeCampaignTimes[0], fakeCampaignTimes[1]
+	f.insertedLeads = append(f.insertedLeads, l)
+	return l, nil
+}
+
+func (f *fakeWorkspaceStore) ListLeads(ctx context.Context, workspaceID string) ([]store.Lead, error) {
+	if f.listLeadsErr != nil {
+		return nil, f.listLeadsErr
+	}
+	return f.leadsList, nil
+}
+
+func (f *fakeWorkspaceStore) GetLeadInWorkspace(ctx context.Context, workspaceID, id string) (store.Lead, error) {
+	l, ok := f.leadsByID[id]
+	if !ok || l.WorkspaceID != workspaceID {
+		return store.Lead{}, store.ErrNotFound
+	}
+	return l, nil
+}
+
+func (f *fakeWorkspaceStore) UpdateLead(ctx context.Context, workspaceID, leadID string, in store.LeadUpdate) (store.Lead, error) {
+	if f.updateLeadErr != nil {
+		return store.Lead{}, f.updateLeadErr
+	}
+	l, ok := f.leadsByID[leadID]
+	if !ok || l.WorkspaceID != workspaceID {
+		return store.Lead{}, store.ErrNotFound
+	}
+	l.UpdatedAt = fakeCampaignTimes[1]
+	f.updatedLeads = append(f.updatedLeads, leadUpdateCall{workspaceID: workspaceID, leadID: leadID, update: in})
+	return l, nil
+}
+
+// ---- Reports fake (Milestone 12) -------------------------------------------
+
+// reportCall records one WorkspaceReport call so tests can verify the range
+// that the handler parsed.
+type reportCall struct {
+	workspaceID string
+	rangeSince  *time.Time
+	rangeUntil  *time.Time
+}
+
+func (f *fakeWorkspaceStore) WorkspaceReport(ctx context.Context, workspaceID string, rg store.ReportRange) (store.WorkspaceReport, error) {
+	if f.reportErr != nil {
+		return store.WorkspaceReport{}, f.reportErr
+	}
+	f.reportCalls = append(f.reportCalls, reportCall{workspaceID: workspaceID, rangeSince: rg.Since, rangeUntil: rg.Until})
+	return f.reportResult, nil
 }

@@ -61,67 +61,15 @@ type replyShape struct {
 }
 
 func (o OpenRouter) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
-	base := o.Base
-	if base == "" {
-		base = "https://openrouter.ai/api/v1"
-	}
-	client := o.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
 	started := time.Now()
-
-	payload := map[string]any{
-		"model":      o.Model,
-		"max_tokens": effectiveMaxTokens(o.MaxTokens),
-		"messages": []map[string]any{
-			{"role": "system", "content": buildSystemPrompt(req)},
-			{"role": "user", "content": buildUserPrompt(req)},
-		},
-		"response_format": map[string]any{"type": "json_object"},
-		"temperature":     0.7,
-	}
-	raw, err := json.Marshal(payload)
+	content, err := o.chatComplete(ctx, buildSystemPrompt(req), buildUserPrompt(req), effectiveMaxTokens(o.MaxTokens))
 	if err != nil {
-		return GenerateResponse{}, &ProviderError{Kind: FailMalformed, Cause: "internal payload"}
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return GenerateResponse{}, &ProviderError{Kind: FailNetwork, Cause: "could not build the request"}
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+o.APIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	// Static, non-secret attribution header per OpenRouter recommendations.
-	httpReq.Header.Set("X-Title", "marketing-ops-platform")
-
-	httpResp, err := client.Do(httpReq)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return GenerateResponse{}, &ProviderError{Kind: FailTimeout, Cause: "no reply within the timeout"}
-		}
-		return GenerateResponse{}, &ProviderError{Kind: FailNetwork, Cause: "network error before or during the call"}
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 4*1024*1024))
-	if err != nil {
-		return GenerateResponse{}, &ProviderError{Kind: FailNetwork, Cause: "could not read the reply body"}
-	}
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return GenerateResponse{}, &ProviderError{Kind: FailProvider,
-			Cause: fmt.Sprintf("HTTP %d: %s", httpResp.StatusCode, firstSafeLine(body))}
-	}
-
-	reply, err := decodeReply(body)
-	if err != nil {
-		return GenerateResponse{}, &ProviderError{Kind: FailMalformed, Cause: err.Error()}
+		return GenerateResponse{}, err
 	}
 	// Keep only a hash of the raw reply for debugging; never store its text.
-	choice := reply
-	choiceHash := sha256.Sum256(choice)
+	choiceHash := sha256.Sum256(content)
 
-	draft, err := parseDraftJSON(choice)
+	draft, err := parseDraftJSON(content)
 	if err != nil {
 		return GenerateResponse{}, &ProviderError{Kind: FailMalformed, Cause: err.Error()}
 	}
@@ -152,6 +100,91 @@ func (o OpenRouter) Generate(ctx context.Context, req GenerateRequest) (Generate
 			"reply_sha256": hex.EncodeToString(choiceHash[:]),
 		},
 	}, nil
+}
+
+// RunPrompt performs one free-form system+user completion and returns the raw
+// reply text without parsing it into a draft shape. The internal agent
+// specialists use this to request structured advisory reports.
+func (o OpenRouter) RunPrompt(ctx context.Context, req RunPromptRequest) (PromptReply, error) {
+	started := time.Now()
+	content, err := o.chatComplete(ctx, req.System, req.User, effectiveMaxTokens(req.MaxTokens))
+	if err != nil {
+		return PromptReply{}, err
+	}
+	replyHash := sha256.Sum256(content)
+	return PromptReply{
+		Provider: "openrouter",
+		Model:    o.Model,
+		Text:     string(content),
+		Metadata: map[string]any{
+			"provider":     "openrouter",
+			"model":        o.Model,
+			"duration_ms":  time.Since(started).Milliseconds(),
+			"reply_sha256": hex.EncodeToString(replyHash[:]),
+		},
+	}, nil
+}
+
+// chatComplete sends one chat-completions call and returns the first
+// choice's message content. All classified failures are the established
+// ProviderError kinds; the error never carries keys or raw provider payloads.
+func (o OpenRouter) chatComplete(ctx context.Context, system, user string, maxTokens int) ([]byte, error) {
+	base := o.Base
+	if base == "" {
+		base = "https://openrouter.ai/api/v1"
+	}
+	client := o.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	payload := map[string]any{
+		"model":      o.Model,
+		"max_tokens": maxTokens,
+		"messages": []map[string]any{
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
+		},
+		"response_format": map[string]any{"type": "json_object"},
+		"temperature":     0.7,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, &ProviderError{Kind: FailMalformed, Cause: "internal payload"}
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return nil, &ProviderError{Kind: FailNetwork, Cause: "could not build the request"}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+o.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	// Static, non-secret attribution header per OpenRouter recommendations.
+	httpReq.Header.Set("X-Title", "marketing-ops-platform")
+
+	httpResp, err := client.Do(httpReq)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, &ProviderError{Kind: FailTimeout, Cause: "no reply within the timeout"}
+		}
+		return nil, &ProviderError{Kind: FailNetwork, Cause: "network error before or during the call"}
+	}
+	defer func() { _ = httpResp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 4*1024*1024))
+	if err != nil {
+		return nil, &ProviderError{Kind: FailNetwork, Cause: "could not read the reply body"}
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return nil, &ProviderError{Kind: FailProvider,
+			Cause: fmt.Sprintf("HTTP %d: %s", httpResp.StatusCode, firstSafeLine(body))}
+	}
+
+	content, err := decodeReply(body)
+	if err != nil {
+		return nil, &ProviderError{Kind: FailMalformed, Cause: err.Error()}
+	}
+	return content, nil
 }
 
 // decodeReply returns the message content of the first choice as bytes.

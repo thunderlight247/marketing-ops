@@ -52,6 +52,14 @@ type Config struct {
 	// against a mock. It is honored only outside production; in production a
 	// value is rejected, so real publishing always talks to sanity.io.
 	SanityOpsBase string
+
+	// Publishing worker (Milestone 9). PublishWorkerInterval is the scan
+	// cadence for due jobs; MaxAttempts bounds retries before a job waits for
+	// an operator; the backoff grows exponentially between those attempts.
+	PublishWorkerInterval    time.Duration
+	PublishWorkerMaxAttempts int
+	PublishWorkerBaseDelay   time.Duration
+	PublishWorkerMaxDelay    time.Duration
 }
 
 // Load reads configuration using getenv (usually os.Getenv). All problems are
@@ -70,6 +78,12 @@ func Load(getenv func(string) string) (Config, error) {
 		AIProvider:      "stub",
 		AIModel:         "stub-v1",
 		GenerateTimeout: 90 * time.Second,
+
+		// Publishing worker defaults (Milestone 9).
+		PublishWorkerInterval:    15 * time.Second,
+		PublishWorkerMaxAttempts: 5,
+		PublishWorkerBaseDelay:   30 * time.Second,
+		PublishWorkerMaxDelay:    30 * time.Minute,
 	}
 
 	var problems []error
@@ -173,6 +187,43 @@ func Load(getenv func(string) string) (Config, error) {
 			add("AI_GENERATE_TIMEOUT must be an integer between 5 and 600 seconds")
 		} else {
 			cfg.GenerateTimeout = time.Duration(timeoutSeconds) * time.Second
+		}
+	}
+
+	workerIntervalRaw := strings.TrimSpace(getenv("PUBLISH_WORKER_INTERVAL"))
+	if workerIntervalRaw != "" {
+		seconds, err := strconv.Atoi(workerIntervalRaw)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			add("PUBLISH_WORKER_INTERVAL must be an integer between 1 and 3600 seconds")
+		} else {
+			cfg.PublishWorkerInterval = time.Duration(seconds) * time.Second
+		}
+	}
+	maxAttemptsRaw := strings.TrimSpace(getenv("PUBLISH_WORKER_MAX_ATTEMPTS"))
+	if maxAttemptsRaw != "" {
+		attempts, err := strconv.Atoi(maxAttemptsRaw)
+		if err != nil || attempts < 1 || attempts > 20 {
+			add("PUBLISH_WORKER_MAX_ATTEMPTS must be an integer between 1 and 20")
+		} else {
+			cfg.PublishWorkerMaxAttempts = attempts
+		}
+	}
+	baseDelayRaw := strings.TrimSpace(getenv("PUBLISH_WORKER_BASE_DELAY"))
+	if baseDelayRaw != "" {
+		seconds, err := strconv.Atoi(baseDelayRaw)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			add("PUBLISH_WORKER_BASE_DELAY must be an integer between 1 and 3600 seconds")
+		} else {
+			cfg.PublishWorkerBaseDelay = time.Duration(seconds) * time.Second
+		}
+	}
+	maxDelayRaw := strings.TrimSpace(getenv("PUBLISH_WORKER_MAX_DELAY"))
+	if maxDelayRaw != "" {
+		seconds, err := strconv.Atoi(maxDelayRaw)
+		if err != nil || seconds < 1 || seconds > 86400 {
+			add("PUBLISH_WORKER_MAX_DELAY must be an integer between 1 and 86400 seconds")
+		} else {
+			cfg.PublishWorkerMaxDelay = time.Duration(seconds) * time.Second
 		}
 	}
 

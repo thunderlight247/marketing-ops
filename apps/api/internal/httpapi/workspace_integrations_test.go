@@ -201,6 +201,64 @@ func TestWorkspaceIntegrations(t *testing.T) {
 		}
 	})
 
+	t.Run("check names the reason when stored credentials cannot be decrypted", func(t *testing.T) {
+		inID := "in-cred-bad"
+		fake := &fakeWorkspaceStore{
+			byID: map[string]store.Workspace{
+				wsID: {ID: wsID, Slug: "demo", Name: "Demo"},
+			},
+			integrationsByID: map[string]store.Integration{
+				inID: {
+					ID:          inID,
+					WorkspaceID: wsID,
+					AdapterKind: "sanity",
+					Name:        "Sanity Broken Creds",
+					Status:      integration.LifecycleConnected,
+					Config:      map[string]any{"projectId": "proj123", "dataset": "production"},
+				},
+			},
+			// A credential set stored under a DIFFERENT key (or corrupt bytes):
+			// the check must not silently pretend no credentials exist.
+			credentialSetsByInID: map[string]store.CredentialSet{
+				inID: {IntegrationID: inID, KeyVersion: 9, Ciphertext: []byte("poison-poison-poison-poison")},
+			},
+		}
+		h := NewRouter(Deps{
+			Logger:               testLogger,
+			Integrations:         reg,
+			Workspaces:           fake,
+			CredentialKey:        testKey,
+			CredentialKeyVersion: 1,
+		})
+
+		rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+wsID+"/integrations/"+inID+"/check", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var report integration.CheckResult
+		if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if report.LifecycleStatus != integration.LifecycleError {
+			t.Errorf("status = %s, want error (credentials cannot be applied)", report.LifecycleStatus)
+		}
+		if !strings.Contains(report.Diagnostic, "re-enter the credentials") {
+			t.Errorf("diagnostic must tell the operator the fix, got: %s", report.Diagnostic)
+		}
+		if strings.Contains(report.Diagnostic, "poison") {
+			t.Errorf("diagnostic must not echo ciphertext material, got: %s", report.Diagnostic)
+		}
+		if len(fake.auditEvents) == 0 || fake.auditEvents[len(fake.auditEvents)-1].Action != "integration.checked" {
+			t.Fatalf("audit event missing for check: %+v", fake.auditEvents)
+		}
+		var details map[string]any
+		if b, _ := json.Marshal(fake.auditEvents[len(fake.auditEvents)-1].Details); json.Unmarshal(b, &details) == nil {
+			if details["credentialProblem"] == "" || details["credentialProblem"] == nil {
+				t.Errorf("audit event must name the credential problem, got: %s", b)
+			}
+		}
+	})
+
 	t.Run("delete integration removes integration and logs audit event", func(t *testing.T) {
 		inID := "in-789"
 		fake := &fakeWorkspaceStore{

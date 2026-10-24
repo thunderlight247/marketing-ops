@@ -372,17 +372,43 @@ func checkIntegrationCapabilitiesHandler(ws WorkspaceStore, reg *integration.Reg
 			return
 		}
 
-		// Load credentials if present
+		// Load credentials if present. A stored set that cannot be opened is a
+		// diagnosable problem in itself (M13): the check still runs read-only,
+		// but the result says why the credentials did not apply instead of
+		// silently looking like no credentials were entered.
 		creds := make(map[string]string)
+		credProblem := ""
 		credSet, err := ws.GetCredentialSet(r.Context(), integrationID)
-		if err == nil && len(key) > 0 {
-			opened, err := secretcipher.Decrypt(key, credSet.Ciphertext)
-			if err == nil {
-				_ = json.Unmarshal(opened, &creds)
+		switch {
+		case err != nil:
+			// Nothing stored: the adapter's own diagnostic explains what is missing.
+		case len(key) == 0:
+			credProblem = "no_server_key"
+		default:
+			opened, derr := secretcipher.Decrypt(key, credSet.Ciphertext)
+			if derr != nil {
+				credProblem = "decrypt_failed"
+			} else if json.Unmarshal(opened, &creds) != nil || len(creds) == 0 {
+				credProblem = "invalid_format"
 			}
 		}
 
 		checkRes := adapter.Check(r.Context(), in.Config, creds)
+		if credProblem != "" {
+			prefix := "Credential error: stored credentials could not be applied ("
+			switch credProblem {
+			case "no_server_key":
+				prefix += "the server has no credential key configured; supply one and re-enter the credentials)"
+			case "decrypt_failed":
+				prefix += "decryption with the current server key failed, the key may have changed; re-enter the credentials)"
+			default:
+				prefix += "the stored credential payload did not parse as expected; re-enter the credentials)"
+			}
+			// The adapter's own diagnostic (e.g. "Waiting for the ... token")
+			// would mislead when credentials actually exist but are unreadable.
+			checkRes.LifecycleStatus = integration.LifecycleError
+			checkRes.Diagnostic = prefix + ". " + checkRes.Diagnostic
+		}
 		_ = ws.SetIntegrationStatus(r.Context(), workspaceID, integrationID, checkRes.LifecycleStatus)
 		for _, c := range checkRes.Capabilities {
 			details := c.Details
@@ -400,8 +426,9 @@ func checkIntegrationCapabilitiesHandler(ws WorkspaceStore, reg *integration.Reg
 			WorkspaceID: &workspaceID,
 			Action:      "integration.checked",
 			Details: map[string]any{
-				"id":     integrationID,
-				"status": checkRes.LifecycleStatus,
+				"id":                integrationID,
+				"status":            checkRes.LifecycleStatus,
+				"credentialProblem": credProblem,
 			},
 		})
 
