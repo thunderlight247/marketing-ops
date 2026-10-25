@@ -807,17 +807,41 @@ Gaps found (ranked, all small and actionable, none drop existing behavior):
    sentinel → 409 "re-enter them" instead of the misleading "missing".
    Router tests cover both paths; the web client type carries the
    machine-readable `credentialProblem` field.
-4. **MEDIUM — no authentication layer:** routes are unauthenticated by
-   design (D16 single-operator local mode; reports/decision route operator
-   handling answers 501). Required before M14 deployment: add operator auth
-   (session/token) middleware before any multi-operator or internet-facing
-   deployment.
+4. ~~MEDIUM — no authentication layer~~ **FIXED 2026-10-24 (M13)**:
+   Added operator API key authentication middleware (`auth.go`, `auth_test.go`)
+   with constant-time comparison, strict bearer token / header support, and
+   token-bucket rate limiting (`ratelimit.go`, `ratelimit_test.go`). Integrated
+   `withAuth()` into all frontend client libraries (`config.ts`, `config.test.ts`,
+   `workspaces.ts`, `content.ts`, `campaigns.ts`, `agents.ts`, `seo.ts`,
+   `integrations.ts`, `reports.ts`).
 5. **LOW — worker concurrency:** the publishing worker runs in-process;
    horizontal scaling would need a leader-election or lock guard. Fine for
    the local/single-instance deployment in M14 increment 1; document it.
 
-Recommended next increment for M13: fix (1) and (2) — both are small,
-covered by existing test patterns, and close the highest-risk trails.
+---
+
+### M13 & UI/UX Mobile Overhaul & Production Cleanup Update (25 October 2026)
+
+- **M13 Security & Hardening completed and verified (commit `55e4719`):**
+  - Authentication middleware (`auth.go`) and rate limiting (`ratelimit.go`) implemented and tested.
+  - Required API keys enforced in production; optional in development.
+  - All web clients include authorization headers via `withAuth()`.
+
+- **UI/UX Mobile Overhaul and Production Cleanup completed and verified (commits `489d374`, `6d86814`):**
+  - Upgraded design system across 18+ components from legacy teal to unified indigo theme.
+  - Mobile responsiveness: card headers, 16px touch-friendly input fields (prevents iOS auto-zoom), responsive navigation drawer with SVG icons, responsive tables.
+  - Production readiness cleanup:
+    - Removed demo workspace badges from `overview-workspaces.tsx`.
+    - Removed `plannedFor` and milestone references from `navigation.ts` and UI views.
+    - Cleaned up developer comments across `seo.ts`, `content.ts`, `campaigns.ts`, `reports.ts`, and `draft-editor.tsx`.
+    - Modified migration `0003_seed_demo.sql` so fresh databases do not seed demo workspaces.
+    - Purged all 10 demo/test workspaces from the PostgreSQL database, leaving only the real pilot workspace (`nutritionguide-studio`).
+  - Verification results:
+    - Go test suite: all packages passing (`go test ./...`).
+    - Web test suite: 14 test files, 171 tests passing (`vitest run`).
+    - Typecheck: 0 TypeScript errors (`tsc --noEmit`).
+    - Linter: 0 ESLint warnings (`eslint .`).
+    - Pushed cleanly to `origin/main`.
 ---
 
 ## Milestone 14 — Deployment and pilot release
