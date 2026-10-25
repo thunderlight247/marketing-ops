@@ -134,12 +134,7 @@ export function OverviewWorkspaces() {
                 >
                   {workspace.name}
                 </Link>
-                <p className="flex items-center gap-1.5 mt-0.5 text-xs text-slate-400">
-                  {workspace.slug.startsWith("demo-") ? (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-                      Demo
-                    </span>
-                  ) : null}
+                <p className="mt-0.5 text-xs text-slate-400">
                   {workspace.websiteUrl ?? `/${workspace.slug}`}
                 </p>
               </div>

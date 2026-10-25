@@ -6,3 +6,51 @@
     "Noto Sans", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* Prevent iOS from zooming in on form inputs */
+    -webkit-text-size-adjust: 100%;
+    /* Prevent tap highlight flicker on mobile */
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    /* Prevent horizontal scroll on mobile */
+    overflow-x: hidden;
+  }
+
+  /* iOS zoom fix — inputs must be at least 16px to prevent auto-zoom */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  @media (min-width: 640px) {
+    input,
+    select,
+    textarea {
+      font-size: 0.875rem; /* 14px = sm:text-sm */
+    }
+  }
+
+  /* Better focus management */
+  :focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+  }
+
+  /* Smooth link transitions */
+  a {
+    transition: color 0.15s ease;
+  }
+}

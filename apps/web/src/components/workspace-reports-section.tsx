@@ -11,7 +11,7 @@ import {
 } from "@/lib/reports";
 
 const inputClasses =
-  "rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
+  "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
 
 function CountRows({ counts }: { counts: ReportCounts }) {
   const entries = Object.entries(counts);
@@ -101,13 +101,14 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
   return (
     <section
       aria-labelledby="workspace-reports-heading"
-      className="rounded-lg border border-slate-200 bg-white px-5 py-4"
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="workspace-reports-heading" className="text-base font-semibold text-slate-900">
-          Report
-        </h2>
-        <form onSubmit={handleApply} className="flex flex-wrap items-center gap-2">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="workspace-reports-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Report
+          </h2>
+          <form onSubmit={handleApply} className="flex flex-wrap items-center gap-2">
           <label htmlFor="report-since" className="text-xs font-medium text-slate-600">
             Publishing from
           </label>
@@ -137,8 +138,10 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
           </button>
         </form>
       </div>
+      </div>
 
-      <p className="mt-1 max-w-prose text-xs text-slate-500">
+      <div className="px-4 py-4 sm:px-5">
+      <p className="max-w-prose text-xs text-slate-500">
         Current-state counts describe what is stored now; publishing counts follow the chosen range.
         Metrics that no verified integration supplies are never invented here.
       </p>
@@ -232,6 +235,7 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
           )}
         </>
       )}
+      </div>
     </section>
   );
 }

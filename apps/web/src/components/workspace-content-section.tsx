@@ -18,10 +18,10 @@ import {
 } from "@/lib/content";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
-const labelClasses = "block text-sm font-medium text-slate-700";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
+const labelClasses = "block text-xs font-semibold uppercase tracking-wide text-slate-500";
 const PRIMARY_BUTTON =
-  "rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors";
 
 function kindBadgeClass(kind: ContentKind): string {
   switch (kind) {
@@ -148,7 +148,7 @@ export function WorkspaceContentSection({
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
-          <h2 id="workspace-content-heading" className="text-base font-semibold">
+          <h2 id="workspace-content-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
             Content items
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
@@ -176,7 +176,7 @@ export function WorkspaceContentSection({
       {showGenerate && (
         <form
           onSubmit={(e) => void handleGenerate(e)}
-          className="mt-4 rounded-md border border-indigo-300 bg-teal-50/50 p-4"
+          className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4"
         >
           <h3 className="text-sm font-semibold text-slate-800">Draft with AI</h3>
           <p className="mt-1 text-xs text-slate-600">
@@ -424,7 +424,7 @@ export function WorkspaceContentSection({
                     <td className="py-3 pr-4 font-medium text-slate-900">
                       <Link
                         href={`/content/${item.workspaceId}/${item.id}`}
-                        className="font-medium text-slate-900 underline-offset-2 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+                        className="font-medium text-slate-900 underline-offset-2 hover:text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
                       >
                         {item.title}
                       </Link>

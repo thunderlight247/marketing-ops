@@ -32,10 +32,10 @@ import { inlineSegments, parseDraftBody } from "@/lib/preview";
 import { evaluateSeo, type SeoCheckStatus } from "@/lib/seo";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700";
-const labelClasses = "block text-sm font-medium text-slate-700";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
+const labelClasses = "block text-xs font-semibold uppercase tracking-wide text-slate-500";
 const PRIMARY_BUTTON =
-  "rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors";
 
 function isoToLocalInput(iso: string): string {
   return iso.slice(0, 16); // "YYYY-MM-DDTHH:mm" for datetime-local
@@ -252,7 +252,7 @@ export function DraftEditor({
   const [sanityBusy, setSanityBusy] = useState<SanityPublishMode | null>(null);
   const [sanityResult, setSanityResult] = useState<SanityPublishResult | null>(null);
 
-  // Social publishing (Milestone 8 Meta, Milestone 9 YouTube): one picker over
+  // Social publishing: one picker over
   // this workspace's social integrations; publishes reuse the same
   // approval-gated endpoint as Sanity — the backend dispatches by adapter
   // kind — and a future scheduledAt queues the job for the worker instead of
@@ -264,7 +264,7 @@ export function DraftEditor({
   const [socialScheduleInput, setSocialScheduleInput] = useState("");
   const [socialScheduleError, setSocialScheduleError] = useState<string | null>(null);
 
-  // Scheduled publish + publishing jobs (Milestone 9). The schedule input
+  // Scheduled publish + publishing jobs. The schedule input
   // works in UTC like the suggested publish slot; a future time queues the
   // job for the background worker instead of publishing inline.
   const [scheduleInput, setScheduleInput] = useState("");
@@ -534,7 +534,7 @@ export function DraftEditor({
   const hasUploadIntegration =
     integrationsLoaded && sanityIntegrations.some((integration) => integration.hasCredentials);
 
-  // Advisory SEO recommendations (Milestone 10): recomputed live from the
+  // Advisory SEO recommendations: recomputed live from the
   // current form fields. Purely derived advice — never measured analytics.
   const itemKind = state.kind === "loaded" ? state.item.kind : "blog_article";
   const seoReport = useMemo(
@@ -641,14 +641,14 @@ export function DraftEditor({
           <p className="text-sm text-slate-600">
             <Link
               href="/content"
-              className="font-medium text-teal-800 underline-offset-2 hover:text-teal-900 hover:underline"
+              className="font-medium text-indigo-600 underline-offset-2 hover:text-indigo-700 hover:underline"
             >
               Content
             </Link>
             {" / "}
             <Link
               href={`/workspaces/${workspaceId}`}
-              className="font-medium text-teal-800 underline-offset-2 hover:text-teal-900 hover:underline"
+              className="font-medium text-indigo-600 underline-offset-2 hover:text-indigo-700 hover:underline"
             >
               workspace
             </Link>
@@ -671,10 +671,10 @@ export function DraftEditor({
                   type="button"
                   onClick={() => setPreviewing(false)}
                   aria-pressed={!previewing}
-                  className={`px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 ${
+                  className={`px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
                     previewing
                       ? "bg-white text-slate-600 hover:bg-slate-50"
-                      : "bg-teal-800 text-white"
+                      : "bg-indigo-600 text-white"
                   }
                   `}
                 >
@@ -684,9 +684,9 @@ export function DraftEditor({
                   type="button"
                   onClick={() => setPreviewing(true)}
                   aria-pressed={previewing}
-                  className={`px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 ${
+                  className={`px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
                     previewing
-                      ? "bg-teal-800 text-white"
+                      ? "bg-indigo-600 text-white"
                       : "bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
@@ -739,7 +739,7 @@ export function DraftEditor({
               type="button"
               disabled={moving}
               onClick={() => void handleTransition("review")}
-              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {moving ? "Submitting…" : "Submit for review"}
             </button>
@@ -749,7 +749,7 @@ export function DraftEditor({
               type="button"
               disabled={moving}
               onClick={() => void handleTransition("draft")}
-              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {moving ? "Moving…" : "Back to draft"}
             </button>
@@ -807,7 +807,7 @@ export function DraftEditor({
               This workspace has no Sanity integration yet — connect one under
               <Link
                 href={`/workspaces/${workspaceId}`}
-                className="ml-1 font-medium text-teal-800 underline-offset-2 hover:underline"
+                className="ml-1 font-medium text-indigo-600 underline-offset-2 hover:underline"
               >
                 workspace integrations
               </Link>
@@ -854,7 +854,7 @@ export function DraftEditor({
                       : "Approve the newest version first — the server refuses unapproved publishes."
                   }
                   onClick={() => void handleSanity("publish")}
-                  className="rounded-md bg-teal-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-900 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {sanityBusy === "publish" ? "Publishing…" : "Publish to Sanity"}
                 </button>
@@ -974,7 +974,7 @@ export function DraftEditor({
               post, or YouTube channel integration under
               <Link
                 href={`/workspaces/${workspaceId}`}
-                className="ml-1 font-medium text-teal-800 underline-offset-2 hover:underline"
+                className="ml-1 font-medium text-indigo-600 underline-offset-2 hover:underline"
               >
                 workspace integrations
               </Link>
@@ -1607,7 +1607,7 @@ export function DraftEditor({
             )}
             <PreviewBody body={body} />
             {callToAction && (
-              <p className="mt-5 inline-flex rounded-md bg-teal-50 px-3 py-1.5 text-sm font-semibold text-teal-900 ring-1 ring-inset ring-teal-700/20">
+              <p className="mt-5 inline-flex rounded-md bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-700/20">
                 {callToAction}
               </p>
             )}

@@ -52,7 +52,7 @@ export function IntegrationsDashboard() {
       )}
 
       {workspacesState.kind === "loaded" && workspacesState.workspaces.length === 0 && (
-        <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
+        <div className="overflow-hidden rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center">
           <h2 className="text-base font-semibold text-slate-800">No workspaces yet</h2>
           <p className="mt-1 text-sm text-slate-600">
             You need at least one client workspace before connecting websites or CMSs.
@@ -70,8 +70,8 @@ export function IntegrationsDashboard() {
 
       {workspacesState.kind === "loaded" && workspacesState.workspaces.length > 0 && (
         <div className="space-y-6">
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <label htmlFor="workspace-select" className="block text-sm font-medium text-slate-700">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5">
+            <label htmlFor="workspace-select" className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
               Active workspace
             </label>
             <div className="mt-1 sm:max-w-xs">

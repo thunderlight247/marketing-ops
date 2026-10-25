@@ -17,8 +17,8 @@ import {
 } from "@/lib/campaigns";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
-const labelClasses = "block text-sm font-medium text-slate-700";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
+const labelClasses = "block text-xs font-semibold uppercase tracking-wide text-slate-500";
 const PRIMARY_BUTTON =
   "rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -249,7 +249,7 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             />
           </div>
           {campaignErrors.length > 0 && (
-            <ul role="alert" className="list-disc space-y-1 pl-5 text-sm text-red-700">
+            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
               {campaignErrors.map((err) => (
                 <li key={err}>{err}</li>
               ))}
@@ -382,7 +382,7 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             />
           </div>
           {leadErrors.length > 0 && (
-            <ul role="alert" className="list-disc space-y-1 pl-5 text-sm text-red-700">
+            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
               {leadErrors.map((err) => (
                 <li key={err}>{err}</li>
               ))}

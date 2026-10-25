@@ -21,11 +21,10 @@ describe("NAV_ITEMS", () => {
     expect(new Set(NAV_ITEMS.map((i) => i.href)).size).toBe(NAV_ITEMS.length);
   });
 
-  it("gives every placeholder section an empty state and a planned milestone", () => {
+  it("gives every placeholder section an empty state", () => {
     for (const item of NAV_ITEMS.filter((i) => i.key !== "overview")) {
       expect(item.emptyTitle).not.toBe("");
       expect(item.emptyBody).not.toBe("");
-      expect(item.plannedFor).not.toBe("");
     }
   });
 });

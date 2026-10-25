@@ -194,7 +194,7 @@ export function BatchPublishPanel() {
         {workspaces.kind === "loaded" && workspaces.workspaces.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-600">
             Add a business before preparing posts.{" "}
-            <Link className="font-medium text-teal-800 underline" href="/workspaces">
+            <Link className="font-medium text-indigo-600 hover:text-indigo-700 underline" href="/workspaces">
               Create a workspace
             </Link>
             .
@@ -230,7 +230,7 @@ export function BatchPublishPanel() {
                     onChange={(event) =>
                       setSelected((current) => ({ ...current, [key]: event.target.checked }))
                     }
-                    className="mt-1 size-4 rounded border-slate-300 text-teal-800 focus:ring-teal-700 disabled:opacity-50"
+                    className="mt-1 size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                   />
                   <div className="min-w-0">
                     <p className="font-medium text-slate-900">{item.title}</p>
@@ -295,7 +295,7 @@ export function BatchPublishPanel() {
           </ul>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <div className="mt-4 flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-slate-500">
             {selectedEntries.length} selected · publishing sends separate requests concurrently;
             there is no all-or-nothing transaction.
@@ -304,7 +304,7 @@ export function BatchPublishPanel() {
             type="button"
             onClick={() => void publishSelected()}
             disabled={selectedEntries.length === 0 || publishing || loadingEntries}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           >
             {publishing
               ? `Publishing ${selectedEntries.length} posts…`

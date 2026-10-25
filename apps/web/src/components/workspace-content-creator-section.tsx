@@ -6,7 +6,7 @@ import { getApiBaseUrl } from "@/lib/config";
 import { contentKinds, requestContentDraft, type CreatorDraftState } from "@/lib/agents";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
 const PRIMARY_BUTTON =
   "rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -33,12 +33,15 @@ export function WorkspaceContentCreatorSection({
   return (
     <section
       aria-labelledby="content-creator-heading"
-      className="rounded-lg border border-slate-200 bg-white px-5 py-4"
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
-      <h2 id="content-creator-heading" className="text-base font-semibold text-slate-900">
-        Content creator (agent draft)
-      </h2>
-      <p className="mt-1 max-w-prose text-sm text-slate-600">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
+        <h2 id="content-creator-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          Content creator (agent draft)
+        </h2>
+      </div>
+      <div className="px-4 py-5 sm:px-5">
+      <p className="max-w-prose text-sm text-slate-600">
         The content-creator specialist writes one original draft from this workspace&apos;s brand
         profile. It lands as a draft in the content section above and follows the ordinary approval
         workflow: nothing is published without human review.
@@ -92,6 +95,7 @@ export function WorkspaceContentCreatorSection({
           No agent draft has been created yet.
         </div>
       )}
+      </div>
     </section>
   );
 }
@@ -105,7 +109,7 @@ function DraftView({
 }) {
   const { draft } = state;
   return (
-    <div className="mt-4 rounded-md border border-indigo-300 bg-teal-50/50 px-4 py-3 text-sm text-slate-800">
+    <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 text-sm text-slate-800">
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span className="rounded bg-white px-2 py-0.5 ring-1 ring-inset ring-slate-300">
           {draft.item.kind.replace(/_/g, " ")} · {draft.item.status}

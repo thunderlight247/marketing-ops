@@ -10,7 +10,7 @@ import {
 } from "@/lib/agents";
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
 const PRIMARY_BUTTON =
   "rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -42,12 +42,15 @@ export function WorkspaceSeoAdvisorSection({ workspaceId }: Readonly<{ workspace
   return (
     <section
       aria-labelledby="seo-advisor-heading"
-      className="rounded-lg border border-slate-200 bg-white px-5 py-4"
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
-      <h2 id="seo-advisor-heading" className="text-base font-semibold text-slate-900">
-        SEO specialist (advisory)
-      </h2>
-      <p className="mt-1 max-w-prose text-sm text-slate-600">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
+        <h2 id="seo-advisor-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          SEO specialist (advisory)
+        </h2>
+      </div>
+      <div className="px-4 py-5 sm:px-5">
+      <p className="max-w-prose text-sm text-slate-600">
         The first integrated specialist agent reviews this workspace and produces prioritized,
         evidence-based recommendations. It never edits content, publishes, or contacts anyone: human
         review decides any follow-up.
@@ -85,6 +88,7 @@ export function WorkspaceSeoAdvisorSection({ workspaceId }: Readonly<{ workspace
           No report has been requested yet.
         </div>
       )}
+      </div>
     </section>
   );
 }
@@ -92,7 +96,7 @@ export function WorkspaceSeoAdvisorSection({ workspaceId }: Readonly<{ workspace
 function ReportView({ state }: { state: Extract<SeoAdvisoryState, { kind: "done" }> }) {
   const { report } = state;
   return (
-    <div className="mt-4 rounded-md border border-indigo-300 bg-teal-50/50 px-4 py-3 text-sm text-slate-800">
+    <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 text-sm text-slate-800">
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span className="rounded bg-white px-2 py-0.5 ring-1 ring-inset ring-slate-300">
           {formatDataSource(report.dataSource)}

@@ -963,7 +963,7 @@ export async function pushToSanity(
   }
 }
 
-// ---- Publishing jobs (Milestone 9) --------------------------------------------
+// ---- Publishing jobs ---------------------------------------------------------
 
 export type PublishingJobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 

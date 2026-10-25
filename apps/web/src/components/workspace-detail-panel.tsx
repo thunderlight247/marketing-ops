@@ -36,8 +36,8 @@ const FIELD_LABELS: Record<FieldKey, { label: string; hint: string; textarea?: b
 };
 
 const inputClasses =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500";
-const labelClasses = "block text-sm font-medium text-slate-700";
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
+const labelClasses = "block text-xs font-semibold uppercase tracking-wide text-slate-500";
 
 function linesOf(text: string): string[] {
   return text
@@ -57,17 +57,17 @@ function linesToTextarea(lines: string[] | null): string {
 
 function EmptyBrandNotice() {
   return (
-    <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-700/15">
-      This brand profile is empty. Fill in what you know; everything is optional but the more
-      complete it is, the better the AI-assisted drafting (Milestone 4) works.
+    <p className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-800">
+      This brand profile is empty. Fill in what you know — everything is optional but the more
+      complete it is, the better AI-assisted drafting works.
     </p>
   );
 }
 
 const PRIMARY_BUTTON =
-  "rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors";
 const DANGER_BUTTON =
-  "rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors";
 
 export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const router = useRouter();
@@ -218,7 +218,7 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           <button
             type="button"
             onClick={() => router.push("/workspaces")}
-            className="mt-4 inline-block rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+            className="mt-4 inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors"
           >
             Back to workspaces
           </button>
@@ -228,13 +228,13 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
   }
   if (state.kind === "unavailable") {
     return (
-      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <p className="text-sm font-medium text-red-900">Could not load this workspace.</p>
         <p className="mt-2 text-sm text-slate-800">{state.reason}</p>
         <button
           type="button"
           onClick={() => void load()}
-          className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+          className="mt-3 inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors"
         >
           Try again
         </button>
@@ -246,15 +246,17 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
   const confirmMatches = confirmSlug.length > 0 && confirmSlug === workspace.slug;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-5">
       <section
         aria-labelledby="workspace-facts"
-        className="rounded-lg border border-slate-200 bg-white px-5 py-4"
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
       >
-        <h2 id="workspace-facts" className="text-base font-semibold">
-          Workspace details
-        </h2>
-        <form onSubmit={(event) => void saveFacts(event)} className="mt-4 grid gap-4">
+        <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
+          <h2 id="workspace-facts" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Workspace details
+          </h2>
+        </div>
+        <form onSubmit={(event) => void saveFacts(event)} className="grid gap-4 px-4 py-5 sm:px-5">
           <div>
             <label htmlFor="facts-name" className={labelClasses}>
               Business name
@@ -302,14 +304,14 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
             is permanent and used in links.
           </p>
           {factsErrors.length > 0 ? (
-            <ul role="alert" className="list-disc space-y-1 pl-5 text-sm text-red-700">
+            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
               {factsErrors.map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
           ) : null}
-          <div>
-            <button type="submit" disabled={factsSaving} className={PRIMARY_BUTTON}>
+          <div className="flex">
+            <button type="submit" disabled={factsSaving} className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}>
               {factsSaving ? "Saving…" : "Save details"}
             </button>
           </div>
@@ -318,7 +320,7 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
 
       <section
         aria-labelledby="brand-profile-heading"
-        className="rounded-lg border border-slate-200 bg-white px-5 py-4"
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
       >
         <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-slate-200 pb-4">
           <h2 id="brand-profile-heading" className="text-base font-semibold">
@@ -332,12 +334,12 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         </div>
 
         {state.brand === null ? (
-          <div className="mt-4">
+          <div className="px-4 pt-4 sm:px-5">
             <EmptyBrandNotice />
           </div>
         ) : null}
 
-        <form onSubmit={(event) => void saveBrand(event)} className="mt-4 grid gap-5">
+        <form onSubmit={(event) => void saveBrand(event)} className="grid gap-5 px-4 py-5 sm:px-5">
           {(Object.keys(FIELD_LABELS) as FieldKey[]).map((key) => {
             const meta = FIELD_LABELS[key];
             return (
@@ -396,14 +398,14 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           {brandError ? (
             <p
               role="alert"
-              className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-700/15"
+              className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800"
             >
               {brandError}
             </p>
           ) : null}
 
-          <div>
-            <button type="submit" disabled={brandSaving} className={PRIMARY_BUTTON}>
+          <div className="flex">
+            <button type="submit" disabled={brandSaving} className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}>
               {brandSaving ? "Saving…" : "Save brand profile"}
             </button>
           </div>
@@ -427,33 +429,37 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
 
       <section
         aria-labelledby="danger-zone-heading"
-        className="rounded-lg border border-red-200 bg-red-50 px-5 py-4"
+        className="overflow-hidden rounded-xl border border-red-100 bg-white shadow-sm"
       >
-        <h2 id="danger-zone-heading" className="text-base font-semibold text-red-900">
-          Danger zone
-        </h2>
-        <p className="mt-2 max-w-prose text-sm text-red-800">
-          Deleting <strong>{workspace.name}</strong> permanently removes its integrations, brand
-          profile, content, and publishing history. Archived is usually the safer choice.
-        </p>
-        <form onSubmit={(event) => void remove(event)} className="mt-4 grid gap-3 sm:max-w-sm">
-          <label htmlFor="delete-confirm" className={labelClasses}>
-            Type <code className="rounded bg-white px-1 font-mono text-xs">{workspace.slug}</code>{" "}
-            to confirm
-          </label>
-          <input
-            id="delete-confirm"
-            value={confirmSlug}
-            onChange={(event) => setConfirmSlug(event.target.value)}
-            autoComplete="off"
-            className={inputClasses}
-          />
-          <div>
-            <button type="submit" disabled={deleting || !confirmMatches} className={DANGER_BUTTON}>
-              {deleting ? "Deleting…" : "Delete workspace forever"}
-            </button>
-          </div>
-        </form>
+        <div className="border-b border-red-100 bg-red-50 px-4 py-3 sm:px-5">
+          <h2 id="danger-zone-heading" className="text-xs font-semibold uppercase tracking-widest text-red-700">
+            Danger zone
+          </h2>
+        </div>
+        <div className="px-4 py-5 sm:px-5">
+          <p className="max-w-prose text-sm text-red-800">
+            Deleting <strong>{workspace.name}</strong> permanently removes its integrations, brand
+            profile, content, and publishing history. Archived is usually the safer choice.
+          </p>
+          <form onSubmit={(event) => void remove(event)} className="mt-4 grid gap-3 sm:max-w-sm">
+            <label htmlFor="delete-confirm" className={labelClasses}>
+              Type <code className="rounded bg-slate-100 px-1 font-mono text-xs">{workspace.slug}</code>{" "}
+              to confirm
+            </label>
+            <input
+              id="delete-confirm"
+              value={confirmSlug}
+              onChange={(event) => setConfirmSlug(event.target.value)}
+              autoComplete="off"
+              className={inputClasses}
+            />
+            <div>
+              <button type="submit" disabled={deleting || !confirmMatches} className={DANGER_BUTTON}>
+                {deleting ? "Deleting…" : "Delete workspace forever"}
+              </button>
+            </div>
+          </form>
+        </div>
       </section>
     </div>
   );

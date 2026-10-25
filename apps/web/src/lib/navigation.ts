@@ -8,8 +8,6 @@ export interface NavItem {
   summary: string;
   emptyTitle: string;
   emptyBody: string;
-  /** @deprecated no longer displayed */
-  plannedFor: string;
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -20,7 +18,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     summary: "System status and where the platform stands.",
     emptyTitle: "",
     emptyBody: "",
-    plannedFor: "",
   },
   {
     key: "workspaces",
@@ -29,7 +26,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     summary: "Client businesses you manage, each with its own profile, brand rules, and history.",
     emptyTitle: "No workspaces yet",
     emptyBody: "Client workspaces will be created and managed here.",
-    plannedFor: "Milestone 2",
   },
   {
     key: "content",
@@ -39,7 +35,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     emptyTitle: "No content yet",
     emptyBody:
       "Nothing is drafted or published in this version. Nothing will publish without your approval.",
-    plannedFor: "Milestones 4 and 5",
   },
   {
     key: "calendar",
@@ -48,7 +43,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     summary: "Scheduled and upcoming content across all your workspaces.",
     emptyTitle: "Nothing scheduled yet",
     emptyBody: "Content you schedule for publishing will appear here as a timeline. Create content in a workspace to get started.",
-    plannedFor: "Milestones 4 and 9",
   },
   {
     key: "integrations",
@@ -58,7 +52,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
       "Connections to client websites, CMSs, and social accounts, and what each one supports.",
     emptyTitle: "No integrations connected",
     emptyBody: "No client credentials are stored in this version.",
-    plannedFor: "Milestone 3",
   },
   {
     key: "analytics",
@@ -67,7 +60,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     summary: "Search rankings, traffic, and lead data from connected sources.",
     emptyTitle: "No analytics data yet",
     emptyBody: "Connect an integration that supports analytics — such as Google Search Console — and numbers will appear here automatically.",
-    plannedFor: "Milestone 10",
   },
   {
     key: "settings",
@@ -76,7 +68,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     summary: "Operator preferences and platform configuration.",
     emptyTitle: "No settings configured",
     emptyBody: "Platform settings will be available here. For now, configuration is done through environment variables.",
-    plannedFor: "Added as needed",
   },
 ];
 

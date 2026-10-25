@@ -1,5 +1,5 @@
 import { withAuth } from "@/lib/config";
-// Campaign and lead client library (Milestone 11, first increment).
+// Campaign and lead client library.
 // Network layer mirrors lib/integrations.ts: explicit result kinds, strict
 // response parsing, and no thrown errors on clean failures.
 

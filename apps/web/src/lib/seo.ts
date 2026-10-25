@@ -1,5 +1,5 @@
 /**
- * SEO metadata checks (Milestone 10, first increment).
+ * SEO metadata checks.
  *
  * These are pure ADVISORY recommendations computed from the draft itself:
  * title/slug/description quality, body depth, and image alt text. They are

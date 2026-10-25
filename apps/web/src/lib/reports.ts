@@ -1,4 +1,4 @@
-// Workspace report client (Milestone 12, first increment). Read-only fetch of
+// Workspace report client. Read-only fetch of
 // the report endpoint with strict response parsing and explicit result kinds,
 // mirroring lib/campaigns.ts. It does not compute anything itself: every
 // figure comes straight from the server so numbers stay truthful.
