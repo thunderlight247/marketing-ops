@@ -42,7 +42,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: "Calendar",
     summary: "Scheduled and upcoming content across all your workspaces.",
     emptyTitle: "Nothing scheduled yet",
-    emptyBody: "Content you schedule for publishing will appear here as a timeline. Create content in a workspace to get started.",
+    emptyBody:
+      "Content you schedule for publishing will appear here as a timeline. Create content in a workspace to get started.",
   },
   {
     key: "integrations",
@@ -59,7 +60,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: "Analytics",
     summary: "Search rankings, traffic, and lead data from connected sources.",
     emptyTitle: "No analytics data yet",
-    emptyBody: "Connect an integration that supports analytics — such as Google Search Console — and numbers will appear here automatically.",
+    emptyBody:
+      "Connect an integration that supports analytics — such as Google Search Console — and numbers will appear here automatically.",
   },
   {
     key: "settings",
@@ -67,7 +69,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: "Settings",
     summary: "Operator preferences and platform configuration.",
     emptyTitle: "No settings configured",
-    emptyBody: "Platform settings will be available here. For now, configuration is done through environment variables.",
+    emptyBody:
+      "Platform settings will be available here. For now, configuration is done through environment variables.",
   },
 ];
 

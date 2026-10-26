@@ -35,9 +35,7 @@ export function getApiAuthHeader(
  * Merges the Authorization header into a Headers-compatible object.
  * Returns the merged headers so call sites can spread them into RequestInit.
  */
-export function withAuth(
-  existing: Record<string, string> = {},
-): Record<string, string> {
+export function withAuth(existing: Record<string, string> = {}): Record<string, string> {
   const auth = getApiAuthHeader();
   if (auth === undefined) return existing;
   return { ...existing, Authorization: auth };

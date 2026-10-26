@@ -45,49 +45,52 @@ export function WorkspaceSeoAdvisorSection({ workspaceId }: Readonly<{ workspace
       className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
-        <h2 id="seo-advisor-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <h2
+          id="seo-advisor-heading"
+          className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+        >
           SEO specialist (advisory)
         </h2>
       </div>
       <div className="px-4 py-5 sm:px-5">
-      <p className="max-w-prose text-sm text-slate-600">
-        The first integrated specialist agent reviews this workspace and produces prioritized,
-        evidence-based recommendations. It never edits content, publishes, or contacts anyone: human
-        review decides any follow-up.
-      </p>
-
-      <form onSubmit={(e) => void handleRequest(e)} className="mt-4 grid gap-3 sm:max-w-md">
-        <label htmlFor="seo-focus" className="text-sm font-medium text-slate-700">
-          Focus (optional)
-        </label>
-        <input
-          id="seo-focus"
-          value={focus}
-          onChange={(event) => setFocus(event.target.value)}
-          placeholder="e.g. local search visibility"
-          autoComplete="off"
-          className={inputClasses}
-        />
-        <div>
-          <button type="submit" disabled={running} className={PRIMARY_BUTTON}>
-            {running ? "Advisor is working…" : "Generate advisory report"}
-          </button>
-        </div>
-      </form>
-
-      {state.kind === "unavailable" && (
-        <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-          {state.message}
+        <p className="max-w-prose text-sm text-slate-600">
+          The first integrated specialist agent reviews this workspace and produces prioritized,
+          evidence-based recommendations. It never edits content, publishes, or contacts anyone:
+          human review decides any follow-up.
         </p>
-      )}
 
-      {state.kind === "done" && <ReportView state={state} />}
+        <form onSubmit={(e) => void handleRequest(e)} className="mt-4 grid gap-3 sm:max-w-md">
+          <label htmlFor="seo-focus" className="text-sm font-medium text-slate-700">
+            Focus (optional)
+          </label>
+          <input
+            id="seo-focus"
+            value={focus}
+            onChange={(event) => setFocus(event.target.value)}
+            placeholder="e.g. local search visibility"
+            autoComplete="off"
+            className={inputClasses}
+          />
+          <div>
+            <button type="submit" disabled={running} className={PRIMARY_BUTTON}>
+              {running ? "Advisor is working…" : "Generate advisory report"}
+            </button>
+          </div>
+        </form>
 
-      {state.kind === "idle" && (
-        <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          No report has been requested yet.
-        </div>
-      )}
+        {state.kind === "unavailable" && (
+          <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+            {state.message}
+          </p>
+        )}
+
+        {state.kind === "done" && <ReportView state={state} />}
+
+        {state.kind === "idle" && (
+          <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            No report has been requested yet.
+          </div>
+        )}
       </div>
     </section>
   );

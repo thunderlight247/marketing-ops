@@ -71,7 +71,10 @@ export function ContentDashboard() {
       {workspacesState.kind === "loaded" && workspacesState.workspaces.length > 0 && (
         <div className="space-y-6">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <label htmlFor="workspace-select" className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <label
+              htmlFor="workspace-select"
+              className="block text-xs font-semibold uppercase tracking-wide text-slate-500"
+            >
               Active workspace
             </label>
             <div className="mt-1 sm:max-w-xs">

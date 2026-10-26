@@ -105,136 +105,139 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
     >
       <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="workspace-reports-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspace-reports-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             Report
           </h2>
           <form onSubmit={handleApply} className="flex flex-wrap items-center gap-2">
-          <label htmlFor="report-since" className="text-xs font-medium text-slate-600">
-            Publishing from
-          </label>
-          <input
-            id="report-since"
-            type="date"
-            value={since}
-            onChange={(e) => setSince(e.target.value)}
-            className={inputClasses}
-          />
-          <label htmlFor="report-until" className="text-xs font-medium text-slate-600">
-            to
-          </label>
-          <input
-            id="report-until"
-            type="date"
-            value={until}
-            onChange={(e) => setUntil(e.target.value)}
-            className={inputClasses}
-          />
-          <button
-            type="submit"
-            disabled={applying}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {applying ? "Updating…" : "Apply range"}
-          </button>
-        </form>
-      </div>
+            <label htmlFor="report-since" className="text-xs font-medium text-slate-600">
+              Publishing from
+            </label>
+            <input
+              id="report-since"
+              type="date"
+              value={since}
+              onChange={(e) => setSince(e.target.value)}
+              className={inputClasses}
+            />
+            <label htmlFor="report-until" className="text-xs font-medium text-slate-600">
+              to
+            </label>
+            <input
+              id="report-until"
+              type="date"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+              className={inputClasses}
+            />
+            <button
+              type="submit"
+              disabled={applying}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {applying ? "Updating…" : "Apply range"}
+            </button>
+          </form>
+        </div>
       </div>
 
       <div className="px-4 py-4 sm:px-5">
-      <p className="max-w-prose text-xs text-slate-500">
-        Current-state counts describe what is stored now; publishing counts follow the chosen range.
-        Metrics that no verified integration supplies are never invented here.
-      </p>
-
-      {applyError && (
-        <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-          {applyError}
+        <p className="max-w-prose text-xs text-slate-500">
+          Current-state counts describe what is stored now; publishing counts follow the chosen
+          range. Metrics that no verified integration supplies are never invented here.
         </p>
-      )}
 
-      {state.kind === "loading" && <p className="mt-4 text-sm text-slate-500">Loading…</p>}
-      {state.kind === "unavailable" && (
-        <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-          {state.message}
-        </p>
-      )}
-      {state.kind === "missing" && (
-        <p className="mt-4 text-sm text-slate-500">This workspace no longer exists.</p>
-      )}
-
-      {state.kind === "loaded" && (
-        <>
-          <p className="mt-3 text-xs text-slate-500">
-            Generated{" "}
-            {new Date(state.report.generatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC
-            {state.report.range.since || state.report.range.until
-              ? " · publishing range applied"
-              : " · full publishing history"}
+        {applyError && (
+          <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+            {applyError}
           </p>
+        )}
 
-          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Publishing (range)
-              </dt>
-              <CountRows counts={state.report.publishingRange.jobsByStatus} />
-            </div>
-            <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Content (now)
-              </dt>
-              <CountRows counts={state.report.contentStatusNow} />
-            </div>
-            <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Campaigns (now)
-              </dt>
-              <CountRows counts={state.report.campaignsNow} />
-            </div>
-            <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Leads by status (now)
-              </dt>
-              <CountRows counts={state.report.leadsNow} />
-            </div>
-            <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2 sm:col-span-2">
-              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Leads by source (now)
-              </dt>
-              <SourceRows counts={state.report.leadSourcesNow} />
-            </div>
-          </dl>
+        {state.kind === "loading" && <p className="mt-4 text-sm text-slate-500">Loading…</p>}
+        {state.kind === "unavailable" && (
+          <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+            {state.message}
+          </p>
+        )}
+        {state.kind === "missing" && (
+          <p className="mt-4 text-sm text-slate-500">This workspace no longer exists.</p>
+        )}
 
-          {state.report.publishingRange.recentFailures.length > 0 && (
-            <div className="mt-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Recent publishing failures (range)
-              </h3>
-              <ul className="mt-2 space-y-2">
-                {state.report.publishingRange.recentFailures.map((f) => (
-                  <li
-                    key={f.jobId}
-                    className="rounded border border-slate-100 bg-slate-50 px-3 py-2 text-sm"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs text-slate-600">
-                        job {f.jobId.slice(0, 8)}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {f.attempts} attempt{f.attempts === 1 ? "" : "s"}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {new Date(f.updatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-red-700">{f.lastError}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      )}
+        {state.kind === "loaded" && (
+          <>
+            <p className="mt-3 text-xs text-slate-500">
+              Generated{" "}
+              {new Date(state.report.generatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC
+              {state.report.range.since || state.report.range.until
+                ? " · publishing range applied"
+                : " · full publishing history"}
+            </p>
+
+            <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Publishing (range)
+                </dt>
+                <CountRows counts={state.report.publishingRange.jobsByStatus} />
+              </div>
+              <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Content (now)
+                </dt>
+                <CountRows counts={state.report.contentStatusNow} />
+              </div>
+              <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Campaigns (now)
+                </dt>
+                <CountRows counts={state.report.campaignsNow} />
+              </div>
+              <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+                <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Leads by status (now)
+                </dt>
+                <CountRows counts={state.report.leadsNow} />
+              </div>
+              <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2 sm:col-span-2">
+                <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Leads by source (now)
+                </dt>
+                <SourceRows counts={state.report.leadSourcesNow} />
+              </div>
+            </dl>
+
+            {state.report.publishingRange.recentFailures.length > 0 && (
+              <div className="mt-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Recent publishing failures (range)
+                </h3>
+                <ul className="mt-2 space-y-2">
+                  {state.report.publishingRange.recentFailures.map((f) => (
+                    <li
+                      key={f.jobId}
+                      className="rounded border border-slate-100 bg-slate-50 px-3 py-2 text-sm"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs text-slate-600">
+                          job {f.jobId.slice(0, 8)}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {f.attempts} attempt{f.attempts === 1 ? "" : "s"}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {new Date(f.updatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-red-700">{f.lastError}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </section>
   );

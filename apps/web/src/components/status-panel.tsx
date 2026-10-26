@@ -50,7 +50,10 @@ export function StatusPanel() {
       className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3">
-        <h2 id="status-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <h2
+          id="status-heading"
+          className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+        >
           System status
         </h2>
         <button
@@ -90,8 +93,9 @@ export function StatusPanel() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge label="Operational" tone="good" />
                   <span className="text-xs text-slate-500">
-                    {state.health.service}{state.health.version ? ` ${state.health.version}` : ""}{" "}
-                    · {state.health.environment}
+                    {state.health.service}
+                    {state.health.version ? ` ${state.health.version}` : ""} ·{" "}
+                    {state.health.environment}
                   </span>
                 </div>
               </Row>

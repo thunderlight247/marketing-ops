@@ -148,7 +148,10 @@ export function WorkspaceContentSection({
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
-          <h2 id="workspace-content-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspace-content-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             Content items
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">

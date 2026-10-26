@@ -194,7 +194,10 @@ export function BatchPublishPanel() {
         {workspaces.kind === "loaded" && workspaces.workspaces.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-600">
             Add a business before preparing posts.{" "}
-            <Link className="font-medium text-indigo-600 hover:text-indigo-700 underline" href="/workspaces">
+            <Link
+              className="font-medium text-indigo-600 hover:text-indigo-700 underline"
+              href="/workspaces"
+            >
               Create a workspace
             </Link>
             .

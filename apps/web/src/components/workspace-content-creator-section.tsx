@@ -36,65 +36,68 @@ export function WorkspaceContentCreatorSection({
       className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
-        <h2 id="content-creator-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+        <h2
+          id="content-creator-heading"
+          className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+        >
           Content creator (agent draft)
         </h2>
       </div>
       <div className="px-4 py-5 sm:px-5">
-      <p className="max-w-prose text-sm text-slate-600">
-        The content-creator specialist writes one original draft from this workspace&apos;s brand
-        profile. It lands as a draft in the content section above and follows the ordinary approval
-        workflow: nothing is published without human review.
-      </p>
-
-      <form onSubmit={(e) => void handleCreate(e)} className="mt-4 grid gap-3 sm:max-w-md">
-        <label htmlFor="creator-kind" className="text-sm font-medium text-slate-700">
-          Content kind
-        </label>
-        <select
-          id="creator-kind"
-          value={kind}
-          onChange={(event) => setKind(event.target.value)}
-          className={inputClasses}
-        >
-          {contentKinds.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="creator-focus" className="text-sm font-medium text-slate-700">
-          Brief (optional)
-        </label>
-        <textarea
-          id="creator-focus"
-          value={focus}
-          onChange={(event) => setFocus(event.target.value)}
-          placeholder="e.g. a hiring-season post about our winter maintenance plan"
-          rows={3}
-          maxLength={2000}
-          className={inputClasses}
-        />
-        <div>
-          <button type="submit" disabled={running} className={PRIMARY_BUTTON}>
-            {running ? "Creator is writing…" : "Create agent draft"}
-          </button>
-        </div>
-      </form>
-
-      {state.kind === "unavailable" && (
-        <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
-          {state.message}
+        <p className="max-w-prose text-sm text-slate-600">
+          The content-creator specialist writes one original draft from this workspace&apos;s brand
+          profile. It lands as a draft in the content section above and follows the ordinary
+          approval workflow: nothing is published without human review.
         </p>
-      )}
 
-      {state.kind === "done" && <DraftView state={state} workspaceId={workspaceId} />}
+        <form onSubmit={(e) => void handleCreate(e)} className="mt-4 grid gap-3 sm:max-w-md">
+          <label htmlFor="creator-kind" className="text-sm font-medium text-slate-700">
+            Content kind
+          </label>
+          <select
+            id="creator-kind"
+            value={kind}
+            onChange={(event) => setKind(event.target.value)}
+            className={inputClasses}
+          >
+            {contentKinds.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="creator-focus" className="text-sm font-medium text-slate-700">
+            Brief (optional)
+          </label>
+          <textarea
+            id="creator-focus"
+            value={focus}
+            onChange={(event) => setFocus(event.target.value)}
+            placeholder="e.g. a hiring-season post about our winter maintenance plan"
+            rows={3}
+            maxLength={2000}
+            className={inputClasses}
+          />
+          <div>
+            <button type="submit" disabled={running} className={PRIMARY_BUTTON}>
+              {running ? "Creator is writing…" : "Create agent draft"}
+            </button>
+          </div>
+        </form>
 
-      {state.kind === "idle" && (
-        <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          No agent draft has been created yet.
-        </div>
-      )}
+        {state.kind === "unavailable" && (
+          <p role="alert" className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+            {state.message}
+          </p>
+        )}
+
+        {state.kind === "done" && <DraftView state={state} workspaceId={workspaceId} />}
+
+        {state.kind === "idle" && (
+          <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            No agent draft has been created yet.
+          </div>
+        )}
       </div>
     </section>
   );

@@ -142,7 +142,10 @@ export function WorkspacesPanel() {
         className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
       >
         <div className="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3">
-          <h2 id="workspaces-list-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspaces-list-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             Client workspaces
             {state.kind === "loaded" && (
               <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">
@@ -184,7 +187,16 @@ export function WorkspacesPanel() {
                   title="No workspaces yet"
                   body="Create a workspace for each client you manage. Each workspace keeps its content, integrations, and publishing history completely separate."
                   icon={
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                       <polyline points="9 22 9 12 15 12 15 22" />
                     </svg>
@@ -204,7 +216,10 @@ export function WorkspacesPanel() {
         className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
       >
         <div className="border-b border-slate-100 bg-slate-50 px-5 py-3">
-          <h2 id="workspaces-create-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspaces-create-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             New workspace
           </h2>
         </div>
@@ -240,7 +255,9 @@ export function WorkspacesPanel() {
                 autoComplete="off"
                 className={`mt-1.5 ${inputClasses}`}
               />
-              <p className="mt-1 text-[11px] text-slate-400">Lowercase letters, numbers, and hyphens only.</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Lowercase letters, numbers, and hyphens only.
+              </p>
             </div>
             <div>
               <label htmlFor="workspace-website" className={labelClasses}>
@@ -257,7 +274,10 @@ export function WorkspacesPanel() {
             </div>
 
             {formErrors.length > 0 ? (
-              <ul role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700 space-y-1 list-disc pl-7">
+              <ul
+                role="alert"
+                className="rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700 space-y-1 list-disc pl-7"
+              >
                 {formErrors.map((message) => (
                   <li key={message}>{message}</li>
                 ))}
@@ -265,7 +285,10 @@ export function WorkspacesPanel() {
             ) : null}
 
             {successMsg ? (
-              <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+              <p
+                role="status"
+                className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"
+              >
                 ✓ {successMsg}
               </p>
             ) : null}

@@ -71,7 +71,10 @@ export function IntegrationsDashboard() {
       {workspacesState.kind === "loaded" && workspacesState.workspaces.length > 0 && (
         <div className="space-y-6">
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5">
-            <label htmlFor="workspace-select" className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <label
+              htmlFor="workspace-select"
+              className="block text-xs font-semibold uppercase tracking-wide text-slate-500"
+            >
               Active workspace
             </label>
             <div className="mt-1 sm:max-w-xs">

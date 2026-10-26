@@ -249,7 +249,10 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             />
           </div>
           {campaignErrors.length > 0 && (
-            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
+            <ul
+              role="alert"
+              className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1"
+            >
               {campaignErrors.map((err) => (
                 <li key={err}>{err}</li>
               ))}
@@ -382,7 +385,10 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             />
           </div>
           {leadErrors.length > 0 && (
-            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
+            <ul
+              role="alert"
+              className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1"
+            >
               {leadErrors.map((err) => (
                 <li key={err}>{err}</li>
               ))}

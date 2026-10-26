@@ -246,7 +246,9 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
             </span>
             <div>
               <p className="text-sm font-bold leading-tight text-slate-900">Marketing Ops</p>
-              <p className="text-[11px] leading-tight text-slate-400 font-medium tracking-wide uppercase">Operator</p>
+              <p className="text-[11px] leading-tight text-slate-400 font-medium tracking-wide uppercase">
+                Operator
+              </p>
             </div>
           </div>
         </div>
@@ -272,9 +274,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
                         : "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
-                    <span
-                      className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}
-                    >
+                    <span className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}>
                       {Icon ? <Icon active={active} /> : null}
                     </span>
                     {item.label}
