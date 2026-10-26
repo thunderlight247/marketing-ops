@@ -81,6 +81,11 @@ test("content creator saves a draft, refreshes content and offers human review",
     } else if (path.endsWith("/content")) {
       contentReads += 1;
       json = { items: created ? [item] : [] };
+    } else if (path.endsWith("/reports")) {
+      // The workspace report is optional evidence; a 404 renders "missing"
+      // without failing the page.
+      await route.fulfill({ status: 404, json: { error: "No report for this workspace." } });
+      return;
     } else if (path.endsWith("/integrations")) json = { integrations: [] };
     else if (path.endsWith("/campaigns")) json = { campaigns: [] };
     else if (path.endsWith("/leads")) json = { leads: [] };
