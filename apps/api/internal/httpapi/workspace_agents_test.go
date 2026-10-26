@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,8 +133,8 @@ func TestAgentDescriptorsEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
 		t.Fatalf("body is not the descriptor shape: %v", err)
 	}
-	if len(parsed.Agents) != 3 {
-		t.Fatalf("expected the three built-in specialists, got %d: %+v", len(parsed.Agents), parsed.Agents)
+	if len(parsed.Agents) != 4 {
+		t.Fatalf("expected the four built-in specialists, got %d: %+v", len(parsed.Agents), parsed.Agents)
 	}
 	byID := map[string]agents.Descriptor{}
 	for _, d := range parsed.Agents {
@@ -156,6 +157,15 @@ func TestAgentDescriptorsEndpoint(t *testing.T) {
 		byID[agents.SearchGapWriterID].DataNeeds[0] != agents.DataNeedSearchConsole ||
 		len(byID[agents.SearchGapWriterID].Actions) != 1 {
 		t.Fatalf("unexpected gap-writer descriptor: %+v", byID[agents.SearchGapWriterID])
+	}
+	// The fourth specialist brings the second executor class: the proposal
+	// contract with the create_campaign action and no data needs.
+	if byID[agents.CampaignStrategistID].OutputContract != agents.ContractProposal ||
+		byID[agents.CampaignStrategistID].Version != agents.CampaignStrategistVersion ||
+		len(byID[agents.CampaignStrategistID].DataNeeds) != 0 ||
+		len(byID[agents.CampaignStrategistID].Actions) != 1 ||
+		byID[agents.CampaignStrategistID].Actions[0] != agents.ActionCreateCampaign {
+		t.Fatalf("unexpected strategist descriptor: %+v", byID[agents.CampaignStrategistID])
 	}
 }
 
@@ -250,6 +260,104 @@ func TestSearchGapWriterDataHonesty(t *testing.T) {
 	}
 	if len(rec.Plan.KeyPoints) == 0 || rec.Plan.KeyPoints[0] != agents.TargetQueryKeyPointPrefix+"coffee" {
 		t.Fatalf("target-query evidence point missing: %+v", rec.Plan.KeyPoints)
+	}
+}
+
+// strategistReplyJSON builds a campaign-strategist proposal reply as a
+// model would.
+func strategistReplyJSON(name, utm string) string {
+	return `{"name":"` + name + `","utmCampaign":"` + utm + `",` +
+		`"notes":"Slow-season reminder angle. [to confirm: schedule]","keyPoints":["Reminder angle"]}`
+}
+
+// TestCampaignStrategistRunThroughGenericRoute proves the second executor
+// class: one generic route, one pipeline, and the create_campaign action
+// filing a planned campaign with the forced status and its own audit event.
+func TestCampaignStrategistRunThroughGenericRoute(t *testing.T) {
+	fake := workspaceDeps(nil, nil)
+	runner := &fakeAgentRunner{text: strategistReplyJSON("Winter service reminder", "winter-service-2026")}
+	h := NewRouter(Deps{Logger: testLogger, Workspaces: fake, AgentRunner: runner})
+	rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, agents.CampaignStrategistID),
+		`{"focus":"Plan for the slow season"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The executor filed exactly one campaign, scoped to the workspace and
+	// forced to "planned", with the validated proposal fields.
+	if len(fake.insertedCampaigns) != 1 {
+		t.Fatalf("campaigns filed: %d", len(fake.insertedCampaigns))
+	}
+	filed := fake.insertedCampaigns[0]
+	if filed.WorkspaceID != agentWsID || filed.Status != "planned" ||
+		filed.Name != "Winter service reminder" || filed.UtmCampaign != "winter-service-2026" {
+		t.Fatalf("unexpected filed campaign: %+v", filed)
+	}
+	if !strings.Contains(filed.Notes, "[to confirm: schedule]") {
+		t.Fatalf("rationale lost: %q", filed.Notes)
+	}
+
+	// The reply envelope matches the proposal contract's dashboard shape.
+	var parsed struct {
+		Campaign   campaignJSON `json:"campaign"`
+		Provider   string       `json:"provider"`
+		AgentID    string       `json:"agentId"`
+		KeyPoints  []string     `json:"keyPoints"`
+		DurationMS int64        `json:"durationMs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("body is not the proposal envelope: %v", err)
+	}
+	if parsed.Campaign.ID == "" || parsed.Campaign.Status != "planned" || parsed.AgentID != agents.CampaignStrategistID {
+		t.Fatalf("unexpected envelope: %+v", parsed)
+	}
+	if parsed.Provider != "fake" {
+		t.Fatalf("provider lost: %q", parsed.Provider)
+	}
+
+	// Task history: one completed action event with the forced status on it.
+	if len(fake.auditEvents) != 1 {
+		t.Fatalf("expected one audit event, got %d", len(fake.auditEvents))
+	}
+	audit := fake.auditEvents[0]
+	if audit.Action != "agent.action.create_campaign.completed" ||
+		audit.EntityType != "campaign" || audit.EntityID == nil {
+		t.Fatalf("unexpected audit event: %+v", audit)
+	}
+	if audit.Details["status"] != "planned" || audit.Details["agent_id"] != agents.CampaignStrategistID {
+		t.Fatalf("audit details lost the proposal facts: %+v", audit.Details)
+	}
+
+	// The offline stub must also work end to end (dev mode without a key).		h = NewRouter(Deps{Logger: testLogger, Workspaces: workspaceDeps(nil, nil), AgentRunner: aiprovider.StubProvider{}})
+	rec = doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, agents.CampaignStrategistID), `{}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("offline stub status %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCampaignStrategistFilingErrors maps the store disagreements onto the
+// same responses the manual campaign form produces.
+func TestCampaignStrategistFilingErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		errors error
+		status int
+	}{{"duplicate name", store.ErrSlugTaken, http.StatusConflict},
+		{"name rejected", store.ErrNameRequired, http.StatusBadGateway},
+		{"store failure", errors.New("boom"), http.StatusInternalServerError}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := workspaceDeps(nil, nil)
+			fake.insertCampaignErr = tc.errors
+			runner := &fakeAgentRunner{text: strategistReplyJSON("Any name", "")}
+			h := NewRouter(Deps{Logger: testLogger, Workspaces: fake, AgentRunner: runner})
+			rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, agents.CampaignStrategistID), `{}`)
+			if rec.Code != tc.status {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			if tc.status == http.StatusInternalServerError && strings.Contains(rec.Body.String(), "boom") {
+				t.Fatal("internal error echoed raw store text")
+			}
+		})
 	}
 }
 

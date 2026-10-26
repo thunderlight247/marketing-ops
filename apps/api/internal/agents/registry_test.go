@@ -34,6 +34,10 @@ func TestRegistryValidation(t *testing.T) {
 			id: "b", version: "1", contract: ContractAdvisory, actions: []string{ActionFileDraft}}},
 		{"drafting must license file_draft", "file_draft", stubSpecialist{
 			id: "c", version: "1", contract: ContractDrafting}},
+		{"proposal must license create_campaign", "create_campaign", stubSpecialist{
+			id: "e", version: "1", contract: ContractProposal}},
+		{"proposal rejects foreign actions", "create_campaign", stubSpecialist{
+			id: "f", version: "1", contract: ContractProposal, actions: []string{ActionFileDraft}}},
 		{"unknown data need fails", "campaigns", stubSpecialist{
 			id: "d", version: "1", contract: ContractAdvisory, wants: []string{"campaigns"}}},
 	} {
@@ -107,5 +111,11 @@ func TestDefaultRegistryContracts(t *testing.T) {
 		len(gap.DataNeeds) != 1 || gap.DataNeeds[0] != DataNeedSearchConsole ||
 		len(gap.Actions) != 1 || gap.Actions[0] != ActionFileDraft {
 		t.Fatalf("unexpected gap-writer descriptor: %#v", gap)
+	}
+	strategist, ok := byID[CampaignStrategistID]
+	if !ok || strategist.OutputContract != ContractProposal || strategist.Version != CampaignStrategistVersion ||
+		len(strategist.DataNeeds) != 0 ||
+		len(strategist.Actions) != 1 || strategist.Actions[0] != ActionCreateCampaign {
+		t.Fatalf("unexpected strategist descriptor: %#v", strategist)
 	}
 }

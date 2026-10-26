@@ -6,6 +6,7 @@ import {
   formatAgentDataNeed,
   formatDataSource,
   formatRecommendationPriority,
+  requestCampaignProposal,
   requestSeoAdvisory,
 } from "./agents";
 import { getApiBaseUrl } from "./config";
@@ -155,10 +156,73 @@ describe("formatAgent helpers", () => {
   it("formats contracts, data needs, and actions with safe fallbacks", () => {
     expect(formatAgentContract("advisory")).toContain("Advisory");
     expect(formatAgentContract("drafting")).toContain("approval");
+    expect(formatAgentContract("proposal")).toContain("campaign");
     expect(formatAgentContract("future_contract")).toBe("future_contract");
     expect(formatAgentDataNeed("search_console")).toContain("Search Console");
     expect(formatAgentDataNeed("campaigns")).toBe("campaigns");
     expect(formatAgentAction("file_draft")).toContain("file drafts");
+    expect(formatAgentAction("create_campaign")).toContain("planned");
     expect(formatAgentAction("future_action")).toBe("future_action");
+  });
+});
+
+describe("requestCampaignProposal", () => {
+  const base = getApiBaseUrl("http://api.example");
+
+  const validProposal = {
+    campaign: {
+      id: "c-1",
+      name: "Winter service reminder",
+      status: "planned",
+      utmCampaign: "winter-service-2026",
+      notes: "Reminder angle.",
+    },
+    provider: "stub",
+    model: "stub-v1",
+    agentId: "campaign_strategist",
+    keyPoints: ["Reminder angle"],
+    durationMs: 9,
+  };
+
+  it("posts to the strategist's generic run route and returns a done state", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(validProposal, 201));
+    const state = await requestCampaignProposal(base, "ws-1", "  slow season  ", fetchImpl);
+    expect(state).toEqual({ kind: "done", proposal: validProposal });
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/workspaces/ws-1/agents/campaign_strategist/run");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ focus: "slow season" }));
+  });
+
+  it("posts an empty body when no focus is given", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(validProposal, 201));
+    await requestCampaignProposal(base, "ws-1", "   ", fetchImpl);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe("{}");
+  });
+
+  it("surfaces the duplicate-campaign conflict message", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ error: "a campaign with that name already exists in this workspace" }, 409),
+      );
+    const state = await requestCampaignProposal(base, "ws-1", "", fetchImpl);
+    expect(state.kind).toBe("unavailable");
+    expect(state.kind === "unavailable" && state.message).toContain("already exists");
+  });
+
+  it("rejects a response without a real campaign as unavailable", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ campaign: { id: "", name: "x" }, keyPoints: [] }));
+    const state = await requestCampaignProposal(base, "ws-1", "", fetchImpl);
+    expect(state.kind).toBe("unavailable");
+  });
+
+  it("maps network failures to an unavailable state", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("offline"));
+    const state = await requestCampaignProposal(base, "ws-1", "", fetchImpl);
+    expect(state).toEqual({ kind: "unavailable", message: "the API could not be reached" });
   });
 });

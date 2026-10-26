@@ -156,6 +156,7 @@ export function formatAgentContract(contract: string): string {
   const labels: Record<string, string> = {
     advisory: "Advisory only — returns a report, never edits",
     drafting: "Drafts into the human approval workflow",
+    proposal: "Proposes one planned campaign for operator review",
   };
   return labels[contract] ?? contract;
 }
@@ -170,6 +171,7 @@ export function formatAgentDataNeed(need: string): string {
 export function formatAgentAction(action: string): string {
   const labels: Record<string, string> = {
     file_draft: "May file drafts in the approval workflow",
+    create_campaign: "May create campaign proposals (always planned; activation stays manual)",
   };
   return labels[action] ?? action;
 }
@@ -306,6 +308,88 @@ export async function requestContentDraft(
   } catch {
     return { kind: "unavailable", message: "the API could not be reached" };
   }
+}
+
+const strategistAgentId = "campaign_strategist";
+
+// ---- Fourth specialist: campaign strategist ---------------------------------
+
+// CampaignProposal is one proposed campaign as filed by the server: it always
+// arrives "planned" — activation, edits, and deletion stay operator actions.
+export interface CampaignProposalEnvelope {
+  campaign: {
+    id: string;
+    name: string;
+    status: string;
+    utmCampaign: string;
+    notes: string;
+  };
+  provider: string;
+  model: string;
+  agentId: string;
+  keyPoints: string[];
+  durationMs: number;
+}
+
+export type CampaignProposalState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; proposal: CampaignProposalEnvelope }
+  | { kind: "unavailable"; message: string };
+
+// requestCampaignProposal asks the strategist for one new campaign proposal
+// and files it through the server's create_campaign executor. The client
+// checks the response shape; the server decides the status.
+export async function requestCampaignProposal(
+  baseUrl: string,
+  workspaceId: string,
+  focus: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CampaignProposalState> {
+  try {
+    const res = await fetchImpl(agentRunUrl(baseUrl, workspaceId, strategistAgentId), {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify(focus.trim() === "" ? {} : { focus: focus.trim() }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      const message =
+        detail && typeof detail.error === "string"
+          ? detail.error
+          : `request failed (${res.status})`;
+      return { kind: "unavailable", message };
+    }
+    const proposal = parseProposalEnvelope(await res.json().catch(() => null));
+    if (!proposal) {
+      return { kind: "unavailable", message: "the proposal response had an unexpected shape" };
+    }
+    return { kind: "done", proposal };
+  } catch {
+    return { kind: "unavailable", message: "the API could not be reached" };
+  }
+}
+
+function parseProposalEnvelope(value: unknown): CampaignProposalEnvelope | null {
+  if (!isRecord(value) || !isRecord(value.campaign)) return null;
+  if (!Array.isArray(value.keyPoints)) return null;
+  const campaign = value.campaign;
+  if (typeof campaign.id !== "string" || campaign.id === "") return null;
+  if (typeof campaign.name !== "string" || campaign.name === "") return null;
+  return {
+    campaign: {
+      id: campaign.id,
+      name: campaign.name,
+      status: typeof campaign.status === "string" ? campaign.status : "",
+      utmCampaign: typeof campaign.utmCampaign === "string" ? campaign.utmCampaign : "",
+      notes: typeof campaign.notes === "string" ? campaign.notes : "",
+    },
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    agentId: typeof value.agentId === "string" ? value.agentId : "campaign_strategist",
+    keyPoints: value.keyPoints.filter((p): p is string => typeof p === "string"),
+    durationMs: typeof value.durationMs === "number" ? value.durationMs : 0,
+  };
 }
 
 function parseCreatorEnvelope(value: unknown): CreatorDraftEnvelope | null {

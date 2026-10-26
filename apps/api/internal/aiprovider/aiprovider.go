@@ -205,6 +205,22 @@ func (s StubProvider) RunPrompt(ctx context.Context, req RunPromptRequest) (Prom
 		return PromptReply{Provider: "stub", Model: "stub-v1", Text: string(encoded)}, nil
 	}
 
+	if strings.HasPrefix(req.System, "You are the internal campaign strategist ") {
+		// Like the advisory branch, the stub only extracts the business line
+		// and never invents performance facts; the proposal status is not
+		// decided here at all, the executor forces "planned" downstream.
+		encoded, err := json.Marshal(map[string]any{
+			"name":        "[Stub] Campaign proposal for review",
+			"utmCampaign": "stub-campaign-proposal",
+			"notes":       "[Stub] Offline plumbing-check proposal. It carries no real research: configure a real AI provider and review every claim before activating anything.",
+			"keyPoints":   []string{"Offline placeholder only", "Stays planned until the operator activates it"},
+		})
+		if err != nil {
+			return PromptReply{}, &ProviderError{Kind: FailMalformed, Cause: "internal stub payload"}
+		}
+		return PromptReply{Provider: "stub", Model: "stub-v1", Text: string(encoded)}, nil
+	}
+
 	dataSource := stubAdvisoryValueNone
 	cannibalizationChecked := false
 	if strings.HasSuffix(strings.TrimSpace(req.User),

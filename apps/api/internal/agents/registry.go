@@ -28,12 +28,21 @@ const (
 	// platform files as a draft in the existing approval workflow. It never
 	// publishes or schedules.
 	ContractDrafting = "drafting"
+	// ContractProposal: the run returns a validated CampaignProposal that the
+	// platform files as one planned campaign for operator review. The
+	// proposal arrives inactive (status "planned") and every activation,
+	// edit, or deletion stays an operator action in the ordinary flows.
+	ContractProposal = "proposal"
 )
 
 // Action classes are a closed set: each one is a reviewed executor that maps
 // a validated output onto existing, human-gated flows. Unknown classes must
 // never be declared or executed.
 const ActionFileDraft = "file_draft"
+
+// ActionCreateCampaign files one proposed campaign into the campaigns store
+// as a reviewable "planned" record; it never activates, edits, or deletes.
+const ActionCreateCampaign = "create_campaign"
 
 // Data needs are a closed set: one key per registered snapshot loader.
 // Undeclared data never reaches a prompt.
@@ -52,8 +61,9 @@ type RunInput struct {
 // RunOutput is the union of the closed output contracts. Exactly one field
 // is set, matching the specialist's declared contract.
 type RunOutput struct {
-	Report *AdvisorReport
-	Plan   *ContentPlan
+	Report   *AdvisorReport
+	Plan     *ContentPlan
+	Proposal *CampaignProposal
 }
 
 // Specialist is one pluggable agency agent. Implementations validate their
@@ -93,6 +103,11 @@ func capabilities(contract string, actions []string, wants []string) error {
 			return fmt.Errorf("the %s contract must declare exactly the %q action, got %v",
 				contract, ActionFileDraft, actions)
 		}
+	case ContractProposal:
+		if len(actions) != 1 || actions[0] != ActionCreateCampaign {
+			return fmt.Errorf("the %s contract must declare exactly the %q action, got %v",
+				contract, ActionCreateCampaign, actions)
+		}
 	}
 	for _, need := range wants {
 		if !knownDataNeeds[need] {
@@ -105,6 +120,7 @@ func capabilities(contract string, actions []string, wants []string) error {
 var knownContracts = map[string]bool{
 	ContractAdvisory: true,
 	ContractDrafting: true,
+	ContractProposal: true,
 }
 
 var knownDataNeeds = map[string]bool{
@@ -197,7 +213,7 @@ func descriptorOf(s Specialist) Descriptor {
 // error, not a configuration problem.
 func NewDefaultRegistry() *Registry {
 	r := NewRegistry()
-	for _, s := range []Specialist{SEOAdvisor{}, ContentCreator{}, SearchGapWriter{}} {
+	for _, s := range []Specialist{SEOAdvisor{}, ContentCreator{}, SearchGapWriter{}, CampaignStrategist{}} {
 		if err := r.Register(s); err != nil {
 			panic(fmt.Sprintf("agents built-in registration failed: %v", err))
 		}

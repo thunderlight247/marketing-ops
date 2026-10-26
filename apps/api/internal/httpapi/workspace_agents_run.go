@@ -225,6 +225,14 @@ func workspaceAgentRunHandler(
 			if !respondFileDraft(w, r, ws, workspaceID, draft, output.Plan, runDuration) {
 				return
 			}
+		case agents.ContractProposal:
+			if output.Proposal == nil {
+				writeJSONError(w, http.StatusInternalServerError, "the agent returned an unexpected contract")
+				return
+			}
+			if !respondCreateCampaign(w, r, ws, workspaceID, output.Proposal, runDuration) {
+				return
+			}
 		default:
 			writeJSONError(w, http.StatusInternalServerError, "the agent declared an unknown output contract")
 		}
@@ -449,4 +457,75 @@ func (e *requestError) Error() string { return e.message }
 
 func (e *requestError) respond(w http.ResponseWriter) {
 	writeJSONError(w, e.status, e.message)
+}
+
+// respondCreateCampaign runs the create_campaign action: it files the
+// validated proposal as one campaign in the existing campaigns store, always
+// with status "planned". The proposal never arrives active, and every later
+// activation, edit, or deletion stays an operator action in the ordinary
+// flow: nothing here publishes, schedules, or writes anywhere else.
+func respondCreateCampaign(
+	w http.ResponseWriter,
+	r *http.Request,
+	ws WorkspaceStore,
+	workspaceID string,
+	proposal *agents.CampaignProposal,
+	runDuration time.Duration,
+) bool {
+	created, err := ws.InsertCampaign(r.Context(), store.Campaign{
+		WorkspaceID: workspaceID,
+		Name:        proposal.Name,
+		Status:      "planned", // forced: the operator alone activates a proposal
+		UtmCampaign: proposal.UtmCampaign,
+		Notes:       proposal.Notes,
+	})
+	switch {
+	case err == nil:
+		audit(r.Context(), ws, store.AuditEvent{
+			WorkspaceID: &workspaceID,
+			Action:      "agent.action.create_campaign.completed",
+			EntityType:  "campaign",
+			EntityID:    &created.ID,
+			Details: map[string]any{
+				"name":          created.Name,
+				"status":        created.Status,
+				"agent_id":      proposal.AgentID,
+				"agent_version": proposal.Version,
+				"provider":      proposal.Provider,
+				"model":         proposal.Model,
+				"has_utm":       proposal.UtmCampaign != "",
+				"keypoints":     len(proposal.KeyPoints),
+			},
+		})
+		writeJSON(w, http.StatusCreated, struct {
+			Campaign   campaignJSON `json:"campaign"`
+			Provider   string       `json:"provider"`
+			Model      string       `json:"model"`
+			AgentID    string       `json:"agentId"`
+			KeyPoints  []string     `json:"keyPoints"`
+			DurationMs int64        `json:"durationMs"`
+		}{
+			Campaign:   toCampaignJSON(created),
+			Provider:   proposal.Provider,
+			Model:      proposal.Model,
+			AgentID:    proposal.AgentID,
+			KeyPoints:  proposal.KeyPoints,
+			DurationMs: runDuration.Milliseconds(),
+		})
+		return true
+	case errors.Is(err, store.ErrSlugTaken):
+		// Same non-fatal posture as the manual form: the operator can rename
+		// and re-run, and no partial record exists to clean up.
+		writeJSONError(w, http.StatusConflict,
+			"a campaign with that name already exists in this workspace")
+	case errors.Is(err, store.ErrNameRequired):
+		writeJSONError(w, http.StatusBadGateway, "the proposal was missing a campaign name")
+	case errors.Is(err, store.ErrInvalidStatus):
+		// Unreachable while the executor forces "planned"; guards a future
+		// refactor from silently activating agent proposals.
+		writeJSONError(w, http.StatusInternalServerError, "the proposal filing failed an internal status check")
+	default:
+		writeJSONError(w, http.StatusInternalServerError, "storing the campaign proposal failed")
+	}
+	return false
 }

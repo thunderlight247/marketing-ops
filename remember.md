@@ -1432,6 +1432,31 @@ Verification level (section 8 policy): Go — full `go test ./...` passes (13 pa
 
 ---
 
+## 15.5 Agent-layer registry — increment 4 design recorded before implementation
+
+Per section A.4, executor classes are designed and recorded here before they exist. Two classes are designed now; the second is recorded as the designed-next work, not built in this pass.
+
+1. **`create_campaign` (campaign proposals) — implemented this increment (15.6).** New output contract `proposal`: the run's validated reply is a `CampaignProposal` (name, utmCampaign value, notes/rationale, keyPoints) that the executor files straight into the existing campaigns store with the status forced to `planned`. Activation (`planned → active`), pausing, edits, and deletion stay ordinary operator PATCH/DELETE actions; no proposal is ever active on arrival. Duplicate names surface the store's existing per-workspace uniqueness as the same 409 the manual form gets. Audit event: `agent.action.create_campaign.completed` (scalar details incl. resulting id, name, forced status, agent identity, provider/model).
+2. **`file_channel_copy` (per-channel copy variants) — designed next, NOT yet implemented.** A drafting-adjacent specialist drafts the per-channel copy variants (e.g. X/Meta/YouTube message text) for an **existing** draft content item, filed into the item's newest version's `channel_copy` JSONB bead through the existing draft-save flow. It files nothing new, never creates items, and must refuse frozen items exactly like text edits; it inherits the approval workflow untouched. Open design point left for its implementing pass: whether it declares a fourth contract or extends `drafting` (the `drafting` capabilities rule currently pins exactly one action), and how the tool input selects the target item within the existing 8 KiB payload and pre-run validation pattern.
+
+Data honesty rule carried into the new contract: a proposal may only use workspace context and the operator brief; it must never cite Search Console or other performance data it was not given, so the strategist declares no data needs.
+
+---
+
+## 15.6 Agent-layer registry — increment 4 implemented: the second action-executor class `create_campaign` (recorded 26 October 2026)
+
+What landed, end to end:
+
+**API.** `internal/agents/registry.go` adds the `proposal` output contract (`ContractProposal`) and the `create_campaign` action, with the capabilities check extended so a `proposal` specialist MUST license exactly `create_campaign` (licensing foreign actions is also rejected). `internal/agents/campaignstrategist.go` implements `CampaignStrategist` — `Run` wraps one `Propose` pass; the prompt bounds the specialist to workspace context plus the operator brief and forbids any performance data claim; the reply validator requires a non-empty `name`, accepts an optional `utm_campaign` and free-text rationale `notes`, caps name/utm/notes to the same rune budget as the campaigns forms, and carries provider/model identity. `internal/httpapi/workspace_agents_run.go` gains the second executor: a validated `CampaignProposal` is filed via `WorkspaceStore.InsertCampaign` with status forced unconditionally to `planned` (the operator alone activates), duplicate names surface `ErrSlugTaken` as the same 409 the manual form gets, and the run answers 201 with the proposal envelope (`campaign` + provider/model/agentId/keyPoints/durationMs). Audit event `agent.action.create_campaign.completed` records scalar details (resulting id, name, forced status, agent id/version, provider/model, has_utm, keypoints). `internal/aiprovider/aiprovider.go`'s offline stub answers the strategist's prompt with a clearly-labelled plumbing-check proposal (`[Stub]` notes; no performance claims), so the whole flow works with no provider key (mirroring `file_draft`).
+
+**Web.** `src/lib/agents.ts` labels the new contract/action, adds `requestCampaignProposal` + `parseProposalEnvelope` (shape-checked envelope; server decides the status), and `src/lib/agents.test.ts` covers proposal formatting and the run-route round-trip. New `src/components/workspace-campaign-strategist-section.tsx` asks for one proposal (focus optional, 2000 chars), shows the proposed planned campaign, and calls back into the workspace detail panel so the campaigns list re-reads; it mounts in `workspace-detail-panel.tsx` above the campaigns panel.
+
+**Tests.** API: `registry_test.go` expects four valid built-ins and pins the proposal↔`create_campaign` capabilities rule; `campaignstrategist_test.go` covers bounded prompt, identity/metadata, malformed-map rejection (FailMalformed), and over-cap trimming; `workspace_agents_test.go` covers the executor through the generic run route (planned status forced in the stored row, envelope shape, 201, audit details). Web: unit tests plus a new route-stubbed Playwright spec `e2e/campaign-strategist.spec.ts` (propose → planned proposal shown in both the specialist section and the campaigns panel).
+
+Verification level (section 8 policy): Go — full `go test ./...` passes, `go vet` and `gofmt` clean. Web — typecheck clean, 181/181 Vitest tests, ESLint clean, Prettier applied. Not yet verified: a live Playwright session (real API + DB) for the new spec, and any real model run of the strategist persona. Proposed follow-on (unchanged from 15.5): `file_channel_copy` remains designed-not-implemented.
+
+---
+
 ## 16. Immediate handover summary
 
 The project has progressed beyond its original foundation stage. The recorded work includes a provider-neutral publishing contract, a first Meta social-publishing increment, a scheduler/worker/retry increment, media support, a campaign-and-lead increment tested locally, and an SEO Specialist advisory extension.

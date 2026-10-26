@@ -6,6 +6,7 @@ import { getApiBaseUrl } from "@/lib/config";
 import { WorkspaceContentSection } from "@/components/workspace-content-section";
 import { WorkspaceIntegrationsSection } from "@/components/workspace-integrations-section";
 import { WorkspaceCampaignsSection } from "@/components/workspace-campaigns-section";
+import { WorkspaceCampaignStrategistSection } from "@/components/workspace-campaign-strategist-section";
 import { WorkspaceReportsSection } from "@/components/workspace-reports-section";
 import { WorkspaceSeoAdvisorSection } from "@/components/workspace-seo-advisor-section";
 import { WorkspaceAgentsSection } from "@/components/workspace-agents-section";
@@ -73,6 +74,7 @@ const DANGER_BUTTON =
 export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const router = useRouter();
   const [contentRevision, setContentRevision] = useState(0);
+  const [campaignRevision, setCampaignRevision] = useState(0);
   const [state, setState] = useState<WorkspaceDetailState>({ kind: "loading" });
 
   // Facts form state.
@@ -253,7 +255,10 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
       >
         <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
-          <h2 id="workspace-facts" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspace-facts"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             Workspace details
           </h2>
         </div>
@@ -305,14 +310,21 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
             is permanent and used in links.
           </p>
           {factsErrors.length > 0 ? (
-            <ul role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1">
+            <ul
+              role="alert"
+              className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800 list-disc pl-5 space-y-1"
+            >
               {factsErrors.map((message) => (
                 <li key={message}>{message}</li>
               ))}
             </ul>
           ) : null}
           <div className="flex">
-            <button type="submit" disabled={factsSaving} className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}>
+            <button
+              type="submit"
+              disabled={factsSaving}
+              className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}
+            >
               {factsSaving ? "Saving…" : "Save details"}
             </button>
           </div>
@@ -406,7 +418,11 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           ) : null}
 
           <div className="flex">
-            <button type="submit" disabled={brandSaving} className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}>
+            <button
+              type="submit"
+              disabled={brandSaving}
+              className={`w-full sm:w-auto ${PRIMARY_BUTTON}`}
+            >
               {brandSaving ? "Saving…" : "Save brand profile"}
             </button>
           </div>
@@ -422,7 +438,12 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
 
       <WorkspaceIntegrationsSection workspaceId={workspace.id} />
 
-      <WorkspaceCampaignsSection workspaceId={workspace.id} />
+      <WorkspaceCampaignsSection key={campaignRevision} workspaceId={workspace.id} />
+
+      <WorkspaceCampaignStrategistSection
+        workspaceId={workspace.id}
+        onProposed={() => setCampaignRevision((revision) => revision + 1)}
+      />
 
       <WorkspaceReportsSection workspaceId={workspace.id} />
 
@@ -435,7 +456,10 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         className="overflow-hidden rounded-xl border border-red-100 bg-white shadow-sm"
       >
         <div className="border-b border-red-100 bg-red-50 px-4 py-3 sm:px-5">
-          <h2 id="danger-zone-heading" className="text-xs font-semibold uppercase tracking-widest text-red-700">
+          <h2
+            id="danger-zone-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-red-700"
+          >
             Danger zone
           </h2>
         </div>
@@ -446,7 +470,8 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           </p>
           <form onSubmit={(event) => void remove(event)} className="mt-4 grid gap-3 sm:max-w-sm">
             <label htmlFor="delete-confirm" className={labelClasses}>
-              Type <code className="rounded bg-slate-100 px-1 font-mono text-xs">{workspace.slug}</code>{" "}
+              Type{" "}
+              <code className="rounded bg-slate-100 px-1 font-mono text-xs">{workspace.slug}</code>{" "}
               to confirm
             </label>
             <input
@@ -457,7 +482,11 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
               className={inputClasses}
             />
             <div>
-              <button type="submit" disabled={deleting || !confirmMatches} className={DANGER_BUTTON}>
+              <button
+                type="submit"
+                disabled={deleting || !confirmMatches}
+                className={DANGER_BUTTON}
+              >
                 {deleting ? "Deleting…" : "Delete workspace forever"}
               </button>
             </div>
