@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatDataSource, formatRecommendationPriority, requestSeoAdvisory } from "./agents";
+import {
+  fetchAgentRegistry,
+  formatAgentAction,
+  formatAgentContract,
+  formatAgentDataNeed,
+  formatDataSource,
+  formatRecommendationPriority,
+  requestSeoAdvisory,
+} from "./agents";
 import { getApiBaseUrl } from "./config";
+
+const descriptor = {
+  id: "seo_specialist",
+  version: "1",
+  displayName: "SEO advisor",
+  description: "Advisory-only organic search review.",
+  outputContract: "advisory",
+  dataNeeds: ["search_console"],
+  actions: [],
+};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -41,7 +59,7 @@ describe("requestSeoAdvisory", () => {
     const state = await requestSeoAdvisory(base, "ws-1", "   ", fetchImpl);
     expect(state.kind).toBe("done");
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/api/v1/workspaces/ws-1/agents/seo/advisory");
+    expect(url).toContain("/api/v1/workspaces/ws-1/agents/seo_specialist/run");
     expect(init.method).toBe("POST");
     expect(init.body).toBe("{}");
   });
@@ -88,5 +106,59 @@ describe("format helpers", () => {
     expect(formatRecommendationPriority("weird")).toBe("weird");
     expect(formatDataSource("search_console")).toContain("Search Console");
     expect(formatDataSource("none")).toContain("No connected");
+  });
+});
+
+describe("fetchAgentRegistry", () => {
+  it("lists parsed agent descriptors", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ agents: [descriptor] }));
+    const state = await fetchAgentRegistry("http://api.example", fetchImpl);
+    expect(state).toEqual({ kind: "available", agents: [descriptor] });
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.example/api/v1/agents");
+    expect(init.headers).toBeDefined();
+  });
+
+  it("rejects a malformed descriptor entry as unavailable", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ agents: [{ id: "x" }] }));
+    const state = await fetchAgentRegistry("http://api.example", fetchImpl);
+    expect(state).toEqual({
+      kind: "unavailable",
+      message: "the agents response had an unexpected shape",
+    });
+  });
+
+  it("treats a non-array agents field as unavailable", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ agents: {} }));
+    expect(await fetchAgentRegistry("http://api.example", fetchImpl).then((s) => s.kind)).toBe(
+      "unavailable",
+    );
+  });
+
+  it("surfaces fixed server errors and network failures", async () => {
+    const serverError = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ error: "registry unavailable" }, 503));
+    expect(await fetchAgentRegistry("http://api", serverError)).toEqual({
+      kind: "unavailable",
+      message: "registry unavailable",
+    });
+    const offline = vi.fn().mockRejectedValue(new Error("down"));
+    expect(await fetchAgentRegistry("http://api", offline)).toEqual({
+      kind: "unavailable",
+      message: "the API could not be reached",
+    });
+  });
+});
+
+describe("formatAgent helpers", () => {
+  it("formats contracts, data needs, and actions with safe fallbacks", () => {
+    expect(formatAgentContract("advisory")).toContain("Advisory");
+    expect(formatAgentContract("drafting")).toContain("approval");
+    expect(formatAgentContract("future_contract")).toBe("future_contract");
+    expect(formatAgentDataNeed("search_console")).toContain("Search Console");
+    expect(formatAgentDataNeed("campaigns")).toBe("campaigns");
+    expect(formatAgentAction("file_draft")).toContain("file drafts");
+    expect(formatAgentAction("future_action")).toBe("future_action");
   });
 });

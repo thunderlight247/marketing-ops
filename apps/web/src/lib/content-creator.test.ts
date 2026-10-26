@@ -25,7 +25,7 @@ describe("requestContentDraft", () => {
       transport,
     );
     expect(transport).toHaveBeenCalledWith(
-      "http://localhost:8081/api/v1/workspaces/workspace%2Fone/agents/content-creator/draft",
+      "http://localhost:8081/api/v1/workspaces/workspace%2Fone/agents/content_creator/run",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ kind: "snippet", focus: "Winter care" }),

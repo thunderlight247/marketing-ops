@@ -51,24 +51,29 @@ export function formatDataSource(dataSource: string): string {
   return "No connected Search Console data (advisory only)";
 }
 
+// agentRunUrl points at the single generic endpoint every registered
+// specialist answers; the agent id selects the persona, not the route.
+function agentRunUrl(baseUrl: string, workspaceId: string, agentId: string): string {
+  const root = baseUrl.replace(/\/+$/, "");
+  return `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/run`;
+}
+
 // requestSeoAdvisory is the network call for the advisory report. A report
 // the server could not validate arrives as "rejected" with the safe message.
+const seoAgentId = "seo_specialist";
+const creatorAgentId = "content_creator";
 export async function requestSeoAdvisory(
   baseUrl: string,
   workspaceId: string,
   focus: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SeoAdvisoryState> {
-  const root = baseUrl.replace(/\/+$/, "");
   try {
-    const res = await fetchImpl(
-      `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/seo/advisory`,
-      {
-        method: "POST",
-        headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
-        body: JSON.stringify(focus.trim() === "" ? {} : { focus: focus.trim() }),
-      },
-    );
+    const res = await fetchImpl(agentRunUrl(baseUrl, workspaceId, seoAgentId), {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify(focus.trim() === "" ? {} : { focus: focus.trim() }),
+    });
     if (!res.ok) {
       const detail = await res.json().catch(() => null);
       const message =
@@ -127,6 +132,107 @@ function isValidReport(value: unknown): value is AdvisorReport {
   );
 }
 
+// ---- Registry: what agents exist -------------------------------------------
+// GET /api/v1/agents lists every enabled specialist's dashboard-facing
+// descriptor. The dashboard shows these capabilities; only the server's own
+// gating keeps an agent from doing more than it lists here.
+
+export interface AgentDescriptor {
+  id: string;
+  version: string;
+  displayName: string;
+  description: string;
+  outputContract: string;
+  dataNeeds: string[];
+  actions: string[];
+}
+
+export type AgentsRegistryState =
+  | { kind: "loading" }
+  | { kind: "available"; agents: AgentDescriptor[] }
+  | { kind: "unavailable"; message: string };
+
+export function formatAgentContract(contract: string): string {
+  const labels: Record<string, string> = {
+    advisory: "Advisory only — returns a report, never edits",
+    drafting: "Drafts into the human approval workflow",
+  };
+  return labels[contract] ?? contract;
+}
+
+export function formatAgentDataNeed(need: string): string {
+  const labels: Record<string, string> = {
+    search_console: "Search Console data",
+  };
+  return labels[need] ?? need;
+}
+
+export function formatAgentAction(action: string): string {
+  const labels: Record<string, string> = {
+    file_draft: "May file drafts in the approval workflow",
+  };
+  return labels[action] ?? action;
+}
+
+// fetchAgentRegistry reads the enabled-agents list. A response the client
+// could not trust maps to "unavailable" with a safe message, never a
+// partially parsed descriptor.
+export async function fetchAgentRegistry(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AgentsRegistryState> {
+  const root = baseUrl.replace(/\/+$/, "");
+  try {
+    const res = await fetchImpl(`${root}/api/v1/agents`, {
+      headers: withAuth({ Accept: "application/json" }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      const message =
+        detail && typeof detail.error === "string"
+          ? detail.error
+          : `request failed (${res.status})`;
+      return { kind: "unavailable", message };
+    }
+    const body = await res.json().catch(() => null);
+    if (!isRecord(body) || !Array.isArray(body.agents)) {
+      return { kind: "unavailable", message: "the agents response had an unexpected shape" };
+    }
+    const agents: AgentDescriptor[] = [];
+    for (const entry of body.agents) {
+      const agent = parseDescriptor(entry);
+      if (!agent) {
+        return { kind: "unavailable", message: "the agents response had an unexpected shape" };
+      }
+      agents.push(agent);
+    }
+    return { kind: "available", agents };
+  } catch {
+    return { kind: "unavailable", message: "the API could not be reached" };
+  }
+}
+
+function parseDescriptor(value: unknown): AgentDescriptor | null {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  const version = typeof value.version === "string" ? value.version : "";
+  if (id === "" || version === "") return null;
+  return {
+    id,
+    version,
+    displayName: typeof value.displayName === "string" ? value.displayName : id,
+    description: typeof value.description === "string" ? value.description : "",
+    outputContract: typeof value.outputContract === "string" ? value.outputContract : "",
+    dataNeeds: stringList(value.dataNeeds),
+    actions: stringList(value.actions),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 // ---- Second specialist: content creator ------------------------------------
 
 export interface CreatorDraftVersion {
@@ -175,19 +281,15 @@ export async function requestContentDraft(
   focus: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<CreatorDraftState> {
-  const root = baseUrl.replace(/\/+$/, "");
   try {
-    const res = await fetchImpl(
-      `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/content-creator/draft`,
-      {
-        method: "POST",
-        headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
-        body: JSON.stringify({
-          kind,
-          ...(focus.trim() === "" ? {} : { focus: focus.trim() }),
-        }),
-      },
-    );
+    const res = await fetchImpl(agentRunUrl(baseUrl, workspaceId, creatorAgentId), {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify({
+        kind,
+        ...(focus.trim() === "" ? {} : { focus: focus.trim() }),
+      }),
+    });
     if (!res.ok) {
       const detail = await res.json().catch(() => null);
       const message =

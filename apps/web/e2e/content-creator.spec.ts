@@ -26,10 +26,40 @@ test("content creator saves a draft, refreshes content and offers human review",
   };
   let created = false;
   let contentReads = 0;
+  const agentDescriptors = [
+    {
+      id: "search_gap_writer",
+      version: "1",
+      displayName: "Search-gap writer",
+      description: "Drafts one piece aimed at a real Search Console demand gap, for review.",
+      outputContract: "drafting",
+      dataNeeds: ["search_console"],
+      actions: ["file_draft"],
+    },
+    {
+      id: "content_creator",
+      version: "1",
+      displayName: "Content creator",
+      description: "Composes original drafts for review.",
+      outputContract: "drafting",
+      dataNeeds: [],
+      actions: ["file_draft"],
+    },
+    {
+      id: "seo_specialist",
+      version: "1",
+      displayName: "SEO advisor",
+      description: "Advisory-only organic search review.",
+      outputContract: "advisory",
+      dataNeeds: ["search_console"],
+      actions: [],
+    },
+  ];
+
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let json: unknown;
-    if (path.endsWith("/agents/content-creator/draft")) {
+    if (path.endsWith("/agents/content_creator/run")) {
       expect(route.request().method()).toBe("POST");
       expect(route.request().postDataJSON()).toEqual({ kind: "snippet", focus: "Winter care" });
       created = true;
@@ -55,9 +85,10 @@ test("content creator saves a draft, refreshes content and offers human review",
     else if (path.endsWith("/campaigns")) json = { campaigns: [] };
     else if (path.endsWith("/leads")) json = { leads: [] };
     else if (path.endsWith("/adapters")) json = { adapters: [] };
+    else if (path.endsWith("/agents")) json = { agents: agentDescriptors };
     else if (path.endsWith(`/workspaces/${workspace.id}`)) json = { workspace, brand: null };
     else throw new Error(`Unexpected API request: ${path}`);
-    await route.fulfill({ status: path.endsWith("/draft") ? 201 : 200, json });
+    await route.fulfill({ status: path.endsWith("/run") ? 201 : 200, json });
   });
   await page.goto(`/workspaces/${workspace.id}`);
   const creator = page.getByRole("region", { name: "Content creator (agent draft)" });

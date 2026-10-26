@@ -18,8 +18,8 @@ import (
 // per IP. This prevents accidental runaway calls while never impeding normal
 // single-operator use.
 const (
-	defaultAIRateLimit   = 20
-	defaultAIRateWindow  = time.Minute
+	defaultAIRateLimit  = 20
+	defaultAIRateWindow = time.Minute
 )
 
 // HealthChecker is implemented by *health.Service.
@@ -56,10 +56,12 @@ type Deps struct {
 	GenerateTimeout time.Duration
 
 	// AgentRunner transports specialist prompts (agents.PromptRun); nil makes
-	// the advisory route answer 501. The loader supplies the workspace's own
-	// authorized Search Console snapshot, or nil for advisory/no-data mode.
+	// the run route answer 501. Agents is the registry of enabled specialists
+	// (a default registry is built when absent); AgentLoaders answers each
+	// declared data need with the workspace's own authorized snapshot.
 	AgentRunner  agents.PromptRun
-	GSCLoader    GSCLoader
+	Agents       *agents.Registry
+	AgentLoaders map[string]AgentSnapshotLoader
 	AgentTimeout time.Duration
 
 	// AIRateLimit / AIRateWindow set the per-IP cap on AI/agent endpoints.
@@ -106,14 +108,16 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/publish", publishWorkspaceContentHandler(d.Workspaces, d.CredentialKey, d.Integrations, d.SanityOpsBase, d.HTTPClient))
 	mux.Handle("POST /api/v1/workspaces/{id}/content/generate",
 		aiLimiter.Middleware(http.HandlerFunc(generateWorkspaceContentHandler(d.Workspaces, d.AIGenerator, d.GenerateTimeout))))
-	// Agency Agents milestone: the first curated specialist (SEO advisor).
-	// Advisory-only, workspace-scoped; nil runner answers 501.
-	mux.Handle("POST /api/v1/workspaces/{id}/agents/seo/advisory",
-		aiLimiter.Middleware(http.HandlerFunc(seoAdvisoryHandler(d.Workspaces, d.AgentRunner, d.GSCLoader, d.AgentTimeout))))
-	// Second curated specialist: content creator. Files a draft into the
-	// existing approval workflow; nil runner answers 501.
-	mux.Handle("POST /api/v1/workspaces/{id}/agents/content-creator/draft",
-		aiLimiter.Middleware(http.HandlerFunc(contentCreatorDraftHandler(d.Workspaces, d.AgentRunner, d.AgentTimeout))))
+	// Agency Agents: one set of routes for every registered specialist, each
+	// behind the same AI rate limit. Nil runner answers 501; unknown agents
+	// answer 404.
+	if d.Agents == nil {
+		d.Agents = agents.NewDefaultRegistry()
+	}
+	mux.HandleFunc("GET /api/v1/agents", listAgentsHandler(d.Agents))
+	mux.Handle("POST /api/v1/workspaces/{id}/agents/{agentId}/run",
+		aiLimiter.Middleware(http.HandlerFunc(workspaceAgentRunHandler(
+			d.Workspaces, d.Agents, d.AgentRunner, d.AgentLoaders, d.AgentTimeout))))
 	// Campaigns and leads (Milestone 11); workspace-scoped throughout.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/campaigns", listWorkspaceCampaignsHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/campaigns", createWorkspaceCampaignHandler(d.Workspaces))

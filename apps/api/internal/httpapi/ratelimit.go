@@ -8,8 +8,7 @@
 //
 // Only expensive endpoints are throttled:
 //   - POST .../content/generate  (AI draft generation)
-//   - POST .../agents/seo/advisory  (AI agent run)
-//   - POST .../agents/content-creator/draft  (AI agent run)
+//   - POST .../agents/{agentId}/run  (specialist agent run)
 //
 // All other endpoints are unaffected.
 package httpapi
@@ -30,8 +29,8 @@ type RateLimiter struct {
 }
 
 type rateBucket struct {
-	count     int
-	resetAt   time.Time
+	count   int
+	resetAt time.Time
 }
 
 // NewRateLimiter creates a limiter that allows at most limit requests per

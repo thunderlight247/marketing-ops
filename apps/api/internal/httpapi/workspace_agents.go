@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -25,8 +23,7 @@ const (
 	gscFetchTimeout = 30 * time.Second
 	// Advisory data window: enough page+query rows for cannibalization
 	// without shipping the whole workspace to the model.
-	gscWindowDays    = 28
-	maxPayloadAgents = 4 * 1024
+	gscWindowDays = 28
 )
 
 // GSCLoader supplies the authorized Search Console snapshot of exactly one
@@ -45,8 +42,8 @@ type gscAdvisoryLoader struct {
 	key []byte
 }
 
-// NewGSCAdvisoryLoader builds the Search Console snapshot loader used by the
-// advisory route. Exported for cmd wiring; tests inject fakes instead.
+// NewGSCAdvisoryLoader builds the Search Console snapshot loader behind the
+// "search_console" data need. Exported for cmd wiring; tests inject fakes.
 func NewGSCAdvisoryLoader(ws WorkspaceStore, key []byte) GSCLoader {
 	return &gscAdvisoryLoader{ws: ws, key: key}
 }
@@ -190,125 +187,6 @@ func safeGSCCause(err error) string {
 		return gerr.Error()
 	}
 	return err.Error()
-}
-
-// POST /api/v1/workspaces/{id}/agents/seo/advisory runs the first curated
-// specialist (SEO advisor) for one workspace and returns its validated,
-// advisory-only report. It never edits content, publishes, or schedules:
-// follow-up actions are always human decisions through existing flows.
-func seoAdvisoryHandler(ws WorkspaceStore, runner agents.PromptRun, loader GSCLoader, timeout time.Duration) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if ws == nil {
-			writeJSONError(w, http.StatusNotImplemented, workspaceUnavailable)
-			return
-		}
-		if runner == nil {
-			writeJSONError(w, http.StatusNotImplemented, "agent specialists are not configured on this server")
-			return
-		}
-		workspaceID := r.PathValue("id")
-		workspace, err := ws.GetWorkspaceByID(r.Context(), workspaceID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeJSONError(w, http.StatusNotFound, "no such workspace")
-			} else {
-				writeJSONError(w, http.StatusInternalServerError, "workspace lookup failed")
-			}
-			return
-		}
-		// A workspace without a saved brand profile is still reviewable; the
-		// specialist just gets less context.
-		brand, err := ws.GetBrandProfile(r.Context(), workspaceID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			writeJSONError(w, http.StatusInternalServerError, "brand profile lookup failed")
-			return
-		}
-
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadAgents+1))
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "could not read the request body")
-			return
-		}
-		if len(body) > maxPayloadAgents {
-			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body is too large")
-			return
-		}
-		var req struct {
-			Focus *string `json:"focus"`
-		}
-		if len(body) > 0 {
-			if err := json.Unmarshal(body, &req); err != nil {
-				writeJSONError(w, http.StatusBadRequest, "request body is not valid JSON")
-				return
-			}
-		}
-		focus := trim(req.Focus)
-		if runeCount(focus) > maxGenerateInstrRunes {
-			writeJSONError(w, http.StatusBadRequest, "focus is too long (max 2000 characters)")
-			return
-		}
-
-		if timeout <= 0 {
-			timeout = defaultAgentTimeout
-		}
-		runCtx, cancel := context.WithTimeout(r.Context(), timeout)
-		defer cancel()
-
-		var snapshot *agents.GSCSnapshot
-		dataNote := "Search Console data loading is not configured on this server"
-		if loader != nil {
-			snapshot, dataNote, err = loader.LoadSnapshot(r.Context(), workspaceID)
-			if err != nil {
-				// Loader failures degrade to the no-data mode, matched with
-				// the specialist's own gate.
-				snapshot, dataNote = nil, "Search Console data could not be loaded for this workspace"
-			}
-		}
-
-		advisor := agents.SEOAdvisor{}
-		runStarted := time.Now()
-		report, agentErr := advisor.Advise(runCtx, runner, agents.AgentInput{
-			Workspace: workspaceContext(workspace, brand),
-			GSC:       snapshot,
-			Focus:     focus,
-		})
-		runDuration := time.Since(runStarted)
-		if agentErr != nil {
-			audit(r.Context(), ws, store.AuditEvent{
-				WorkspaceID: &workspaceID,
-				Action:      "agent.seo.advisory.failed",
-				Details: map[string]any{
-					"agent_id":      advisor.ID(),
-					"agent_version": advisor.Version(),
-					"reason_kind":   safeFailureKind(agentErr),
-				},
-			})
-			writeJSONError(w, http.StatusBadGateway, agentErr.Error())
-			return
-		}
-
-		if dataNote == "" {
-			dataNote = "Search Console page+query rows included"
-		}
-		audit(r.Context(), ws, store.AuditEvent{
-			WorkspaceID: &workspaceID,
-			Action:      "agent.seo.advisory.completed",
-			Details: map[string]any{
-				"agent_id":        report.AgentID,
-				"agent_version":   report.Version,
-				"provider":        report.Provider,
-				"model":           report.Model,
-				"data_source":     report.DataSource,
-				"recommendations": len(report.Recommendations),
-				"gaps":            len(report.Gaps),
-			},
-		})
-		writeJSON(w, http.StatusOK, map[string]any{
-			"report":     report,
-			"dataNote":   dataNote,
-			"durationMs": runDuration.Milliseconds(),
-		})
-	}
 }
 
 // safeFailureKind keeps the audit row scalar and secret-free.

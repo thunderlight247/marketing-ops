@@ -33,7 +33,7 @@ const (
 
 var slugReCreator = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-// ContentPlan is the validated output of one content-creator run. It is a
+// ContentPlan is the validated output of one drafting-specialist run. It is a
 // draft: the platform never publishes from an agent run, it can only create or
 // update a draft content item that the existing approval workflow then gates.
 type ContentPlan struct {
@@ -50,6 +50,10 @@ type ContentPlan struct {
 	KeyPoints    []string  `json:"keyPoints"`
 }
 
+// targetQueryKeyPointPrefix marks the draft's chosen Search Console query, so
+// the operator sees exactly which real query a data-informed piece targets.
+const TargetQueryKeyPointPrefix = "Target query: "
+
 // ContentCreator composes original drafts (blog articles, social posts,
 // snippets) for one workspace, in the brand's tone, inside the workspace's
 // prohibited-claims list. Like every specialist it is bounded: no invented
@@ -59,6 +63,33 @@ type ContentCreator struct{}
 // ID and Version report the profile identity recorded in task history.
 func (ContentCreator) ID() string      { return ContentCreatorID }
 func (ContentCreator) Version() string { return ContentCreatorVersion }
+
+// DisplayName and Description are the dashboard-facing identity of this
+// curated profile.
+func (ContentCreator) DisplayName() string { return "Content creator" }
+func (ContentCreator) Description() string {
+	return "Composes original draft content pieces in the brand's voice, for review in the approval workflow."
+}
+
+// OutputContract, WantsData, and AllowedActions declare the governance facts
+// of this specialist: drafting output filed via the file_draft executor, and
+// no external data needs.
+func (ContentCreator) OutputContract() string   { return ContractDrafting }
+func (ContentCreator) WantsData() []string      { return nil }
+func (ContentCreator) AllowedActions() []string { return []string{ActionFileDraft} }
+
+// Run dispatches one drafting pass. The file_draft executor is applied after
+// the run, by the route; this method only produces the validated plan.
+func (c ContentCreator) Run(ctx context.Context, run PromptRun, input RunInput) (RunOutput, error) {
+	plan, err := c.Create(ctx, run, AgentInput{
+		Workspace: input.Workspace,
+		Focus:     input.Focus,
+	})
+	if err != nil {
+		return RunOutput{}, err
+	}
+	return RunOutput{Plan: &plan}, nil
+}
 
 // Create runs one drafting pass: build the bounded prompt, transport it via
 // the provider, then validate the reply before it reaches an operator.
@@ -71,7 +102,7 @@ func (c ContentCreator) Create(ctx context.Context, run PromptRun, input AgentIn
 	if err != nil {
 		return ContentPlan{}, err
 	}
-	plan, err := c.validateReply(reply)
+	plan, err := planFromReply(reply, nil)
 	if err != nil {
 		return ContentPlan{}, err
 	}
@@ -132,7 +163,9 @@ func (c ContentCreator) buildUserPrompt(input AgentInput) string {
 	return out.String()
 }
 
-// creatorReplyShape mirrors the JSON the system prompt demands.
+// creatorReplyShape mirrors the JSON the drafting system prompts demand: the
+// plan fields plus the optional, honesty-checked target query. Shared by
+// every drafting specialist.
 type creatorReplyShape struct {
 	Title        string   `json:"title"`
 	Slug         string   `json:"slug"`
@@ -140,16 +173,37 @@ type creatorReplyShape struct {
 	Body         string   `json:"body"`
 	CallToAction string   `json:"callToAction"`
 	KeyPoints    []string `json:"keyPoints"`
+	TargetQuery  string   `json:"targetQuery,omitempty"`
 }
 
-// validateReply enforces the prompt contract on every field before the plan
-// can become a draft.
-func (c ContentCreator) validateReply(reply aiprovider.PromptReply) (ContentPlan, error) {
+// planFromReply turns raw provider text into a validated ContentPlan for any
+// drafting specialist.
+//
+// The data-honesty rule is enforced once, here, not per agent: a run that
+// received Search Console rows may name a target query only if it is verbatim
+// from those rows (and it is recorded as the first key point so the operator
+// sees the basis); a run without rows must not name any query.
+func planFromReply(reply aiprovider.PromptReply, rows *GSCSnapshot) (ContentPlan, error) {
 	var parsed creatorReplyShape
 	if err := json.Unmarshal(extractJSONObject([]byte(reply.Text)), &parsed); err != nil {
 		return ContentPlan{}, &aiprovider.ProviderError{
 			Kind:  aiprovider.FailMalformed,
-			Cause: "the creator reply could not be structured into a draft",
+			Cause: "the drafting reply could not be structured into a plan",
+		}
+	}
+
+	target := strings.TrimSpace(parsed.TargetQuery)
+	switch {
+	case rows == nil && target != "":
+		// The reply was given no rows; claiming a query is a factual error.
+		return ContentPlan{}, &aiprovider.ProviderError{
+			Kind:  aiprovider.FailMalformed,
+			Cause: "the drafting reply named a Search Console query that was not provided to the run",
+		}
+	case rows != nil && !rows.containsQuery(target):
+		return ContentPlan{}, &aiprovider.ProviderError{
+			Kind:  aiprovider.FailMalformed,
+			Cause: "the drafting reply's target query is not among the provided Search Console rows",
 		}
 	}
 
@@ -164,7 +218,7 @@ func (c ContentCreator) validateReply(reply aiprovider.PromptReply) (ContentPlan
 	if plan.Title == "" || plan.Body == "" {
 		return ContentPlan{}, &aiprovider.ProviderError{
 			Kind:  aiprovider.FailMalformed,
-			Cause: "the creator reply was missing the draft title or body",
+			Cause: "the drafting reply was missing the draft title or body",
 		}
 	}
 	if plan.Slug != "" && !slugReCreator.MatchString(plan.Slug) {
@@ -182,6 +236,15 @@ func (c ContentCreator) validateReply(reply aiprovider.PromptReply) (ContentPlan
 			break
 		}
 	}
+	if target != "" {
+		// The operator's evidence line comes first; the newest summary point
+		// is dropped if the list would exceed its cap.
+		marker := truncateRunes(TargetQueryKeyPointPrefix+target, maxKeyPointRunes)
+		if len(points) == maxKeyPoints {
+			points = points[:maxKeyPoints-1]
+		}
+		points = append([]string{marker}, points...)
+	}
 	plan.KeyPoints = points
 
 	metadata := map[string]any{}
@@ -193,4 +256,19 @@ func (c ContentCreator) validateReply(reply aiprovider.PromptReply) (ContentPlan
 	plan.Provider = stringFromMetadata(metadata, "provider")
 	plan.Model = stringFromMetadata(metadata, "model")
 	return plan, nil
+}
+
+// containsQuery reports whether q appears verbatim among the snapshot's
+// page+query rows. Empty queries never match, so a plan cannot claim
+// "targeting nothing" as data-informed.
+func (s *GSCSnapshot) containsQuery(q string) bool {
+	if strings.TrimSpace(q) == "" {
+		return false
+	}
+	for _, row := range s.PageQueries {
+		if row.Query == q {
+			return true
+		}
+	}
+	return false
 }

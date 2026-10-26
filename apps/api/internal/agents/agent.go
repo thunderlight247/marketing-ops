@@ -131,6 +131,34 @@ type SEOAdvisor struct{}
 func (SEOAdvisor) ID() string      { return SEOAdvisorID }
 func (SEOAdvisor) Version() string { return SEOAdvisorVersion }
 
+// DisplayName and Description are the dashboard-facing identity of this
+// curated profile.
+func (SEOAdvisor) DisplayName() string { return "SEO advisor" }
+func (SEOAdvisor) Description() string {
+	return "Evidence-based, advisory-only organic search review of one workspace."
+}
+
+// OutputContract, WantsData, and AllowedActions declare the governance facts
+// of this specialist: advisory-only output, Search Console snapshots when a
+// loader is configured, and no executable actions.
+func (SEOAdvisor) OutputContract() string   { return ContractAdvisory }
+func (SEOAdvisor) WantsData() []string      { return []string{DataNeedSearchConsole} }
+func (SEOAdvisor) AllowedActions() []string { return nil }
+
+// Run dispatches one advisory pass, unpacking only the declared data need.
+func (s SEOAdvisor) Run(ctx context.Context, run PromptRun, input RunInput) (RunOutput, error) {
+	snapshot, _ := input.Data[DataNeedSearchConsole].(*GSCSnapshot)
+	report, err := s.Advise(ctx, run, AgentInput{
+		Workspace: input.Workspace,
+		GSC:       snapshot,
+		Focus:     input.Focus,
+	})
+	if err != nil {
+		return RunOutput{}, err
+	}
+	return RunOutput{Report: &report}, nil
+}
+
 // Advise runs one advisory pass: build the bounded prompt, transport it via
 // the provider, then validate the reply before it is shown to anyone.
 func (s SEOAdvisor) Advise(ctx context.Context, run PromptRun, input AgentInput) (AdvisorReport, error) {

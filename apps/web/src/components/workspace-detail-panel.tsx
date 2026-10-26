@@ -8,6 +8,7 @@ import { WorkspaceIntegrationsSection } from "@/components/workspace-integration
 import { WorkspaceCampaignsSection } from "@/components/workspace-campaigns-section";
 import { WorkspaceReportsSection } from "@/components/workspace-reports-section";
 import { WorkspaceSeoAdvisorSection } from "@/components/workspace-seo-advisor-section";
+import { WorkspaceAgentsSection } from "@/components/workspace-agents-section";
 import { WorkspaceContentCreatorSection } from "@/components/workspace-content-creator-section";
 import {
   deleteWorkspace,
@@ -426,6 +427,8 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
       <WorkspaceReportsSection workspaceId={workspace.id} />
 
       <WorkspaceSeoAdvisorSection workspaceId={workspace.id} />
+
+      <WorkspaceAgentsSection />
 
       <section
         aria-labelledby="danger-zone-heading"

@@ -186,7 +186,11 @@ func (s StubProvider) RunPrompt(ctx context.Context, req RunPromptRequest) (Prom
 		return PromptReply{}, &ProviderError{Kind: FailEmpty, Cause: "empty prompt"}
 	}
 
-	if strings.HasPrefix(req.System, "You are the internal content creator ") {
+	if strings.HasPrefix(req.System, "You are the internal content creator ") ||
+		strings.HasPrefix(req.System, "You are the internal search-gap writer ") {
+		// The stub never names a target query: it cannot honestly confirm a
+		// query from rows it does not read, and planFromReply enforces exactly
+		// that (leaving it empty is valid in no-data runs).
 		encoded, err := json.Marshal(map[string]any{
 			"title":        "[Stub] Content draft for review",
 			"slug":         "stub-content-draft",

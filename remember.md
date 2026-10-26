@@ -960,6 +960,8 @@ Treat this as a cross-cutting extension, not a replacement for the original mile
 
 Do not restart the platform around an agent framework. Do not grant the specialist tools or permissions beyond its documented purpose. Keep its recommendations distinguishable from executed actions.
 
+**Later direction (26 October 2026):** the user expanded this from a single advisory specialist to a broader agency-style agent layer inside the platform. See Part VI, section 15.
+
 ---
 
 ## 6. Multi-client Meta account authorization
@@ -1246,9 +1248,195 @@ If a change to one of these decisions appears necessary, explain the reason and 
 
 ---
 
-## 14. Immediate handover summary
+# Part VI — Agent agency and social-first posting direction
+
+## 15. Approved direction (recorded 26 October 2026)
+
+The user approved the following platform direction. All of it is to be built **on top of what already exists** — the adapter contract, integration registry, approval pipeline, scheduler, publish worker, and audit trail are the foundation; nothing here is a rewrite.
+
+### A. Agency-style agent layer inside the platform
+
+The agency-agents concept (`msitarzewski/agency-agents`) moves from one advisory specialist (SEO, section 5) to an integrated agent layer the site itself uses. Relevant specialist roles include marketing, project management, and testing, plus any other role that aligns with the platform's purpose.
+
+Implementation rules:
+
+1. Specialists are **curated internal prompt profiles** on the existing provider abstraction (as the SEO Specialist was), not vendored crates of the upstream repository. No separate agent runtime or framework dependency is introduced.
+2. Recommended operating model: **advisory + limited actions**. Specialists generate guidance and drafts; a defined, explicitly enumerated set of *in-platform* actions (e.g. create a draft, propose content for approval, open a scheduled-publish job) may be executed directly. Anything client-facing or destructive still requires human approval.
+3. Every agent action — advisory or executed — is recorded in the audit trail, and agent-produced content remains distinguishable from operator actions.
+4. The enumerated action set is a design decision per specialist; it is documented here when added and never expanded silently.
+5. New specialists reuse the existing route shape (`/api/v1/workspaces/{id}/agents/...`), typed frontend clients, and persona/test conventions established by the SEO extension.
+
+#### A.1 Agent-layer registry design (recorded 26 October 2026)
+
+The design that turns section 15 A into pluggable agency agents, grounded in the existing implementation (`internal/agents` `SEOAdvisor` + `ContentCreator`, duplicated `seoAdvisoryHandler`/`contentCreatorDraftHandler` routes, per-specialist web clients). Generalizing rule: every existing security property of the two specialists stays — bounded context only, validated replies, advisory-only unless an explicitly registered action class, no secrets in prompts, per-run audit.
+
+`internal/agents` package:
+
+1. New `Specialist` interface replaces per-struct conventions:
+   - `ID()`, `Version()`, `DisplayName()`, `Description()` — identity, shown in the UI and audit rows.
+   - `OutputContract()` — closed set: `"advisory"` (→ validated `AdvisorReport`) or `"drafting"` (→ validated `ContentPlan`). Extended only by documenting a new validated output contract here first.
+   - `WantsData()` — declares which authorized data snapshots the run consumes (`"search_console"` first). Anything not declared must not reach the prompt.
+   - `Run(ctx, PromptRun, SpecialistInput) (RunOutput, error)` — one bounded pass; `SpecialistInput{Workspace, Focus, Data}` carries only declared snapshots; the specialist never sees stores, credentials, or request plumbing.
+2. New `Registry` (same conventions as `integration.Registry`): `Register` (rejects duplicate IDs), `Get`, `ListDescriptors` (sorted: id, version, display name, description, output contract, declared data needs, allowed action classes), `NewDefaultRegistry` registering `seo_specialist` and `content_creator` unchanged in behavior.
+3. `SnapshotLoader` registry keyed by data need (`"search_console"` → the existing GSC loader). New loaders (e.g. campaigns/leads summaries for a project-manager specialist) register without touching handlers.
+
+HTTP layer:
+
+4. One generic dispatch, replacing per-specialist handlers:
+   - `GET /api/v1/agents` — descriptor list for the web agents panel.
+   - `POST /api/v1/workspaces/{id}/agents/{agentId}/run` — unknown agent → 404; runner not configured → 501; else the shared pipeline: payload/focus caps → workspace + brand context → declared-snapshot loaders (failures degrade to no-data with a note) → timeout → run → audit (`agent.run.completed` / `agent.run.failed` with agent_id, version, provider, model, data_source, output stats, reason_kind) → `{agent, report?|plan?, dataNote, durationMs}`.
+   - The existing two routes migrate to the generic handler in one release (web client and tests updated together); no dual-route period.
+5. Same AI rate-limit middleware guards the generic route.
+
+Governance (the "advisory + limited actions" rule made executable):
+
+6. Allowed action classes are a closed set on the registry descriptor (`advisory_only`, then `file_draft`, later e.g. `open_publish_job`). A specialist's scheme output may propose actions; a dedicated `ActionExecutor` (not the model) validates payloads and executes only classes listed for that agent, through the store, each class audited as `agent.action.<class>`. Executing an undeclared class is refused and audited. `file_draft` is the first executor action (the existing content-creator draft filing path, unchanged).
+
+Web:
+
+7. `lib/agents.ts` grows a registry client (`fetchAgentRegistry`, generic `requestAgentRun`) with strict per-contract response parsing; the existing SEO advisory function becomes a thin wrapper on it. A generic specialists section renders from descriptors, reusing the existing report and plan result views.
+
+Increment sequence:
+
+1. API registry + generic route with the two existing specialists migrated (behavior-preserving).
+2. Web generic agents panel.
+3. First new specialists (marketing, project management, testing roles for section 15 A) as curated profiles over registered data loaders — no framework change per agent.
+4. Action executor classes beyond `file_draft`, each designed, listed in a descriptor, and recorded here before implementation.
+
+Guardrails carried into the design: duplicate registration is an error; changing a specialist's prompt requires a version bump; input/output caps stay per contract; audit rows stay scalar and secret-free; no agent ever receives channel credentials.
+
+
+### B. Visible, automatic social posting
+
+Social media posting becomes a first-class, visible flow in the dashboard:
+
+1. An operator composes a post once and targets one or more connected social channels.
+2. The post can be published immediately or scheduled.
+3. After approval (see C), the background worker delivers it automatically to each connected channel at its due time — no one needs to keep a browser open.
+4. Per-channel job and outcome records are visible to the operator: scheduled, running, delivered, failed, awaiting-retry, plus the permalink/external ID of the delivered post.
+5. Delivery always goes through the existing publishing-job pipeline and one adapter per channel, preserving idempotency, retry/backoff, and reconnection flagging per channel.
+
+### C. Automatic-posting decision
+
+**Recorded decision:** "automatic posting" means fully unattended delivery **after approval**. Every social post passes the existing human-approval gate before scheduling; once approved and scheduled, the worker posts without further involvement. The recorded approval-gating decision is unchanged.
+
+### D. Social channel set
+
+The existing channels (Meta/Facebook, Instagram via Meta, YouTube) are kept. The next adapters to build are:
+
+1. **X** (formerly Twitter)
+2. **LinkedIn**
+3. **TikTok**
+
+Each is implemented as a provider under the existing adapter contract (capability detection, credential encryption at rest, connection check diagnostics, idempotent writes — each provider's own idempotency semantics assessed separately), with OAuth-based onboarding for the channels that require it.
+
+### First increment: X (Twitter) adapter + web flow (recorded 26 October 2026)
+
+The first social-increment per section 15 is implemented. The X (Twitter) channel now works through the existing adapter contract with no changes to the publish pipeline, approvals, scheduler, or worker.
+
+API (`apps/api`):
+
+- `internal/integration/x.go` — new X adapter (`kind: "x"`, display name "X (Twitter)") on the same pattern as Meta:
+  - Connection check is read-only: `GET /2/users/me` with the saved token, under the default base `https://api.x.com/2`.
+  - Credentials: one OAuth 2.0 user access token (`accessToken`), sent in the Authorization header only, never in URLs.
+  - Publishing: approval-gated `POST /2/tweets` with `tweet.write` scope; no destination-side draft (the shared `ErrNoDestinationDraft` sentinel). Post text comes from the `x` channel copy with title/excerpt fallback, an optional `postLinkPrefix` config tags the article link (prefix + slug), and the whole text is truncated to the documented 280-character cap.
+  - Duplicate prevention mirrors Facebook: the account's recent tweets are scanned read-only and an exact text match is reused instead of re-posting; a failed identity read skips the scan without blocking the publish.
+  - Error classification: 401 → `token_expired` (operator-safe message, reconnection instruction), 403 forbidden, 429 rate-limited, 5xx unavailable, others validation. Diagnostics never echo the token.
+  - The resulting status URL (`https://x.com/{handle}/status/{id}`) is recorded as the artifact URL.
+- `internal/integration/registry.go` — `XAdapter` and `XPublisherAdapter` registered in the default registry, so the capability check endpoint, publish endpoint, scheduler, and background worker all serve the new kind without further wiring.
+- `internal/integration/publisher.go` — `PublisherNeedsReconnection` now also treats a rejected/expired X token as a credential problem (flagged for reconnection like Meta/YouTube/Sanity).
+- Tests: `internal/integration/x_test.go` — fake-server contract tests: read-only check (token missing → limited, connected diagnostic naming handle + scope, rejected token → error with no token echo, server body never surfaced verbatim), publisher validation, draftless sentinel, request shape (JSON body, Bearer auth), duplicate reuse with zero writes, title/excerpt fallback, empty-message validation, 280-rune truncation, 401→`token_expired`→reconnection mapping, network failure not a reconnection problem.
+
+Web (`apps/web`):
+
+- `src/components/workspace-integrations-section.tsx` — X appears in the connect form (optional article link prefix), credentials payload saves the token as `accessToken` (previously it would have fallen through to the generic `apiKey` key), and the credentials label/hint describe the X token correctly.
+- `src/components/draft-editor.tsx` — the social publish picker (`meta`/`youtube`/`x`) includes X integrations, so operators can publish now or schedule a tweet through the existing approval-gated flow; per-channel job/outcome records appear in the existing jobs panel.
+
+Verification level (per the section 8 policy):
+
+1. **Implemented / unit + contract tested:** all Go packages build, vet, and pass (`go test ./internal/... -count=1`, integration package including the new fake-server contract tests, with `gofmt -s` clean and store/integration database-backed tests re-run). Web: typecheck clean, all 171 Vitest tests pass, ESLint clean, Prettier clean on the edited files.
+2. **Not yet verified and not claimed:** no live X account, no real tweet, and no real public page were exercised. External verification should follow the recorded controlled-test pattern (a clearly identified test post on an authorized account) before any "live posting" claim. Reuse the M15/Meta caution: a local duplicate scan is not proof a retried delivery cannot duplicate a post when the provider accepted a request whose response was lost.
+
+Only X is built; LinkedIn and TikTok remain planned under section 15 D, following this same adapter pattern. The general agent layer of section 15 A is still planned, not started.
+
+Separate observation: `npx prettier --check src` reports 15 pre-existing web files with formatting drift (excluding this increment's edits); they were left untouched to keep this change scoped.
+
+### Status
+
+Direction approved. Implemented: the X channel increment and the agent-layer registry increments 1–3 (below). Designed, not implemented: the LinkedIn/TikTok channels (section D below). Each future increment is recorded here with the evidence level it reached.
+
+---
+
+## 15.2 Agent-layer registry — increment 1 implemented (recorded 26 October 2026)
+
+Per section A.1, the API-side pluggable agent layer is implemented for both existing specialists, strictly behavior-preserving for callers except the two documented renames below.
+
+`internal/agents/registry.go` (new):
+
+- `Specialist` interface: `ID/Version/DisplayName/Description`, `OutputContract()`, `AllowedActions()`, `WantsData()`, and one bounded `Run(ctx, PromptRun, RunInput)` where `RunInput{Workspace, Focus, Data}` carries only declared snapshots and `RunOutput` unions `*AdvisorReport`/`*ContentPlan`.
+- `Registry` with `Register` (duplicate ID is an error), `Get`, sorted `ListDescriptors`, `NewDefaultRegistry` (both built-ins registered; built-in registration failure is a panic, i.e. a programming error).
+- Governance is executable: `Register` rejects unknown contracts, contracts must be one of `advisory` (zero actions) or `drafting` (exactly `file_draft`), and declared data needs/actions must be known names. Closed sets: contracts `advisory|drafting`, action `file_draft`, data need `search_console`.
+
+Migration of the specialists (behavior-identical): `SEOAdvisor` and `ContentCreator` keep `Advise`/`Create` (still used by package tests) and gained `Run` methods plus the dashboard-facing metadata; validation, field caps, and the GSC data-honesty gate are untouched.
+
+`internal/httpapi` (per-specialist handlers deleted):
+
+- `GET /api/v1/agents` — descriptor list for the agents panel (200 even before a runner is configured).
+- `POST /api/v1/workspaces/{id}/agents/{agentId}/run` — the single shared pipeline: unknown agent → 404; store/runner unconfigured → 501; payload cap (8 KiB) and 2000-rune focus cap; workspace + brand context (missing brand tolerated); declared data loaders only (the GSC loader behind `AdaptGSCLoader`, missing/failed loads degrade to no-data with a note — same note strings); run timeout; contract check on the output; audit events `agent.run.failed` / `agent.run.completed` (scalar, secret-free details); advisory contract → `{report, dataNote, durationMs}` 200, drafting contract → file_draft executor filing the draft with the legacy checks (kind validated and existing-item access/status/match checked **before** any model call) and the same 201 envelope `{item, version, provider, model, agentId, keyPoints, durationMs, slugSuggestion}`.
+- The two legacy routes (`/agents/seo/advisory`, `/agents/content-creator/draft`) do not exist anymore; unknown agent paths answer 404 (there is a regression test). The AI rate limiter now guards the generic run route.
+- `cmd/api/main.go` wires `AgentLoaders["search_console"]` from the workspace store when a database is configured.
+
+Web (`apps/web`): the two client functions keep their names/interfaces (components unchanged) but now hit the generic run path: `requestSeoAdvisory` → `.../agents/seo_specialist/run`, `requestContentDraft` → `.../agents/content_creator/run`. Vitest expectations and the Playwright content-creator stub updated to match.
+
+Documented renames (the only intentional caller-visible changes):
+
+1. Request/response shapes are unchanged, but audit action names changed: `agent.seo.advisory.*` → `agent.run.*` and `agent.content.draft.failed` → `agent.run.failed`; the drafting success action is now `agent.action.file_draft.completed` (was `agent.content.draft.created`), with the same details plus the action framing. Historical audit rows are unchanged.
+2. Non-`ProviderError` run failures now answer 502 with a fixed safe message ("the agent could not complete this run") for the advisory contract too; previously the advisory handler echoed `err.Error()` verbatim (the drafting handler already had the safe pattern).
+
+Verification level (section 8 policy): all Go packages build, vet, format, and pass `go test ./...`, including the migrated httpapi suite (no-data/prompt/GSC-snapshot/failure/negative cases), the migrated creator suite (draft filing, pre-run validation 400/413/404/409, failure-does-not-create-placeholder with unsafe-secret assertion, existing-item boundaries, offline stub), new registry unit tests (duplicate ID, capability gating, sorted descriptors), the unknown-agent/404 regression test, and the new `GET /api/v1/agents` test. Web: typecheck clean, 171/171 Vitest tests pass, ESLint clean, edited files Prettier-clean. Database-backed store tests were skipped in this environment (no `DATABASE_URL` configured); nothing in this increment touches the store schema. Not yet done at that point: first new specialist profiles (increment 3), action-executor classes beyond `file_draft` (increment 4).
+
+---
+
+## 15.3 Agent-layer registry — increment 2 implemented: the dashboard agents panel (recorded 26 October 2026)
+
+The registry itself did not change; this increment is web-only and consumes `GET /api/v1/agents` so a newly registered specialist appears in the dashboard with no further UI work.
+
+Web (`apps/web`):
+
+- `src/lib/agents.ts` — `fetchAgentRegistry(baseUrl)` returns `AgentsRegistryState` (`loading | available {agents} | unavailable {message}`) and parses `GET /api/v1/agents` strictly: the envelope must have an `agents` array and every descriptor must carry non-empty `id` and `version`; a single malformed entry rejects the whole list as "unavailable" with a safe message, never a partially parsed descriptor. Missing display strings only fall back to the id.
+- Format helpers `formatAgentContract`/`formatAgentDataNeed`/`formatAgentAction` map the registered capability names to operator-facing sentences ("Advisory only — returns a report, never edits", "Drafts into the human approval workflow", "Reads: Search Console data", "May file drafts in the approval workflow") and pass unknown names through verbatim.
+- `src/components/workspace-agents-section.tsx` (new) — an "Enabled agents (registry)" card on the workspace page, mounted in `workspace-detail-panel.tsx` below the SEO Advisor section: per agent it shows display name, stable id, version chip, description, contract sentence, and per-data-need/per-action sentences; loading/unavailable render as plain text; an empty registry renders nothing.
+- `e2e/content-creator.spec.ts` — the `/api/v1/**` route stub now answers `GET /api/v1/agents` with both built-in descriptors; without it the spec's "Unexpected API request" guard would throw.
+
+Verification level (section 8 policy, per the scope of this increment): web typecheck clean; 176/176 Vitest tests pass (14 files), including new `fetchAgentRegistry` cases (list parse, malformed descriptor entry, non-array envelope, fixed server-error/network-failure messages) and descriptor format-helper cases; ESLint clean; Prettier-clean on the files this increment created or touched. The previously recorded pre-existing formatting drift in other files (including `workspace-detail-panel.tsx`) was left untouched to keep the change scoped. No API/Go changes were needed; API suites remain as verified in increment 1. Not yet verified: a live browser session (no Playwright run executed in this environment). Not yet done at that point: first new specialist profiles (increment 3), action-executor classes beyond `file_draft` (increment 4).
+
+---
+
+## 15.4 Agent-layer registry — increment 3 implemented: the third specialist proves the add-one-agent claim (recorded 26 October 2026)
+
+The claim under test: a third agent costs a prompt profile + registration + declared data needs — no handler, no route, no loader, no store, no web client. Result: **confirmed.** The only files changed outside `internal/agents` are the offline stub branch and (test-only) assertions that counted exactly two agents.
+
+The new specialist (`apps/api/internal/agents/searchgapwriter.go`, new):
+
+- `SearchGapWriter` — id `search_gap_writer` v1, drafting contract, wants `search_console`, actions `{file_draft}`. It drafts one piece aimed at a real demand gap: among the provided Search Console page+query rows it targets the query where searchers saw the workspace most while clicking least, and never writes any metric into the prose. With no rows it drafts from the operator brief only and states the data basis in the excerpt.
+- Data honesty enforced once, for all drafting agents, in `internal/agents/contentcreator.go`: the shared plan validator is now `planFromReply(reply, rows)` (previously `ContentCreator.validateReply`, a private method). `creatorReplyShape` gained the optional `targetQuery` hook; a run without rows must not name any query, and a run with rows must name a query that is verbatim among the provided rows. A valid data-informed target query becomes the first key point ("Target query: …", exported const `TargetQueryKeyPointPrefix`), so the operator sees the evidence in the filed draft. `SearchGapWriter.Run` calls the validator with the loaded snapshot; `ContentCreator` still calls it with nil.
+- `registry.go` — `SearchGapWriter{}` added to `NewDefaultRegistry`. Nothing else changed in the registry or route code.
+
+`internal/aiprovider/aiprovider.go` — the offline stub's drafting branch now also matches system prompts starting "You are the internal search-gap writer "; it deliberately returns no `targetQuery` (it cannot honestly confirm a query from rows it does not read, and the validator makes an empty value legal in no-data runs). Consequence worth recording: in an offline-stub deployment **with** a connected real Search Console loader, the gap writer correctly fails closed (502, malformed data-claim) rather than inventing a query.
+
+Web: no client or component changes were needed — the agents panel lists the new descriptor automatically (increment 2 working as designed). The `content-creator` e2e route stub was updated to list all three descriptors so its "Unexpected API request" guard keeps matching the real registry.
+
+Tests: new `TestSearchGapWriterDataHonesty` (verbatim/provided query accepted; reworded, fabricated, missing-with-rows, and query-without-rows rejected), a no-data full-plan assertion in the agents-package tests' spirit plus identity check, `TestSearchGapWriterRunThroughGenericRoute` (201, honest no-data marker, drafting brief present, single `agent.action.file_draft.completed` audit, and the offline stub end-to-end), the registry test now expects three valid built-ins, and `GET /api/v1/agents` asserts the third descriptor.
+
+Verification level (section 8 policy): Go — full `go test ./...` passes (13 packages), `go vet` and `gofmt` clean; database-backed store tests remain skipped in this environment (no `DATABASE_URL`). Web — typecheck clean, 176/176 Vitest tests, ESLint clean, edited files Prettier-clean (no drift added). Not yet verified: a live Playwright session and any real model run of the new persona (via a real provider key and a connected Search Console integration). Not yet done: action-executor classes beyond `file_draft` (increment 4).
+
+---
+
+## 16. Immediate handover summary
 
 The project has progressed beyond its original foundation stage. The recorded work includes a provider-neutral publishing contract, a first Meta social-publishing increment, a scheduler/worker/retry increment, media support, a campaign-and-lead increment tested locally, and an SEO Specialist advisory extension.
+
+The approved forward direction (section 15) adds an agency-style agent layer and a visible, approval-gated automatic social-posting flow, with X, LinkedIn, and TikTok as the next channel adapters — all built on top of the existing architecture.
 
 However, the latest recorded status does not establish that every milestone is complete. In particular, live Meta publishing, a complete multi-client Meta OAuth lifecycle, live Sanity write/publish verification, live OAuth-backed Google Search Console data, full reporting, complete hardening, and the final pilot release still require verification or implementation unless the current repository shows that the work has since been completed.
 

@@ -107,6 +107,14 @@ func run() error {
 		Logger:      logger,
 	})
 
+	// Agency Agents: one registry of enabled specialists; each declared data
+	// need is answered by a read-only loader bound to the workspace store.
+	agentLoaders := map[string]httpapi.AgentSnapshotLoader{}
+	if workspaceStore != nil {
+		agentLoaders[agents.DataNeedSearchConsole] =
+			httpapi.AdaptGSCLoader(httpapi.NewGSCAdvisoryLoader(workspaceStore, cfg.CredentialKey))
+	}
+
 	srv := &http.Server{
 		Addr: cfg.Addr(),
 		Handler: httpapi.NewRouter(httpapi.Deps{
@@ -122,7 +130,8 @@ func run() error {
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,
 			AgentRunner:          agentRunner,
-			GSCLoader:            httpapi.NewGSCAdvisoryLoader(workspaceStore, cfg.CredentialKey),
+			Agents:               agents.NewDefaultRegistry(),
+			AgentLoaders:         agentLoaders,
 			AgentTimeout:         cfg.GenerateTimeout,
 			SanityOpsBase:        cfg.SanityOpsBase,
 		}),

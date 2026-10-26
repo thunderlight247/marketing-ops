@@ -17,7 +17,7 @@ func TestContentCreatorDraftWorkflow(t *testing.T) {
 	ws := workspaceDeps(nil, nil)
 	runner := &fakeAgentRunner{text: creatorReply}
 	h := NewRouter(Deps{Logger: testLogger, Workspaces: ws, AgentRunner: runner})
-	rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", `{"kind":"social_post","focus":"Winter maintenance"}`)
+	rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, "content_creator"), `{"kind":"social_post","focus":"Winter maintenance"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -45,7 +45,7 @@ func TestContentCreatorDraftWorkflow(t *testing.T) {
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "Winter care") {
 		t.Fatalf("draft not readable: %s", detail.Body.String())
 	}
-	if len(ws.auditEvents) != 1 || ws.auditEvents[0].Action != "agent.content.draft.created" {
+	if len(ws.auditEvents) != 1 || ws.auditEvents[0].Action != "agent.action.file_draft.completed" {
 		t.Fatalf("unexpected audit: %+v", ws.auditEvents)
 	}
 }
@@ -58,14 +58,14 @@ func TestContentCreatorRequestFailures(t *testing.T) {
 		{"bad JSON", `{`, 400},
 		{"bad kind", `{"kind":"podcast"}`, 400},
 		{"long focus", `{"focus":"` + strings.Repeat("x", 2001) + `"}`, 400},
-		{"oversize", strings.Repeat("x", contentCreatorMaxPayloadBytes+1), 413},
+		{"oversize", strings.Repeat("x", maxAgentPayloadBytes+1), 413},
 		{"missing item", `{"contentItemId":"missing"}`, 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := workspaceDeps(nil, nil)
 			runner := &fakeAgentRunner{text: creatorReply}
 			h := NewRouter(Deps{Logger: testLogger, Workspaces: ws, AgentRunner: runner})
-			rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", tc.body)
+			rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, "content_creator"), tc.body)
 			if rec.Code != tc.status {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}
@@ -84,14 +84,14 @@ func TestContentCreatorFailureDoesNotCreatePlaceholder(t *testing.T) {
 	} {
 		ws := workspaceDeps(nil, nil)
 		h := NewRouter(Deps{Logger: testLogger, Workspaces: ws, AgentRunner: runner})
-		rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", `{}`)
+		rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, "content_creator"), `{}`)
 		if rec.Code != 502 || strings.Contains(rec.Body.String(), "secret upstream") {
 			t.Fatalf("unsafe response: %d %s", rec.Code, rec.Body.String())
 		}
 		if len(ws.insertedContent) != 0 || len(ws.savedDrafts) != 0 {
 			t.Fatal("failed model run wrote content")
 		}
-		if len(ws.auditEvents) != 1 || ws.auditEvents[0].Action != "agent.content.draft.failed" {
+		if len(ws.auditEvents) != 1 || ws.auditEvents[0].Action != "agent.run.failed" {
 			t.Fatal("missing failure audit")
 		}
 	}
@@ -111,7 +111,7 @@ func TestContentCreatorExistingItemBoundaries(t *testing.T) {
 			ws.contentItemsByID = map[string]store.ContentItem{"item": {ID: "item", WorkspaceID: tc.workspace, Kind: "snippet", Status: tc.status, Title: "Before"}}
 			runner := &fakeAgentRunner{text: creatorReply}
 			h := NewRouter(Deps{Logger: testLogger, Workspaces: ws, AgentRunner: runner})
-			rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", `{"contentItemId":"item"}`)
+			rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, "content_creator"), `{"contentItemId":"item"}`)
 			if rec.Code != tc.code {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 			}
@@ -131,7 +131,7 @@ func TestContentCreatorExistingItemBoundaries(t *testing.T) {
 
 func TestContentCreatorUnavailable(t *testing.T) {
 	for _, deps := range []Deps{{Logger: testLogger}, {Logger: testLogger, Workspaces: workspaceDeps(nil, nil)}} {
-		rec := doJSON(t, NewRouter(deps), http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", `{}`)
+		rec := doJSON(t, NewRouter(deps), http.MethodPost, agentRunPath(agentWsID, "content_creator"), `{}`)
 		if rec.Code != 501 {
 			t.Fatalf("expected 501, got %d", rec.Code)
 		}
@@ -141,7 +141,7 @@ func TestContentCreatorUnavailable(t *testing.T) {
 func TestContentCreatorOfflineProvider(t *testing.T) {
 	ws := workspaceDeps(nil, nil)
 	h := NewRouter(Deps{Logger: testLogger, Workspaces: ws, AgentRunner: aiprovider.StubProvider{}})
-	rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+agentWsID+"/agents/content-creator/draft", `{}`)
+	rec := doJSON(t, h, http.MethodPost, agentRunPath(agentWsID, "content_creator"), `{}`)
 	if rec.Code != 201 || !strings.Contains(rec.Body.String(), "[Stub]") {
 		t.Fatalf("offline path failed: %d %s", rec.Code, rec.Body.String())
 	}
