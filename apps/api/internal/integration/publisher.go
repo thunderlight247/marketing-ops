@@ -42,9 +42,10 @@ func (publisherUnsupported) SafeMessage() string {
 // PublisherNeedsReconnection reports whether a publisher failure is a
 // credential problem the operator fixes by reconnecting the integration:
 // a rejected or expired Meta access token, a rejected YouTube authorization,
-// or a Sanity token the API refuses with 401/403. Stored-but-unreadable
-// credentials also count: re-entering them is the fix. Other failure kinds
-// (rate limits, network trouble, validation) are not credential problems.
+// a rejected or expired X (Twitter) OAuth user token, or a Sanity token the
+// API refuses with 401/403. Stored-but-unreadable credentials also count:
+// re-entering them is the fix. Other failure kinds (rate limits, network
+// trouble, validation) are not credential problems.
 func PublisherNeedsReconnection(err error) bool {
 	if errors.Is(err, ErrPublisherCredentialsUnreadable) {
 		return true
@@ -55,6 +56,10 @@ func PublisherNeedsReconnection(err error) bool {
 	}
 	var yerr *YouTubeError
 	if errors.As(err, &yerr) && yerr.Kind == "token_expired" {
+		return true
+	}
+	var xerr *XError
+	if errors.As(err, &xerr) && xerr.Kind == "token_expired" {
 		return true
 	}
 	var serr *SanityWriteError

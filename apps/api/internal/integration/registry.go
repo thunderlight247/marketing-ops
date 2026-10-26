@@ -27,6 +27,8 @@ func NewDefaultRegistry() *Registry {
 	r.RegisterPublisher("sanity", SanityPublisherAdapter{})
 	r.Register(&MetaAdapter{})
 	r.RegisterPublisher("meta", MetaPublisherAdapter{})
+	r.Register(&XAdapter{})
+	r.RegisterPublisher("x", XPublisherAdapter{})
 	r.Register(&YouTubeAdapter{})
 	r.RegisterPublisher("youtube", YouTubePublisherAdapter{})
 	r.Register(&GenericAPIAdapter{})

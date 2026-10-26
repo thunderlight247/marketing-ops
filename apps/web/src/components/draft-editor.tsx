@@ -287,7 +287,9 @@ export function DraftEditor({
       });
       const social = result.integrations.filter(
         (integration) =>
-          integration.adapterKind === "meta" || integration.adapterKind === "youtube",
+          integration.adapterKind === "meta" ||
+          integration.adapterKind === "youtube" ||
+          integration.adapterKind === "x",
       );
       setSocialIntegrations(social);
       setSocialSelectedId((current) => {

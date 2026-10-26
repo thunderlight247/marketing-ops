@@ -84,6 +84,7 @@ export function WorkspaceIntegrationsSection({
   const [metaTargetId, setMetaTargetId] = useState("");
   const [metaApiVersion, setMetaApiVersion] = useState("");
   const [metaPostLinkPrefix, setMetaPostLinkPrefix] = useState("");
+  const [xPostLinkPrefix, setXPostLinkPrefix] = useState("");
   const [youtubeChannelId, setYoutubeChannelId] = useState("");
   const [youtubePrivacy, setYoutubePrivacy] = useState("public");
   const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
@@ -184,6 +185,10 @@ export function WorkspaceIntegrationsSection({
       if (youtubeCategoryId.trim()) {
         config.categoryId = youtubeCategoryId.trim();
       }
+    } else if (adapterKind === "x") {
+      if (xPostLinkPrefix.trim()) {
+        config.postLinkPrefix = xPostLinkPrefix.trim();
+      }
     }
 
     setAddErrors([]);
@@ -212,6 +217,7 @@ export function WorkspaceIntegrationsSection({
       setYoutubeChannelId("");
       setYoutubePrivacy("public");
       setYoutubeCategoryId("");
+      setXPostLinkPrefix("");
       setShowAddForm(false);
       void load();
     } else if (res.kind === "conflict") {
@@ -242,6 +248,8 @@ export function WorkspaceIntegrationsSection({
     } else if (kind === "search_console") {
       payload.serviceAccount = credSecret.trim();
     } else if (kind === "meta") {
+      payload.accessToken = credSecret.trim();
+    } else if (kind === "x") {
       payload.accessToken = credSecret.trim();
     } else if (kind === "youtube") {
       if (!youtubeClientId.trim() || !youtubeClientSecret.trim() || !youtubeRefreshToken.trim()) {
@@ -311,7 +319,10 @@ export function WorkspaceIntegrationsSection({
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
-          <h2 id="workspace-integrations-heading" className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <h2
+            id="workspace-integrations-heading"
+            className="text-xs font-semibold uppercase tracking-widest text-slate-500"
+          >
             Integrations & Capabilities
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
@@ -597,6 +608,33 @@ export function WorkspaceIntegrationsSection({
             </div>
           )}
 
+          {adapterKind === "x" && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="x-link-prefix" className={labelClasses}>
+                  Article link prefix (optional)
+                </label>
+                <input
+                  id="x-link-prefix"
+                  type="url"
+                  value={xPostLinkPrefix}
+                  onChange={(e) => setXPostLinkPrefix(e.target.value)}
+                  placeholder="https://example.com/blog"
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  When set, each tweet tags the article link (prefix + slug) after the post text,
+                  and a repeated publish reuses the earlier tweet instead of duplicating it.
+                </p>
+              </div>
+              <p className="self-end text-xs text-slate-500 sm:col-span-1">
+                Official X API v2 only, with an OAuth 2.0 user access token carrying the tweet.write
+                scope. Every publish is still approval-gated here; scheduled tweets run through this
+                platform&apos;s worker.
+              </p>
+            </div>
+          )}
+
           {adapterKind === "search_console" && (
             <div className="mt-3">
               <label htmlFor="search-console-property" className={labelClasses}>
@@ -815,11 +853,13 @@ export function WorkspaceIntegrationsSection({
                     <label htmlFor={`cred-${inItem.id}`} className={labelClasses}>
                       {inItem.adapterKind === "sanity"
                         ? "Sanity API write token"
-                        : inItem.adapterKind === "search_console"
-                          ? "Google service-account key (JSON)"
-                          : inItem.adapterKind === "meta"
-                            ? "Meta Graph access token"
-                            : "API secret key / token"}
+                        : inItem.adapterKind === "x"
+                          ? "X OAuth 2.0 user access token"
+                          : inItem.adapterKind === "search_console"
+                            ? "Google service-account key (JSON)"
+                            : inItem.adapterKind === "meta"
+                              ? "Meta Graph access token"
+                              : "API secret key / token"}
                     </label>
                   )}
                   {inItem.adapterKind !== "youtube" && (
@@ -829,7 +869,9 @@ export function WorkspaceIntegrationsSection({
                           ? "Paste the full JSON of a Google service-account key. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and is used read-only (webmasters.readonly) to verify property access and read search analytics."
                           : inItem.adapterKind === "meta"
                             ? "Paste the access token for this channel's target: a Page access token, or the Instagram-linked Page token. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and needs only the channel's manage-posts permission (pages_manage_posts or instagram_content_publish)."
-                            : "This is the Sanity API token for this workspace's project. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and should have only the write permissions needed for this site."}
+                            : inItem.adapterKind === "x"
+                              ? "Paste an OAuth 2.0 user access token minted with the tweet.write scope for the posting account. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and is verified against /users/me read-only when saved."
+                              : "This is the Sanity API token for this workspace's project. It is encrypted at rest with AES-256-GCM, never returned to the browser or logged, and should have only the write permissions needed for this site."}
                       </p>
                       <input
                         id={`cred-${inItem.id}`}
