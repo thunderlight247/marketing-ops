@@ -1,0 +1,101 @@
+name: Campaigns and leads E2E
+
+on:
+  push:
+    paths:
+      - ".github/workflows/campaigns-leads-e2e.yml"
+      - "apps/api/**"
+      - "apps/web/**"
+      - "remember.md"
+  pull_request:
+    paths:
+      - ".github/workflows/campaigns-leads-e2e.yml"
+      - "apps/api/**"
+      - "apps/web/**"
+      - "remember.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  campaigns-leads-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_ops_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d marketing_ops_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/marketing_ops_test?sslmode=disable
+      APP_ENV: test
+      API_PORT: 8081
+      # Playwright serves the dashboard from http://127.0.0.1:3001, so that
+      # browser origin must be allowed alongside the localhost form.
+      CORS_ALLOWED_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
+      PLAYWRIGHT_API_BASE_URL: http://localhost:8081
+      PLAYWRIGHT_WEB_PORT: 3001
+      CI: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Apply database migrations
+        working-directory: apps/api
+        run: go run ./cmd/migrate up
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser suite against the live API
+        working-directory: apps/api
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/api > /tmp/marketing-ops-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8081/api/v1/ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              cat /tmp/marketing-ops-api.log
+              exit 1
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://localhost:8081/api/v1/ready >/dev/null || {
+            cat /tmp/marketing-ops-api.log
+            exit 1
+          }
+
+          cd ../web
+          npm run test:e2e
