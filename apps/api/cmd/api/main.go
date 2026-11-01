@@ -20,6 +20,7 @@ import (
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
 	"marketingops/api/internal/integration"
+	"marketingops/api/internal/leadengine"
 	"marketingops/api/internal/publishworker"
 	"marketingops/api/internal/store"
 )
@@ -104,6 +105,17 @@ func run() error {
 			MaxDelay:      cfg.EmailWorkerMaxDelay,
 		})
 		go worker.Run(ctx)
+	}
+
+	// Background automated lead engine scheduler: automatically discovers
+	// and dispatches leads on a recurring interval for enabled workspaces.
+	if workspaceStore != nil {
+		dispatcherURL := os.Getenv("WHATSAPP_DISPATCHER_URL")
+		if dispatcherURL == "" {
+			dispatcherURL = "http://localhost:8083"
+		}
+		dispatcherSecret := os.Getenv("WHATSAPP_DISPATCHER_SECRET")
+		leadengine.StartScheduler(ctx, workspaceStore.(leadengine.SchedulerStore), cfg.CredentialKey, dispatcherURL, dispatcherSecret, 6*time.Hour)
 	}
 
 	// AI drafting: real provider when a key is present, offline stub otherwise.

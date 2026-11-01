@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"marketingops/api/internal/events"
 	"marketingops/api/internal/store"
 )
 
@@ -169,6 +170,7 @@ func createWorkspaceLeadHandler(ws WorkspaceStore) http.HandlerFunc {
 			})
 			// The team learns about the enquiry without opening the dashboard.
 			queueNewLeadEmail(r.Context(), ws, workspaceID, created.ID)
+			events.DefaultHub.Publish(workspaceID, "lead_created", created.ID)
 			writeJSON(w, http.StatusCreated, toLeadJSON(created))
 		case errors.Is(err, store.ErrInvalidStatus):
 			writeJSONError(w, http.StatusBadRequest, "unknown sourceKind or status")
@@ -253,6 +255,7 @@ func patchWorkspaceLeadHandler(ws WorkspaceStore) http.HandlerFunc {
 				EntityID:    &updated.ID,
 				Details:     map[string]any{},
 			})
+			events.DefaultHub.Publish(workspaceID, "lead_updated", updated.ID)
 			writeJSON(w, http.StatusOK, toLeadJSON(updated))
 		case errors.Is(err, store.ErrNotFound):
 			writeJSONError(w, http.StatusNotFound, "no such lead (or campaignId is outside this workspace)")

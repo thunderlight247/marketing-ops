@@ -76,3 +76,8 @@ apps/api/marketing-ops-api
 # WhatsApp dispatcher runtime data (session auth, puppeteer cache)
 services/whatsapp-dispatcher/data/
 services/whatsapp-dispatcher/.wwebjs_cache/
+
+# Database backup archives
+backups/*.sql.gz
+backups/*.tmp
+

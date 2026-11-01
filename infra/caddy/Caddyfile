@@ -1,0 +1,86 @@
+# ==============================================================================
+# Marketing Operations Platform — Caddyfile
+#
+# Automatic HTTPS, HTTP/2 & HTTP/3, and reverse proxy for Next.js and Go API.
+# Replace {$DOMAIN} with your production domain (e.g. ops.yourdomain.com).
+# For local testing, {$DOMAIN} defaults to localhost with local self-signed TLS.
+# ==============================================================================
+
+{$DOMAIN:localhost} {
+    # Encode responses with modern compression
+    encode zstd gzip
+
+    # Production security headers
+    header {
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Protect against clickjacking
+        X-Frame-Options "SAMEORIGIN"
+        # Control referrer information
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Restrict browser feature permissions
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        # Enforce HTTPS on production domains
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Remove server identity header
+        -Server
+    }
+
+    # Max upload limit for media assets (images, documents)
+    request_body {
+        max_size 16MB
+    }
+
+    # 1. External Lead Intake Webhooks (Direct to Go API on port 8081)
+    # Allows client websites to submit enquiries without passing through dashboard auth
+    @lead_intake path_regexp ^/api/v1/workspaces/[^/]+/lead-connections/[^/]+/(submissions|verify)
+    handle @lead_intake {
+        reverse_proxy 127.0.0.1:8081 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # 2. External Email Provider Webhooks (Direct to Go API on port 8081)
+    @email_webhook path_regexp ^/api/v1/email/webhooks/
+    handle @email_webhook {
+        reverse_proxy 127.0.0.1:8081 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # 3. Block external access to internal WhatsApp dispatcher routes
+    # Dispatcher runs on :8083 and should never be exposed to the public internet
+    @internal_dispatcher path_regexp ^/(sessions|health).*
+    handle @internal_dispatcher {
+        respond "Access denied" 403
+    }
+
+    # 4. Next.js Dashboard & All Platform Pages (Port 3000)
+    # The Next.js server handles operator session auth, SSR, and API proxy
+    handle {
+        reverse_proxy 127.0.0.1:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            # Support WebSockets / Server-Sent Events
+            header_up Upgrade {>Upgrade}
+            header_up Connection {>Connection}
+        }
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MB
+            roll_keep 5
+        }
+        format json
+    }
+}

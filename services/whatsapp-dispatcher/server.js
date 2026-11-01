@@ -26,6 +26,7 @@ const PORT = Number(process.env.PORT) || 8083;
 const EXEC_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 const SESSIONS_DIR = './data/sessions';
 const INTERNAL_SECRET = process.env.DISPATCHER_SECRET || '';
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8081';
 
 // ─── internal auth middleware ─────────────────────────────────────────────────
 // When DISPATCHER_SECRET is set, every /sessions/* request must supply the
@@ -125,6 +126,39 @@ function createClient(workspaceId) {
   client.on('auth_failure', (msg) => {
     state.status = 'auth_failure';
     console.error(`[${workspaceId}] Auth failure:`, msg);
+  });
+
+  client.on('message', async (msg) => {
+    // Ignore outbound messages sent by us
+    if (msg.fromMe) return;
+
+    // Parse sender's phone number
+    const rawNumber = (msg.from || '').replace('@c.us', '').replace(/[^0-9]/g, '');
+    const phone = rawNumber ? '+' + rawNumber : '';
+    const body = msg.body;
+    if (!phone || !body) return;
+
+    console.log(`[${workspaceId}] Inbound WhatsApp message from ${phone}: ${body.slice(0, 60)}`);
+
+    try {
+      const webhookUrl = `${API_BASE_URL}/api/v1/workspaces/${workspaceId}/lead-engine/whatsapp/inbound`;
+      const headers = { 'Content-Type': 'application/json' };
+      if (INTERNAL_SECRET) {
+        headers['X-Internal-Secret'] = INTERNAL_SECRET;
+      }
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          phone,
+          body,
+          messageId: msg.id?._serialized || '',
+          timestamp: msg.timestamp || Math.floor(Date.now() / 1000)
+        })
+      });
+    } catch (err) {
+      console.error(`[${workspaceId}] Failed to forward inbound message:`, err.message);
+    }
   });
 
   client.initialize().catch((err) => {

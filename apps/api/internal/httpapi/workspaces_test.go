@@ -527,6 +527,15 @@ func (f *fakeWorkspaceStore) EnsureOperator(ctx context.Context) (string, error)
 	}
 	return f.fakeOperatorID, nil
 }
+func (f *fakeWorkspaceStore) ListOperators(_ context.Context) ([]store.Operator, error) {
+	return []store.Operator{{ID: "77777777-7777-7777-7777-777777777777", Name: "Operator", Email: "operator@local.example", Role: "admin", Status: "active"}}, nil
+}
+func (f *fakeWorkspaceStore) CreateOperator(_ context.Context, name, email, role string) (store.Operator, error) {
+	return store.Operator{ID: "new-op-id", Name: name, Email: email, Role: role, Status: "active"}, nil
+}
+func (f *fakeWorkspaceStore) UpdateOperator(_ context.Context, id, role, status string) (store.Operator, error) {
+	return store.Operator{ID: id, Name: "Operator", Email: "operator@local.example", Role: role, Status: status}, nil
+}
 
 func (f *fakeWorkspaceStore) ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error) {
 	if f.listIntegrationsErr != nil {
@@ -1113,4 +1122,10 @@ func (f *fakeWorkspaceStore) IsBlacklisted(_ context.Context, workspaceID, phone
 }
 func (f *fakeWorkspaceStore) SaveOutreachLog(_ context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error) {
 	return l, nil
+}
+func (f *fakeWorkspaceStore) ListEnabledLeadConfigs(_ context.Context) ([]store.WorkspaceLeadConfig, error) {
+	return nil, nil
+}
+func (f *fakeWorkspaceStore) FindLeadByPhone(_ context.Context, workspaceID, phone string) (store.Lead, error) {
+	return store.Lead{}, store.ErrNotFound
 }

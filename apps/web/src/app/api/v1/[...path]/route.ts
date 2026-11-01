@@ -36,17 +36,21 @@ async function proxy(request: NextRequest) {
   if (key) headers.set("authorization", `Bearer ${key}`);
 
   try {
+    const isSSE = request.headers.get("accept")?.includes("text/event-stream");
     const response = await fetch(target, {
       method: request.method,
       headers,
       body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer(),
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(120_000),
+      signal: isSSE ? undefined : AbortSignal.timeout(120_000),
     });
     const responseHeaders = new Headers({ "Cache-Control": "no-store" });
     const contentType = response.headers.get("content-type");
     if (contentType) responseHeaders.set("Content-Type", contentType);
+    if (response.headers.get("x-accel-buffering")) {
+      responseHeaders.set("X-Accel-Buffering", response.headers.get("x-accel-buffering") || "no");
+    }
     return new Response(response.body, { status: response.status, headers: responseHeaders });
   } catch {
     return NextResponse.json({ error: "Could not reach the API." }, { status: 502 });

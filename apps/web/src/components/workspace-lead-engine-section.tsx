@@ -19,6 +19,7 @@ import {
   type LeadEngineLead,
   type OutreachLog,
 } from "@/lib/leadEngine";
+import { useWorkspaceEvents } from "@/lib/events";
 
 // ─── Design tokens / shared classes ──────────────────────────────────────────
 
@@ -557,6 +558,19 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
     void loadLeads();
   }, [loadLeads]);
 
+  useWorkspaceEvents(config.workspaceId, (ev) => {
+    if (
+      ev.type === "lead_discovered" ||
+      ev.type === "pitch_dispatched" ||
+      ev.type === "whatsapp_inbound" ||
+      ev.type === "whatsapp_replied" ||
+      ev.type === "lead_created" ||
+      ev.type === "lead_updated"
+    ) {
+      void loadLeads();
+    }
+  });
+
   const discover = async () => {
     setError(null);
     setNotice(null);
@@ -995,6 +1009,12 @@ export function WorkspaceLeadEngineSection({ workspaceId }: Readonly<{ workspace
   const handleStatusChange = useCallback((status: string, phone: string) => {
     setConfig((prev) => prev ? { ...prev, whatsappStatus: status, whatsappPhone: phone } : prev);
   }, []);
+
+  useWorkspaceEvents(workspaceId, (ev) => {
+    if (ev.type === "whatsapp_status" && ev.message) {
+      setConfig((prev) => prev ? { ...prev, whatsappStatus: ev.message || "disconnected" } : prev);
+    }
+  });
 
   return (
     <section

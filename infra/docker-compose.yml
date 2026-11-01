@@ -23,5 +23,20 @@ services:
       timeout: 3s
       retries: 10
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    profiles:
+      - proxy
+
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:

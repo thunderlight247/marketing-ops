@@ -79,6 +79,8 @@ type WorkspaceStore interface {
 	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
 	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
 	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
+	ListEnabledLeadConfigs(ctx context.Context) ([]store.WorkspaceLeadConfig, error)
+	FindLeadByPhone(ctx context.Context, workspaceID, phone string) (store.Lead, error)
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`)

@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -351,4 +352,44 @@ func (s *Store) ListLeadEngineLeads(ctx context.Context, workspaceID string) ([]
 		leads = append(leads, l)
 	}
 	return leads, rows.Err()
+}
+
+// ListEnabledLeadConfigs returns all workspace lead configs where enabled is true.
+func (s *Store) ListEnabledLeadConfigs(ctx context.Context) ([]WorkspaceLeadConfig, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+leadConfigColumns+`
+		 FROM workspace_lead_configs
+		 WHERE enabled = true`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var configs []WorkspaceLeadConfig
+	for rows.Next() {
+		c, err := scanLeadConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		configs = append(configs, c)
+	}
+	return configs, rows.Err()
+}
+
+// FindLeadByPhone searches for a lead in a workspace matching the given phone number,
+// matching both with and without leading '+'. Returns ErrNotFound if no match.
+func (s *Store) FindLeadByPhone(ctx context.Context, workspaceID, phone string) (Lead, error) {
+	cleanPhone := strings.TrimPrefix(strings.TrimSpace(phone), "+")
+	withPlus := "+" + cleanPhone
+	l, err := scanLead(s.pool.QueryRow(ctx,
+		`SELECT `+leadColumns+`
+		 FROM leads
+		 WHERE workspace_id = $1
+		   AND (contact_phone = $2 OR contact_phone = $3)
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		workspaceID, withPlus, cleanPhone))
+	if err != nil && errors.Is(err, pgx.ErrNoRows) {
+		return Lead{}, ErrNotFound
+	}
+	return l, err
 }

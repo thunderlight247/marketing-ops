@@ -297,3 +297,82 @@ type PitchParams struct {
 	AIKey        string
 	AIModel      string
 }
+
+// ReplyParams is the input to GenerateConversationalReply.
+type ReplyParams struct {
+	SenderName       string
+	BusinessName     string
+	BusinessOffering string
+	PortfolioURL     string
+	InitialPitch     string
+	InboundMessage   string
+	AIKey            string
+	AIModel          string
+}
+
+// GenerateConversationalReply uses the LLM to draft a helpful, professional, concise reply to an inbound WhatsApp response.
+func GenerateConversationalReply(goCtx context.Context, params ReplyParams) (string, error) {
+	if params.AIKey == "" {
+		msg := "Thank you for reaching out! We received your message."
+		if params.PortfolioURL != "" {
+			msg += " You can view our recent projects here: " + params.PortfolioURL + "."
+		}
+		msg += " We will follow up with you shortly."
+		return msg, nil
+	}
+
+	model := params.AIModel
+	if model == "" {
+		model = "meta-llama/llama-3.3-70b-instruct:free"
+	}
+
+	prompt := fmt.Sprintf(`You are %s representing Great Light Group in Ghana.
+Our offering: %s
+Portfolio URL: %s
+
+Earlier, we sent this WhatsApp pitch to "%s":
+"%s"
+
+The prospect just replied with:
+"%s"
+
+Write a professional, warm, and concise WhatsApp reply (maximum 3 short sentences):
+1. Acknowledge their response directly and answer their question or interest politely.
+2. If relevant, mention that they can explore sample work at %s or arrange a quick call/demo.
+3. Keep it natural, human, and under 50 words. Do not use buzzwords, multiple exclamation points, or robotic phrases. Output only the reply message body.`,
+		params.SenderName, params.BusinessOffering, params.PortfolioURL,
+		params.BusinessName, params.InitialPitch, params.InboundMessage, params.PortfolioURL)
+
+	body, err := json.Marshal(openRouterRequest{
+		Model:    model,
+		Messages: []openRouterMessage{{Role: "user", Content: prompt}},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(goCtx, http.MethodPost,
+		"https://openrouter.ai/api/v1/chat/completions",
+		bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+params.AIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	var or openRouterResponse
+	if err := json.Unmarshal(raw, &or); err != nil {
+		return "", err
+	}
+	if len(or.Choices) == 0 {
+		return "", fmt.Errorf("no response choices from AI provider")
+	}
+	return strings.Trim(strings.TrimSpace(or.Choices[0].Message.Content), `"`), nil
+}

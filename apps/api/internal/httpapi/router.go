@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"marketingops/api/internal/agents"
+	"marketingops/api/internal/events"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/integration"
 )
@@ -92,10 +93,17 @@ func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", healthHandler(d.Health))
 	mux.HandleFunc("GET /api/v1/ready", readyHandler(d.Health))
+
+	// Team Management & Operators (RBAC)
+	mux.HandleFunc("GET /api/v1/operators", listOperatorsHandler(d.Operators))
+	mux.HandleFunc("POST /api/v1/operators", createOperatorHandler(d.Operators))
+	mux.HandleFunc("PATCH /api/v1/operators/{id}", updateOperatorHandler(d.Operators))
+
 	// Workspaces handlers nil-check their store and answer 501 when absent.
 	mux.HandleFunc("GET /api/v1/workspaces", listWorkspacesHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces", createWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}", getWorkspaceDetailHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/events", workspaceEventsHandler(events.DefaultHub))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/brand", putWorkspaceBrandHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}", patchWorkspaceHandler(d.Workspaces))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", deleteWorkspaceHandler(d.Workspaces))
@@ -164,6 +172,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/whatsapp/status", getWhatsAppStatusHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/connect", connectWhatsAppHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/disconnect", disconnectWhatsAppHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/inbound", inboundWhatsAppHandler(d.Workspaces, d.CredentialKey))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads", listLeadEngineLeadsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads/{leadId}/logs", listLeadOutreachLogsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/blacklist", listBlacklistHandler(d.Workspaces))
@@ -230,6 +239,12 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }

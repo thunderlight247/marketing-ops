@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"time"
 
+	"marketingops/api/internal/events"
 	"marketingops/api/internal/leadengine"
 	"marketingops/api/internal/secretcipher"
 	"marketingops/api/internal/store"
@@ -251,6 +253,7 @@ func connectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 		} else {
 			_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "qr_ready", "")
 		}
+		events.DefaultHub.Publish(workspaceID, "whatsapp_status", status)
 		writeJSON(w, http.StatusOK, result)
 	}
 }
@@ -266,6 +269,7 @@ func disconnectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 		req, err := newDispatcherRequest(r.Context(), http.MethodPost, url, nil, "application/json")
 		if err != nil {
 			_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "disconnected", "")
+			events.DefaultHub.Publish(workspaceID, "whatsapp_status", "disconnected")
 			writeJSONError(w, http.StatusInternalServerError, "could not build dispatcher request")
 			return
 		}
@@ -273,11 +277,13 @@ func disconnectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 		if err != nil {
 			// Best-effort: still mark disconnected in DB.
 			_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "disconnected", "")
+			events.DefaultHub.Publish(workspaceID, "whatsapp_status", "disconnected")
 			writeJSONError(w, http.StatusBadGateway, "WhatsApp dispatcher unreachable")
 			return
 		}
 		resp.Body.Close()
 		_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "disconnected", "")
+		events.DefaultHub.Publish(workspaceID, "whatsapp_status", "disconnected")
 		writeJSON(w, http.StatusOK, map[string]string{"status": "disconnected"})
 	}
 }
@@ -493,8 +499,8 @@ func triggerDiscoveryHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc
 				Cities:          cfg.TargetCities,
 				DailyLimit:      cfg.DailyLimit,
 			}, ws)
-			_ = discovered
 			_ = errs
+			events.DefaultHub.Publish(workspaceID, "lead_discovered", fmt.Sprintf("Discovered %d new leads", discovered))
 		}()
 
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "discovery_started"})
@@ -533,7 +539,7 @@ func triggerDispatchHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc 
 
 		ctx := context.Background()
 		go func() {
-			_ = leadengine.RunDispatch(ctx, leadengine.DispatchParams{
+			err := leadengine.RunDispatch(ctx, leadengine.DispatchParams{
 				WorkspaceID:      workspaceID,
 				AIKey:            string(aiKey),
 				AIModel:          cfg.AIModel,
@@ -545,9 +551,143 @@ func triggerDispatchHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc 
 				DispatchURL:      dispatcherURL(),
 				DispatcherSecret: dispatcherSecret(),
 			}, ws)
+			if err != nil {
+				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", "Dispatch run ended with error: "+err.Error())
+			} else {
+				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", "Outreach dispatch completed")
+			}
 		}()
 
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "dispatch_started"})
+	}
+}
+
+// ─── inbound message webhook & conversational AI auto-reply ────────────────────
+
+type inboundWhatsAppPayload struct {
+	Phone     string `json:"phone"`
+	Body      string `json:"body"`
+	MessageID string `json:"messageId"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// POST /api/v1/workspaces/{id}/lead-engine/whatsapp/inbound
+func inboundWhatsAppHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Verify internal secret if configured
+		if sec := dispatcherSecret(); sec != "" {
+			if r.Header.Get("X-Internal-Secret") != sec {
+				writeJSONError(w, http.StatusUnauthorized, "invalid internal secret")
+				return
+			}
+		}
+
+		workspaceID, ok := workspaceScope(w, r, ws)
+		if !ok {
+			return
+		}
+
+		var in inboundWhatsAppPayload
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxLeadEnginePayload)).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if in.Phone == "" || in.Body == "" {
+			writeJSONError(w, http.StatusBadRequest, "phone and body are required")
+			return
+		}
+
+		ctx := r.Context()
+
+		// 1. Find matching lead by phone
+		lead, leadErr := ws.FindLeadByPhone(ctx, workspaceID, in.Phone)
+		leadID := ""
+		if leadErr == nil {
+			leadID = lead.ID
+			_ = ws.UpdateLeadStatus(ctx, workspaceID, lead.ID, "replied")
+		}
+
+		// 2. Persist the inbound message in outreach logs
+		_, _ = ws.SaveOutreachLog(ctx, store.LeadOutreachLog{
+			WorkspaceID: workspaceID,
+			LeadID:      leadID,
+			Direction:   "inbound",
+			MessageID:   in.MessageID,
+			Body:        in.Body,
+			Status:      "replied",
+		})
+		events.DefaultHub.Publish(workspaceID, "whatsapp_inbound", "Inbound WhatsApp message from "+in.Phone)
+
+		// 3. Autonomous AI Auto-Reply (runs asynchronously so webhook returns HTTP 200 immediately)
+		go func() {
+			bgCtx := context.Background()
+
+			cfg, err := ws.GetLeadConfig(bgCtx, workspaceID)
+			if err != nil || !cfg.Enabled || len(cfg.AIProviderKeyCiphertext) == 0 {
+				return
+			}
+
+			aiKeyBytes, err := secretcipher.Decrypt(credKey, cfg.AIProviderKeyCiphertext)
+			if err != nil || len(aiKeyBytes) == 0 {
+				return
+			}
+
+			businessName := ""
+			if lead.ContactName != nil {
+				businessName = *lead.ContactName
+			}
+
+			// Generate conversational reply
+			reply, err := leadengine.GenerateConversationalReply(bgCtx, leadengine.ReplyParams{
+				SenderName:       cfg.SenderName,
+				BusinessName:     businessName,
+				BusinessOffering: cfg.BusinessOffering,
+				PortfolioURL:     cfg.PortfolioURL,
+				InitialPitch:     lead.Pitch,
+				InboundMessage:   in.Body,
+				AIKey:            string(aiKeyBytes),
+				AIModel:          cfg.AIModel,
+			})
+			if err != nil || reply == "" {
+				return
+			}
+
+			// Send reply via WhatsApp dispatcher
+			sendURL := dispatcherURL() + "/sessions/" + workspaceID + "/send"
+			payload, _ := json.Marshal(map[string]string{
+				"phone":   in.Phone,
+				"message": reply,
+			})
+			req, err := newDispatcherRequest(bgCtx, http.MethodPost, sendURL, bytes.NewReader(payload), "application/json")
+			if err != nil {
+				return
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil || resp.StatusCode >= 400 {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				return
+			}
+			resp.Body.Close()
+
+			// Log outbound reply
+			_, _ = ws.SaveOutreachLog(bgCtx, store.LeadOutreachLog{
+				WorkspaceID: workspaceID,
+				LeadID:      leadID,
+				Direction:   "outbound",
+				Body:        reply,
+				Status:      "sent",
+			})
+
+			if leadID != "" {
+				_ = ws.UpdateLeadStatus(bgCtx, workspaceID, leadID, "contacted")
+			}
+
+			events.DefaultHub.Publish(workspaceID, "whatsapp_replied", "Conversational AI replied to "+in.Phone)
+		}()
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "received"})
 	}
 }
 

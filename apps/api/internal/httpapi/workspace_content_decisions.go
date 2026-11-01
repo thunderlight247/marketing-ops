@@ -20,6 +20,9 @@ const maxDecisionPayloadBytes = 32 * 1024
 // the session identity instead of a lookup.
 type OperatorProvider interface {
 	EnsureOperator(ctx context.Context) (operatorID string, err error)
+	ListOperators(ctx context.Context) ([]store.Operator, error)
+	CreateOperator(ctx context.Context, name, email, role string) (store.Operator, error)
+	UpdateOperator(ctx context.Context, id, role, status string) (store.Operator, error)
 }
 
 // decisionRecord is the JSON face of a recorded decision.

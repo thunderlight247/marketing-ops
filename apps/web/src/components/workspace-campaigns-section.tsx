@@ -19,6 +19,8 @@ import {
   type CampaignsLeadsState,
   type Lead,
 } from "@/lib/campaigns";
+import { exportLeadsToCsv, parseLeadsCsv } from "@/lib/csv";
+import { useWorkspaceEvents } from "@/lib/events";
 
 const inputClasses =
   "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 transition-colors";
@@ -81,6 +83,12 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
   const [leadActionError, setLeadActionError] = useState<string | null>(null);
   const [visibleLeads, setVisibleLeads] = useState(20);
 
+  // CSV Import / Export state
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
   const apiBaseUrl = getApiBaseUrl();
 
   const load = useCallback(async () => {
@@ -100,6 +108,16 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
     void load();
     void loadConnections();
   }, [load, loadConnections]);
+
+  // Real-time live updates via Server-Sent Events (SSE)
+  useWorkspaceEvents(workspaceId, (ev) => {
+    if (ev.type.startsWith("lead_")) {
+      void (async () => {
+        const fresh = await fetchWorkspaceCampaignsLeads(apiBaseUrl, workspaceId);
+        setState(fresh);
+      })();
+    }
+  });
 
   async function handleCreateConnection(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -223,6 +241,55 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
     }
   }
 
+  function handleExportCsv() {
+    if (state.kind !== "loaded" || state.leads.length === 0) return;
+    exportLeadsToCsv(state.leads, state.campaigns, workspaceId);
+  }
+
+  async function handleCsvFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError(null);
+    setImportNotice(null);
+    setImporting(true);
+
+    try {
+      const text = await file.text();
+      const parsed = parseLeadsCsv(text);
+      if (parsed.length === 0) {
+        setImportError("No valid lead rows found in the CSV. Ensure it has Name, Phone, or Email headers.");
+        setImporting(false);
+        return;
+      }
+
+      let successCount = 0;
+      for (const row of parsed) {
+        const res = await createLead(apiBaseUrl, workspaceId, {
+          sourceKind: row.sourceKind,
+          sourceDetail: row.sourceDetail,
+          contactName: row.contactName,
+          contactPhone: row.contactPhone,
+          contactEmail: row.contactEmail,
+          message: row.message,
+          notes: row.notes,
+          followUpAt: row.followUpAt,
+        });
+        if (res.kind === "created") {
+          successCount++;
+        }
+      }
+
+      setImportNotice(`Successfully imported ${successCount} of ${parsed.length} lead(s).`);
+      setShowImport(false);
+      void load();
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Failed to parse and import CSV file.");
+    } finally {
+      setImporting(false);
+      e.target.value = "";
+    }
+  }
+
   return (
     <section
       aria-labelledby="workspace-campaigns-heading"
@@ -235,9 +302,30 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            onClick={handleExportCsv}
+            disabled={state.kind !== "loaded" || state.leads.length === 0}
+            title={state.kind === "loaded" && state.leads.length === 0 ? "No leads to export" : "Download leads as CSV"}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            📥 Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowImport((v) => !v);
+              setShowLeadForm(false);
+              setShowCampaignForm(false);
+            }}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            {showImport ? "Close import" : "📤 Import CSV"}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setShowCampaignForm((v) => !v);
               setShowLeadForm(false);
+              setShowImport(false);
             }}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
           >
@@ -248,6 +336,7 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             onClick={() => {
               setShowLeadForm((v) => !v);
               setShowCampaignForm(false);
+              setShowImport(false);
             }}
             className={PRIMARY_BUTTON}
           >
@@ -255,6 +344,39 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
           </button>
         </div>
       </div>
+
+      {importNotice && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          {importNotice}
+        </div>
+      )}
+      {importError && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          {importError}
+        </div>
+      )}
+
+      {showImport && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-sm font-semibold text-slate-800">Import Leads from CSV</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Upload a .csv file containing columns such as <code>Contact Name</code>, <code>Phone</code>, <code>Email</code>, and <code>Notes</code>.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 transition-colors">
+              {importing ? "Processing CSV…" : "Select CSV File"}
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => void handleCsvFileChange(e)}
+                disabled={importing}
+                className="sr-only"
+              />
+            </label>
+            <span className="text-xs text-slate-400">Supported formats: UTF-8 standard CSV</span>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
         <h3 className="text-sm font-semibold text-slate-800">Website lead connections</h3>
