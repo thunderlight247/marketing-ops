@@ -69,3 +69,10 @@ ehthumbs.db
 .freebuff/
 .codebuff/
 .github/
+
+# Compiled API binary
+apps/api/marketing-ops-api
+
+# WhatsApp dispatcher runtime data (session auth, puppeteer cache)
+services/whatsapp-dispatcher/data/
+services/whatsapp-dispatcher/.wwebjs_cache/

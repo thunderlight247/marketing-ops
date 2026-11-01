@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import {
   addToBlacklist,
@@ -169,6 +169,10 @@ function SetupTab({
     e.preventDefault();
     setError(null);
     setSuccess(false);
+    if (minDelay >= maxDelay) {
+      setError("Min delay must be less than max delay.");
+      return;
+    }
     setSaving(true);
     try {
       const saved = await saveLeadEngineConfig(base, config.workspaceId, {
@@ -679,8 +683,8 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
             </thead>
             <tbody>
               {leads.map((lead) => (
-                <>
-                  <tr key={lead.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                <Fragment key={lead.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{lead.name}</p>
                       <p className="text-xs text-slate-400">{lead.phone}</p>
@@ -739,7 +743,7 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -126,6 +126,12 @@ func putLeadEngineConfigHandler(ws WorkspaceStore, credKey []byte, credKeyVersio
 			return
 		}
 
+		// Validate delay bounds so engine.go's rand.Intn(max-min) never receives a negative argument.
+		if in.MinDelayMs > 0 && in.MaxDelayMs > 0 && in.MinDelayMs >= in.MaxDelayMs {
+			writeJSONError(w, http.StatusBadRequest, "minDelayMs must be less than maxDelayMs")
+			return
+		}
+
 		// Load existing config to preserve keys when no new key is sent.
 		existing, _ := ws.GetLeadConfig(r.Context(), workspaceID)
 

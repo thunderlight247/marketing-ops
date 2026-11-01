@@ -44,6 +44,7 @@ export function WorkspaceContentSection({
   const [state, setState] = useState<ContentListState>({ kind: "loading" });
   const [showForm, setShowForm] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // AI generation form fields
   const [aiKind, setAiKind] = useState<ContentKind>("blog_article");
@@ -401,6 +402,32 @@ export function WorkspaceContentSection({
 
         {state.kind === "loaded" && state.items.length > 0 && (
           <div className="overflow-x-auto">
+            <div className="mb-3 flex items-center gap-2">
+              <label htmlFor="content-status-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Filter by status
+              </label>
+              <select
+                id="content-status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:border-indigo-400 focus-visible:outline-indigo-500"
+              >
+                <option value="all">All</option>
+                <option value="draft">Draft</option>
+                <option value="review">In review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="queued">Queued</option>
+                <option value="publishing">Publishing</option>
+                <option value="published">Published</option>
+                <option value="failed">Failed</option>
+              </select>
+              {statusFilter !== "all" && (
+                <span className="text-xs text-slate-400">
+                  {state.items.filter((i) => i.status === statusFilter).length} of {state.items.length}
+                </span>
+              )}
+            </div>
             <table className="w-full text-left text-sm">
               <thead className="border-b border-slate-200 text-xs font-medium uppercase tracking-wider text-slate-500">
                 <tr>
@@ -422,7 +449,9 @@ export function WorkspaceContentSection({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {state.items.map((item: ContentItem) => (
+                {state.items
+                  .filter((item) => statusFilter === "all" || item.status === statusFilter)
+                  .map((item: ContentItem) => (
                   <tr key={item.id} className="hover:bg-slate-50">
                     <td className="py-3 pr-4 font-medium text-slate-900">
                       <Link

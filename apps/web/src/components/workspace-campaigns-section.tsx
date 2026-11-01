@@ -79,6 +79,7 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
   // Lead action state (status changes)
   const [busyLeadId, setBusyLeadId] = useState<string | null>(null);
   const [leadActionError, setLeadActionError] = useState<string | null>(null);
+  const [visibleLeads, setVisibleLeads] = useState(20);
 
   const apiBaseUrl = getApiBaseUrl();
 
@@ -652,7 +653,7 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
               <p className="mt-2 text-sm text-slate-500">No leads recorded yet.</p>
             ) : (
               <ul className="mt-2 space-y-2">
-                {state.leads.map((l) => {
+                {state.leads.slice(0, visibleLeads).map((l) => {
                   const campaign = state.campaigns.find((c) => c.id === l.campaignId);
                   return (
                     <li
@@ -730,6 +731,17 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
                     </li>
                   );
                 })}
+                {state.leads.length > visibleLeads && (
+                  <li className="pt-1 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleLeads((n) => n + 20)}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      Show more ({state.leads.length - visibleLeads} remaining)
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </div>

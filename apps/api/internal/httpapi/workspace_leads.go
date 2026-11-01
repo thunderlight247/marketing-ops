@@ -18,7 +18,7 @@ import (
 const maxLeadPayloadBytes = 16 * 1024
 
 var validLeadSources = map[string]bool{
-	"manual": true, "form_api": true, "import": true, "unknown": true,
+	"manual": true, "form_api": true, "import": true, "lead_engine": true, "unknown": true,
 }
 
 var validLeadStatuses = map[string]bool{

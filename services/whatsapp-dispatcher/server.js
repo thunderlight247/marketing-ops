@@ -25,6 +25,25 @@ app.use(express.json());
 const PORT = Number(process.env.PORT) || 8083;
 const EXEC_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 const SESSIONS_DIR = './data/sessions';
+const INTERNAL_SECRET = process.env.DISPATCHER_SECRET || '';
+
+// ─── internal auth middleware ─────────────────────────────────────────────────
+// When DISPATCHER_SECRET is set, every /sessions/* request must supply the
+// matching X-Internal-Secret header. The /health endpoint is always public.
+function requireInternalAuth(req, res, next) {
+  if (!INTERNAL_SECRET) return next(); // dev mode: no secret configured
+  if (req.headers['x-internal-secret'] !== INTERNAL_SECRET) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
+}
+
+app.use('/sessions', requireInternalAuth);
+
+// ─── health ───────────────────────────────────────────────────────────────────
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', sessions: sessions.size });
+});
 
 // In-memory session map: workspaceId → SessionState
 const sessions = new Map();
@@ -213,6 +232,21 @@ app.post('/sessions/:workspaceId/disconnect', async (req, res) => {
   state.phone = '';
   res.json({ status: 'disconnected' });
 });
+
+// ─── graceful shutdown ────────────────────────────────────────────────────────
+async function shutdown() {
+  console.log('Shutting down gracefully — destroying active sessions…');
+  for (const [id, state] of sessions.entries()) {
+    if (state.client) {
+      try { await state.client.destroy(); } catch (e) {
+        console.error(`[${id}] destroy error on shutdown:`, e.message);
+      }
+    }
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT',  () => void shutdown());
 
 // ─── start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
