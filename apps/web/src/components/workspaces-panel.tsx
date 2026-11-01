@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/empty-state";
 import { getApiBaseUrl } from "@/lib/config";
 import {
   createWorkspace,
+  describeDeliveryAttention,
   fetchWorkspaces,
   validateWorkspaceInput,
   type CreateWorkspaceResult,
@@ -62,6 +63,29 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
                   </>
                 ) : null}
               </p>
+              {workspace.deliveryAttention ? (
+                <p className="mt-1">
+                  <Link
+                    href={`/workspaces/${encodeURIComponent(workspace.id)}#email-deliveries`}
+                    data-testid={`workspace-delivery-attention-${workspace.id}`}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500"
+                  >
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                    Email needs attention: {describeDeliveryAttention(workspace.deliveryAttention)}
+                  </Link>
+                </p>
+              ) : null}
+              {workspace.deliveryAcknowledgedAt ? (
+                <p
+                  data-testid={`workspace-delivery-acknowledged-${workspace.id}`}
+                  className="mt-1 text-[11px] text-slate-400"
+                >
+                  Last acknowledged {new Date(workspace.deliveryAcknowledgedAt).toLocaleString()}
+                  {workspace.deliveryAttention
+                    ? " — the flag shows what failed or bounced since."
+                    : " — nothing new has failed or bounced since."}
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">

@@ -221,6 +221,39 @@ func (s StubProvider) RunPrompt(ctx context.Context, req RunPromptRequest) (Prom
 		return PromptReply{Provider: "stub", Model: "stub-v1", Text: string(encoded)}, nil
 	}
 
+	if strings.HasPrefix(req.System, "You are the internal channel copy writer ") {
+		// The stub emits valid, in-cap placeholder copy for the same closed
+		// channel set the specialist validates; the plan's filing (which item,
+		// which status) is decided downstream by the executor, not here.
+		encoded, err := json.Marshal(map[string]any{
+			"channelCopy": map[string]string{
+				"facebook":  "[Stub] Placeholder copy for review.",
+				"instagram": "[Stub] Placeholder copy for review.",
+				"x":         "[Stub] Placeholder copy.",
+				"youtube":   "[Stub] Placeholder description for review.",
+			},
+		})
+		if err != nil {
+			return PromptReply{}, &ProviderError{Kind: FailMalformed, Cause: "internal stub payload"}
+		}
+		return PromptReply{Provider: "stub", Model: "stub-v1", Text: string(encoded)}, nil
+	}
+
+	if strings.HasPrefix(req.System, "You are the internal lead responder ") {
+		// The stub writes a clearly-labelled placeholder with no contact
+		// address, no commitment, and no placeholder text: the specialist's
+		// validator refuses foreign addresses, and the lead's own address is
+		// deliberately not echoed back by an offline provider.
+		encoded, err := json.Marshal(map[string]any{
+			"subject": "[Stub] Reply to your enquiry",
+			"body":    "[Stub] Offline plumbing check, not model-written prose. Thank you for getting in touch; the operator will review this draft, replace it with a real reply, and confirm any details before anything is sent.",
+		})
+		if err != nil {
+			return PromptReply{}, &ProviderError{Kind: FailMalformed, Cause: "internal stub payload"}
+		}
+		return PromptReply{Provider: "stub", Model: "stub-v1", Text: string(encoded)}, nil
+	}
+
 	dataSource := stubAdvisoryValueNone
 	cannibalizationChecked := false
 	if strings.HasSuffix(strings.TrimSpace(req.User),

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -103,6 +104,15 @@ func TestWorkspaceIntegrations(t *testing.T) {
 
 	t.Run("save credentials encrypts secret and triggers capability check", func(t *testing.T) {
 		inID := "in-123"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer sk-secret-token" {
+				t.Error("token not forwarded for verification")
+			}
+			_, _ = w.Write([]byte(`{"result":0}`))
+		}))
+		defer server.Close()
+		checkRegistry := integration.NewDefaultRegistry()
+		checkRegistry.Register(&integration.SanityAdapter{BaseURL: server.URL, Client: server.Client()})
 		fake := &fakeWorkspaceStore{
 			byID: map[string]store.Workspace{
 				wsID: {ID: wsID, Slug: "demo", Name: "Demo"},
@@ -120,7 +130,7 @@ func TestWorkspaceIntegrations(t *testing.T) {
 		}
 		h := NewRouter(Deps{
 			Logger:               testLogger,
-			Integrations:         reg,
+			Integrations:         checkRegistry,
 			Workspaces:           fake,
 			CredentialKey:        testKey,
 			CredentialKeyVersion: 1,

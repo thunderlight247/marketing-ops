@@ -5,6 +5,10 @@ import { getApiBaseUrl } from "@/lib/config";
 import {
   createCampaign,
   createLead,
+  createLeadConnection,
+  deleteLeadConnection,
+  listLeadConnections,
+  type LeadConnection,
   fetchWorkspaceCampaignsLeads,
   formatCampaignStatus,
   formatLeadSource,
@@ -41,6 +45,15 @@ function statusChipClass(value: string): string {
 
 export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const [state, setState] = useState<CampaignsLeadsState>({ kind: "loading" });
+  const [connections, setConnections] = useState<LeadConnection[]>([]);
+  const [connectionName, setConnectionName] = useState("");
+  const [connectionSecret, setConnectionSecret] = useState<{
+    connection: LeadConnection;
+    secret: string;
+  } | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionDetailsId, setConnectionDetailsId] = useState<string | null>(null);
 
   // Add-campaign form state
   const [showCampaignForm, setShowCampaignForm] = useState(false);
@@ -74,9 +87,57 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
     setState(await fetchWorkspaceCampaignsLeads(apiBaseUrl, workspaceId));
   }, [apiBaseUrl, workspaceId]);
 
+  const loadConnections = useCallback(async () => {
+    try {
+      setConnections(await listLeadConnections(apiBaseUrl, workspaceId));
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : "Could not load lead connections.");
+    }
+  }, [apiBaseUrl, workspaceId]);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadConnections();
+  }, [load, loadConnections]);
+
+  async function handleCreateConnection(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (connectionSecret) return;
+    setConnectionBusy(true);
+    setConnectionError(null);
+    try {
+      const created = await createLeadConnection(apiBaseUrl, workspaceId, connectionName);
+      setConnectionSecret(created);
+      setConnectionDetailsId(created.connection.id);
+      setConnectionName("");
+      await loadConnections();
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : "Could not create connection.");
+    } finally {
+      setConnectionBusy(false);
+    }
+  }
+
+  async function handleDeleteConnection(connection: LeadConnection) {
+    if (
+      !window.confirm(
+        `Revoke ${connection.name}? Its website will no longer be able to send leads.`,
+      )
+    )
+      return;
+    setConnectionBusy(true);
+    setConnectionError(null);
+    try {
+      await deleteLeadConnection(apiBaseUrl, workspaceId, connection.id);
+      if (connectionSecret?.connection.id === connection.id) setConnectionSecret(null);
+      if (connectionDetailsId === connection.id) setConnectionDetailsId(null);
+      await loadConnections();
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : "Could not revoke connection.");
+    } finally {
+      setConnectionBusy(false);
+    }
+  }
 
   async function handleAddCampaign(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -192,6 +253,149 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             {showLeadForm ? "Close lead form" : "Record a lead"}
           </button>
         </div>
+      </div>
+
+      <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+        <h3 className="text-sm font-semibold text-slate-800">Website lead connections</h3>
+        <p className="mt-1 text-xs text-slate-600">
+          Connect each business website separately. Creating a connection provides credentials; it
+          does not connect the website automatically. A developer must configure the website server
+          using the instructions below. CRM and no-backend websites need a separate integration.
+        </p>
+        <form
+          onSubmit={(e) => void handleCreateConnection(e)}
+          className="mt-3 flex flex-wrap items-end gap-2"
+        >
+          <label className={labelClasses}>
+            Website or form name
+            <input
+              value={connectionName}
+              onChange={(e) => setConnectionName(e.target.value)}
+              required
+              maxLength={120}
+              className={`mt-1 ${inputClasses}`}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={connectionBusy || connectionSecret !== null}
+            className={PRIMARY_BUTTON}
+          >
+            Create connection
+          </button>
+        </form>
+        {connectionError && (
+          <p role="alert" className="mt-2 text-xs text-red-700">
+            {connectionError}
+          </p>
+        )}
+        {connectionSecret && (
+          <div className="mt-3 rounded-md bg-amber-50 p-3 text-xs text-amber-900" role="status">
+            <p className="font-semibold">Copy this secret now. It cannot be shown again.</p>
+            <p className="mt-1">
+              Save it in the website server&apos;s secret store before hiding it or creating another
+              connection.
+            </p>
+            <p className="mt-1 break-all">
+              Secret: <code>{connectionSecret.secret}</code>
+            </p>
+            <p className="mt-1 break-all">
+              API path:{" "}
+              <code>{`/api/v1/workspaces/${workspaceId}/lead-connections/${connectionSecret.connection.id}/submissions`}</code>
+            </p>
+            <p className="mt-1">Use the setup instructions below for this website.</p>
+            <button
+              type="button"
+              className="mt-2 underline"
+              onClick={() => setConnectionSecret(null)}
+            >
+              Hide secret
+            </button>
+          </div>
+        )}
+        <ul className="mt-3 space-y-3">
+          {connections.map((connection) => {
+            const path = `/api/v1/workspaces/${workspaceId}/lead-connections/${connection.id}`;
+            return (
+              <li
+                key={connection.id}
+                className="rounded border border-slate-200 bg-white p-3 text-xs text-slate-700"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">
+                    {connection.name} · Connection created; website delivery not verified
+                  </span>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConnectionDetailsId(
+                          connectionDetailsId === connection.id ? null : connection.id,
+                        )
+                      }
+                      className="text-indigo-700 underline"
+                    >
+                      {connectionDetailsId === connection.id
+                        ? "Hide instructions"
+                        : "Setup instructions"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={connectionBusy}
+                      onClick={() => void handleDeleteConnection(connection)}
+                      className="text-red-700 underline disabled:opacity-50"
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                </div>
+                {connectionDetailsId === connection.id && (
+                  <div className="mt-3 space-y-2">
+                    <p className="break-all">
+                      Submission path: <code>{path}/submissions</code>
+                    </p>
+                    <p className="break-all">
+                      Read-only check path: <code>{path}/verify</code>
+                    </p>
+                    <ol className="list-decimal space-y-1 pl-4">
+                      <li>
+                        Configure an externally reachable HTTPS API origin that forwards only these
+                        intake routes to the Go API. Do not use the operator dashboard URL unless
+                        your deployment explicitly routes the intake paths separately.
+                      </li>
+                      <li>
+                        Store the full submission URL and the one-time connection secret in this
+                        website server&apos;s private configuration; never put the secret in browser
+                        code or share it with another business.
+                      </li>
+                      <li>
+                        From the website server, POST to the check path with{" "}
+                        <code>Authorization: Bearer &lt;secret&gt;</code>. HTTP 200 verifies the
+                        credentials only; it does not test the form.
+                      </li>
+                      <li>
+                        Configure the website form backend to POST enquiries to the submission path.
+                        Send JSON with a unique <code>submissionId</code> and{" "}
+                        <code>contactEmail</code> or <code>contactPhone</code>; optional fields
+                        include <code>contactName</code>, <code>message</code>, and UTM values.
+                      </li>
+                      <li>
+                        Preserve the exact JSON and ID on retries. Test with authorized sample data,
+                        confirm it appears in this workspace, and arrange privacy notices, spam
+                        protection and delivery monitoring.
+                      </li>
+                    </ol>
+                    <p>
+                      For full production setup, failure handling and examples, see{" "}
+                      <code>docs/local-development.md</code> → Website lead intake. If the one-time
+                      secret is lost, revoke this connection and create another.
+                    </p>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       {state.kind === "loading" && <p className="mt-4 text-sm text-slate-500">Loading…</p>}
@@ -475,6 +679,15 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
                             follow-up {l.followUpAt.slice(0, 10)}
                           </span>
                         )}
+                        {l.replySentAt ? (
+                          <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800 ring-1 ring-inset ring-indigo-200">
+                            reply sent {l.replySentAt.slice(0, 10)}
+                          </span>
+                        ) : l.replyDraftBody ? (
+                          <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                            reply draft ready (not sent)
+                          </span>
+                        ) : null}
                       </div>
                       {l.contactEmail && (
                         <p className="mt-1 text-xs text-slate-600">{l.contactEmail}</p>
@@ -486,6 +699,16 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
                         <p className="mt-1 text-xs text-slate-600" title={l.message}>
                           {l.message.length > 140 ? `${l.message.slice(0, 140)}…` : l.message}
                         </p>
+                      )}
+                      {l.replyDraftBody && (
+                        <details className="mt-1 text-xs text-slate-600">
+                          <summary className="cursor-pointer text-emerald-800">
+                            Agent reply draft: {l.replyDraftSubject ?? "(no subject)"}
+                          </summary>
+                          <p className="mt-1 whitespace-pre-line text-slate-700">
+                            {l.replyDraftBody}
+                          </p>
+                        </details>
                       )}
                       <div className="mt-2 flex flex-wrap gap-1">
                         {(["new", "contacted", "qualified", "won", "lost"] as const).map((s) => (

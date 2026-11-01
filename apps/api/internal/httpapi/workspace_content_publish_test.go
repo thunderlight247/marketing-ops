@@ -400,8 +400,18 @@ func TestPublishFailureMarksJobFailedAndRetriesResumeIt(t *testing.T) {
 		t.Error("last_error must never contain the token")
 	}
 
-	// Second attempt (retry): the destination API works again. The SAME job must
-	// be resumed, not duplicated.
+	// A rejected token marks the connection as needing verification; retrying
+	// before reconnecting must not send another write.
+	blocked := h.post(t, "publish")
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("retry before reconnect status = %d body %s", blocked.Code, blocked.Body.String())
+	}
+	// Simulate a successful connection check after fixing the credential.
+	in := h.ws.integrationsByID["in-1"]
+	in.Status = integration.LifecycleConnected
+	h.ws.integrationsByID["in-1"] = in
+
+	// After reconnecting, the SAME job must be resumed, not duplicated.
 	h.sanity.mu.Lock()
 	h.sanity.nextCode = 0
 	h.sanity.mu.Unlock()

@@ -65,6 +65,19 @@ type Config struct {
 	PublishWorkerMaxAttempts int
 	PublishWorkerBaseDelay   time.Duration
 	PublishWorkerMaxDelay    time.Duration
+
+	// EmailBase overrides the outbound email provider host for local
+	// end-to-end runs against a mock. Like SanityOpsBase it is rejected in
+	// production, so a real deployment always talks to the real provider.
+	EmailBase string
+
+	// Email worker: cadence for due messages, bounded retries, exponential
+	// backoff between them. Each workspace brings its own provider key, so
+	// there is no platform-wide email credential here.
+	EmailWorkerInterval    time.Duration
+	EmailWorkerMaxAttempts int
+	EmailWorkerBaseDelay   time.Duration
+	EmailWorkerMaxDelay    time.Duration
 }
 
 // Load reads configuration using getenv (usually os.Getenv). All problems are
@@ -89,6 +102,13 @@ func Load(getenv func(string) string) (Config, error) {
 		PublishWorkerMaxAttempts: 5,
 		PublishWorkerBaseDelay:   30 * time.Second,
 		PublishWorkerMaxDelay:    30 * time.Minute,
+
+		// Email worker defaults. Sending is quick, so the scan is tighter than
+		// publishing's; retries share the same backoff shape.
+		EmailWorkerInterval:    10 * time.Second,
+		EmailWorkerMaxAttempts: 5,
+		EmailWorkerBaseDelay:   30 * time.Second,
+		EmailWorkerMaxDelay:    30 * time.Minute,
 	}
 
 	var problems []error
@@ -235,6 +255,44 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	// Email worker (Milestone 14).
+	emailIntervalRaw := strings.TrimSpace(getenv("EMAIL_WORKER_INTERVAL"))
+	if emailIntervalRaw != "" {
+		seconds, err := strconv.Atoi(emailIntervalRaw)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			add("EMAIL_WORKER_INTERVAL must be an integer between 1 and 3600 seconds")
+		} else {
+			cfg.EmailWorkerInterval = time.Duration(seconds) * time.Second
+		}
+	}
+	emailAttemptsRaw := strings.TrimSpace(getenv("EMAIL_WORKER_MAX_ATTEMPTS"))
+	if emailAttemptsRaw != "" {
+		attempts, err := strconv.Atoi(emailAttemptsRaw)
+		if err != nil || attempts < 1 || attempts > 20 {
+			add("EMAIL_WORKER_MAX_ATTEMPTS must be an integer between 1 and 20")
+		} else {
+			cfg.EmailWorkerMaxAttempts = attempts
+		}
+	}
+	emailBaseDelayRaw := strings.TrimSpace(getenv("EMAIL_WORKER_BASE_DELAY"))
+	if emailBaseDelayRaw != "" {
+		seconds, err := strconv.Atoi(emailBaseDelayRaw)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			add("EMAIL_WORKER_BASE_DELAY must be an integer between 1 and 3600 seconds")
+		} else {
+			cfg.EmailWorkerBaseDelay = time.Duration(seconds) * time.Second
+		}
+	}
+	emailMaxDelayRaw := strings.TrimSpace(getenv("EMAIL_WORKER_MAX_DELAY"))
+	if emailMaxDelayRaw != "" {
+		seconds, err := strconv.Atoi(emailMaxDelayRaw)
+		if err != nil || seconds < 1 || seconds > 86400 {
+			add("EMAIL_WORKER_MAX_DELAY must be an integer between 1 and 86400 seconds")
+		} else {
+			cfg.EmailWorkerMaxDelay = time.Duration(seconds) * time.Second
+		}
+	}
+
 	if cfg.Env == EnvProduction {
 		if dbRaw == "" {
 			add("DATABASE_URL is required when APP_ENV=production")
@@ -251,9 +309,14 @@ func Load(getenv func(string) string) (Config, error) {
 		if strings.TrimSpace(getenv("SANITY_OPS_BASE")) != "" {
 			add("SANITY_OPS_BASE must not be set when APP_ENV=production")
 		}
+		if strings.TrimSpace(getenv("EMAIL_API_BASE")) != "" {
+			add("EMAIL_API_BASE must not be set when APP_ENV=production")
+		}
 	} else {
-		// Dev/test-only API-host override for the publishing adapter.
+		// Dev/test-only API-host overrides for the publishing adapter and the
+		// email provider.
 		cfg.SanityOpsBase = strings.TrimRight(strings.TrimSpace(getenv("SANITY_OPS_BASE")), "/")
+		cfg.EmailBase = strings.TrimRight(strings.TrimSpace(getenv("EMAIL_API_BASE")), "/")
 	}
 
 	if err := errors.Join(problems...); err != nil {

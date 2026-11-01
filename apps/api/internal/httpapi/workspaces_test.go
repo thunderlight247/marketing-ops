@@ -71,6 +71,8 @@ type fakeWorkspaceStore struct {
 	updatedLeads      []leadUpdateCall
 	leadsList         []store.Lead
 	leadsByID         map[string]store.Lead
+	saveLeadReplyErr  error
+	savedLeadReplies  []leadReplyCall
 
 	// Reports (Milestone 12).
 	reportCalls  []reportCall
@@ -82,6 +84,11 @@ type leadUpdateCall struct {
 	workspaceID string
 	leadID      string
 	update      store.LeadUpdate
+}
+
+// leadReplyCall records one SaveLeadReplyDraft call.
+type leadReplyCall struct {
+	workspaceID, leadID, subject, body string
 }
 
 func (f *fakeWorkspaceStore) ListWorkspaces(ctx context.Context) ([]store.Workspace, error) {
@@ -485,9 +492,9 @@ func (f *fakeWorkspaceStore) jobApprovedThenSaved(workspaceID, jobID string) boo
 	return decided && item.Status == "approved"
 }
 
-func (f *fakeWorkspaceStore) CancelPublishingJob(ctx context.Context, workspaceID, jobID string) (store.PublishingJob, error) {
+func (f *fakeWorkspaceStore) CancelPublishingJob(ctx context.Context, workspaceID, itemID, jobID string) (store.PublishingJob, error) {
 	job, _ := f.findJob(workspaceID, jobID)
-	if job == nil || (job.Status != "pending" && job.Status != "failed") {
+	if job == nil || job.ContentItemID != itemID || (job.Status != "pending" && job.Status != "failed") {
 		return store.PublishingJob{}, store.ErrNotFound
 	}
 	original := *job
@@ -495,9 +502,9 @@ func (f *fakeWorkspaceStore) CancelPublishingJob(ctx context.Context, workspaceI
 	return original, nil
 }
 
-func (f *fakeWorkspaceStore) RetryPublishingJob(ctx context.Context, workspaceID, jobID string, now time.Time) (store.PublishingJob, error) {
+func (f *fakeWorkspaceStore) RetryPublishingJob(ctx context.Context, workspaceID, itemID, jobID string, now time.Time) (store.PublishingJob, error) {
 	job, _ := f.findJob(workspaceID, jobID)
-	if job == nil {
+	if job == nil || job.ContentItemID != itemID {
 		return store.PublishingJob{}, store.ErrNotFound
 	}
 	if job.Status != "failed" {
@@ -1025,6 +1032,23 @@ func (f *fakeWorkspaceStore) UpdateLead(ctx context.Context, workspaceID, leadID
 	return l, nil
 }
 
+func (f *fakeWorkspaceStore) SaveLeadReplyDraft(ctx context.Context, workspaceID, leadID, subject, body string) (store.Lead, error) {
+	if f.saveLeadReplyErr != nil {
+		return store.Lead{}, f.saveLeadReplyErr
+	}
+	l, ok := f.leadsByID[leadID]
+	if !ok || l.WorkspaceID != workspaceID {
+		return store.Lead{}, store.ErrNotFound
+	}
+	drafted := fakeCampaignTimes[1]
+	l.ReplyDraftSubject, l.ReplyDraftBody, l.ReplyDraftedAt = &subject, &body, &drafted
+	l.UpdatedAt = drafted
+	f.savedLeadReplies = append(f.savedLeadReplies, leadReplyCall{
+		workspaceID: workspaceID, leadID: leadID, subject: subject, body: body,
+	})
+	return l, nil
+}
+
 // ---- Reports fake (Milestone 12) -------------------------------------------
 
 // reportCall records one WorkspaceReport call so tests can verify the range
@@ -1041,4 +1065,52 @@ func (f *fakeWorkspaceStore) WorkspaceReport(ctx context.Context, workspaceID st
 	}
 	f.reportCalls = append(f.reportCalls, reportCall{workspaceID: workspaceID, rangeSince: rg.Since, rangeUntil: rg.Until})
 	return f.reportResult, nil
+}
+
+// ─── lead engine stubs (satisfy WorkspaceStore; tests don't exercise these) ──
+
+func (f *fakeWorkspaceStore) GetLeadConfig(_ context.Context, workspaceID string) (store.WorkspaceLeadConfig, error) {
+	return store.WorkspaceLeadConfig{}, store.ErrNotFound
+}
+func (f *fakeWorkspaceStore) UpsertLeadConfig(_ context.Context, c store.WorkspaceLeadConfig) (store.WorkspaceLeadConfig, error) {
+	return c, nil
+}
+func (f *fakeWorkspaceStore) SetWhatsAppStatus(_ context.Context, workspaceID, status, phone string) error {
+	return nil
+}
+func (f *fakeWorkspaceStore) ListLeadEngineLeads(_ context.Context, workspaceID string) ([]store.Lead, error) {
+	return nil, nil
+}
+func (f *fakeWorkspaceStore) ListOutreachLogs(_ context.Context, workspaceID, leadID string) ([]store.LeadOutreachLog, error) {
+	return nil, nil
+}
+func (f *fakeWorkspaceStore) AddToBlacklist(_ context.Context, workspaceID, phone, reason string) error {
+	return nil
+}
+func (f *fakeWorkspaceStore) ListBlacklist(_ context.Context, workspaceID string) ([]store.LeadBlacklistEntry, error) {
+	return nil, nil
+}
+func (f *fakeWorkspaceStore) CountDiscoverySearchesToday(_ context.Context, workspaceID, dayKey string) (int, error) {
+	return 0, nil
+}
+func (f *fakeWorkspaceStore) RecordDiscoverySearch(_ context.Context, s store.LeadDiscoverySearch) error {
+	return nil
+}
+func (f *fakeWorkspaceStore) WasSearchedToday(_ context.Context, workspaceID, dayKey, category, city string) (bool, error) {
+	return false, nil
+}
+func (f *fakeWorkspaceStore) SaveDiscoveredLead(_ context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error) {
+	return store.Lead{}, nil
+}
+func (f *fakeWorkspaceStore) UpdateLeadPitch(_ context.Context, workspaceID, leadID, pitch string) error {
+	return nil
+}
+func (f *fakeWorkspaceStore) UpdateLeadStatus(_ context.Context, workspaceID, leadID, status string) error {
+	return nil
+}
+func (f *fakeWorkspaceStore) IsBlacklisted(_ context.Context, workspaceID, phone string) (bool, error) {
+	return false, nil
+}
+func (f *fakeWorkspaceStore) SaveOutreachLog(_ context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error) {
+	return l, nil
 }

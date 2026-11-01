@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-dispatcher",
+  "version": "1.0.0",
+  "description": "WhatsApp dispatching microservice for marketing-ops-platform",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.34.7"
+  }
+}

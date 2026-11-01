@@ -233,17 +233,17 @@ func (s *Store) CompletePublishingJobFailed(ctx context.Context, jobID, lastErr 
 // CancelPublishingJob lets an operator stop a queued or failed job. A running
 // job cannot be cancelled from here (the worker owns it); 'succeeded' and
 // already-'cancelled' jobs are refused.
-func (s *Store) CancelPublishingJob(ctx context.Context, workspaceID, jobID string) (PublishingJob, error) {
+func (s *Store) CancelPublishingJob(ctx context.Context, workspaceID, itemID, jobID string) (PublishingJob, error) {
 	row := s.pool.QueryRow(ctx,
 		`UPDATE publishing_jobs pj
 		 SET status = 'cancelled', next_attempt_at = NULL, updated_at = now()
 		 FROM content_items ci
 		 WHERE pj.content_item_id = ci.id AND pj.id = $1 AND ci.workspace_id = $2
-		   AND pj.status IN ('pending', 'failed')
+		   AND ci.id = $3 AND pj.status IN ('pending', 'failed')
 		 RETURNING pj.id, pj.content_item_id, pj.content_version_id, pj.integration_id,
 			pj.idempotency_key, pj.status, pj.scheduled_at, pj.attempts, pj.last_error,
 			pj.next_attempt_at, pj.created_at, pj.updated_at`,
-		jobID, workspaceID)
+		jobID, workspaceID, itemID)
 	out, err := scanPublishingJob(row)
 	return out, mapNotFound(err)
 }
@@ -251,21 +251,21 @@ func (s *Store) CancelPublishingJob(ctx context.Context, workspaceID, jobID stri
 // RetryPublishingJob re-enables one terminal (or backoff-waiting) failed job
 // for an immediate attempt. The version must still be approved and current;
 // otherwise ErrNotApproved is returned.
-func (s *Store) RetryPublishingJob(ctx context.Context, workspaceID, jobID string, now time.Time) (PublishingJob, error) {
+func (s *Store) RetryPublishingJob(ctx context.Context, workspaceID, itemID, jobID string, now time.Time) (PublishingJob, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return PublishingJob{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful commit
 
-	var itemID, versionID, status string
+	var versionID, status string
 	err = tx.QueryRow(ctx,
-		`SELECT pj.content_item_id, pj.content_version_id, pj.status
+		`SELECT pj.content_version_id, pj.status
 		 FROM publishing_jobs pj
 		 JOIN content_items ci ON ci.id = pj.content_item_id
-		 WHERE pj.id = $1 AND ci.workspace_id = $2
+		 WHERE pj.id = $1 AND ci.workspace_id = $2 AND ci.id = $3
 		 FOR UPDATE OF pj`,
-		jobID, workspaceID).Scan(&itemID, &versionID, &status)
+		jobID, workspaceID, itemID).Scan(&versionID, &status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PublishingJob{}, ErrNotFound

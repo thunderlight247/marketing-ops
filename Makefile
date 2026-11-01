@@ -43,6 +43,13 @@ migrate-status: ## Show which migrations are applied
 
 ## Web ------------------------------------------------------------------------
 .PHONY: web-install web-dev web-build web-lint web-typecheck web-test web-fmt web-fmt-check
+# Both ports are overridable starting suggestions; the launcher reports the
+# ports it actually picked and skips any port another project holds.
+API_BASE ?= http://localhost:8081
+WEB_PORT ?= 3000
+dev: ## Run API + dashboard together; picks free {8080,8081} x {3000,3001,3002}; Ctrl-C stops both
+	docker compose --env-file infra/.env -f infra/docker-compose.yml up -d
+	cd $(WEB_DIR) && bash e2e/run-stack.sh $(API_BASE) $(WEB_PORT) --dev
 web-install: ## Install web dependencies
 	cd $(WEB_DIR) && npm install
 web-dev: ## Run the dashboard dev server

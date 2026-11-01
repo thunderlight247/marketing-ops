@@ -11,6 +11,10 @@ import { WorkspaceReportsSection } from "@/components/workspace-reports-section"
 import { WorkspaceSeoAdvisorSection } from "@/components/workspace-seo-advisor-section";
 import { WorkspaceAgentsSection } from "@/components/workspace-agents-section";
 import { WorkspaceContentCreatorSection } from "@/components/workspace-content-creator-section";
+import { WorkspaceChannelCopySection } from "@/components/workspace-channel-copy-section";
+import { WorkspaceLeadReplySection } from "@/components/workspace-lead-reply-section";
+import { WorkspaceEmailSection } from "@/components/workspace-email-section";
+import { WorkspaceLeadEngineSection } from "@/components/workspace-lead-engine-section";
 import {
   deleteWorkspace,
   fetchWorkspaceDetail,
@@ -436,9 +440,21 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         onCreated={() => setContentRevision((revision) => revision + 1)}
       />
 
+      <WorkspaceChannelCopySection
+        workspaceId={workspace.id}
+        onFiled={() => setContentRevision((revision) => revision + 1)}
+      />
+
       <WorkspaceIntegrationsSection workspaceId={workspace.id} />
 
       <WorkspaceCampaignsSection key={campaignRevision} workspaceId={workspace.id} />
+
+      <WorkspaceEmailSection workspaceId={workspace.id} />
+
+      <WorkspaceLeadReplySection
+        workspaceId={workspace.id}
+        onFiled={() => setCampaignRevision((revision) => revision + 1)}
+      />
 
       <WorkspaceCampaignStrategistSection
         workspaceId={workspace.id}
@@ -446,6 +462,8 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
       />
 
       <WorkspaceReportsSection workspaceId={workspace.id} />
+
+      <WorkspaceLeadEngineSection workspaceId={workspace.id} />
 
       <WorkspaceSeoAdvisorSection workspaceId={workspace.id} />
 

@@ -33,6 +33,17 @@ const (
 	// proposal arrives inactive (status "planned") and every activation,
 	// edit, or deletion stays an operator action in the ordinary flows.
 	ContractProposal = "proposal"
+	// ContractChannelCopy: the run returns a validated ChannelCopyPlan that
+	// the platform files as per-channel copy variants into an existing draft
+	// content item's newest version. It never creates items, never touches
+	// approved or rejected items (a save there would invalidate the human
+	// decision), and the approval workflow itself is untouched.
+	ContractChannelCopy = "channel_copy"
+	// ContractLeadReply: the run returns a validated LeadReply (subject and
+	// body of a first reply to one existing lead) that the platform stores on
+	// that lead for operator review. It never sends, posts, or messages the
+	// lead, and it never changes the lead's status or contact facts.
+	ContractLeadReply = "lead_reply"
 )
 
 // Action classes are a closed set: each one is a reviewed executor that maps
@@ -43,6 +54,16 @@ const ActionFileDraft = "file_draft"
 // ActionCreateCampaign files one proposed campaign into the campaigns store
 // as a reviewable "planned" record; it never activates, edits, or deletes.
 const ActionCreateCampaign = "create_campaign"
+
+// ActionFileChannelCopy files per-channel copy variants into an existing
+// draft content item's newest version through the existing draft-save flow;
+// it never creates items and never changes an item's status.
+const ActionFileChannelCopy = "file_channel_copy"
+
+// ActionFileLeadReply files a drafted first reply onto one existing lead; it
+// never sends the reply, never creates a lead, and never changes a lead's
+// status, source, or campaign attribution.
+const ActionFileLeadReply = "file_lead_reply"
 
 // Data needs are a closed set: one key per registered snapshot loader.
 // Undeclared data never reaches a prompt.
@@ -56,6 +77,11 @@ type RunInput struct {
 	Workspace aiprovider.WorkspaceContext
 	Focus     string
 	Data      map[string]any
+	// LeadEmail is the target lead's own address for lead_reply runs, and
+	// empty otherwise. It is the only address such a reply may contain, so an
+	// invented contact detail fails validation instead of reaching an
+	// operator.
+	LeadEmail string
 }
 
 // RunOutput is the union of the closed output contracts. Exactly one field
@@ -64,6 +90,8 @@ type RunOutput struct {
 	Report   *AdvisorReport
 	Plan     *ContentPlan
 	Proposal *CampaignProposal
+	Copy     *ChannelCopyPlan
+	Reply    *LeadReply
 }
 
 // Specialist is one pluggable agency agent. Implementations validate their
@@ -108,6 +136,16 @@ func capabilities(contract string, actions []string, wants []string) error {
 			return fmt.Errorf("the %s contract must declare exactly the %q action, got %v",
 				contract, ActionCreateCampaign, actions)
 		}
+	case ContractChannelCopy:
+		if len(actions) != 1 || actions[0] != ActionFileChannelCopy {
+			return fmt.Errorf("the %s contract must declare exactly the %q action, got %v",
+				contract, ActionFileChannelCopy, actions)
+		}
+	case ContractLeadReply:
+		if len(actions) != 1 || actions[0] != ActionFileLeadReply {
+			return fmt.Errorf("the %s contract must declare exactly the %q action, got %v",
+				contract, ActionFileLeadReply, actions)
+		}
 	}
 	for _, need := range wants {
 		if !knownDataNeeds[need] {
@@ -118,9 +156,11 @@ func capabilities(contract string, actions []string, wants []string) error {
 }
 
 var knownContracts = map[string]bool{
-	ContractAdvisory: true,
-	ContractDrafting: true,
-	ContractProposal: true,
+	ContractAdvisory:    true,
+	ContractDrafting:    true,
+	ContractProposal:    true,
+	ContractChannelCopy: true,
+	ContractLeadReply:   true,
 }
 
 var knownDataNeeds = map[string]bool{
@@ -213,7 +253,7 @@ func descriptorOf(s Specialist) Descriptor {
 // error, not a configuration problem.
 func NewDefaultRegistry() *Registry {
 	r := NewRegistry()
-	for _, s := range []Specialist{SEOAdvisor{}, ContentCreator{}, SearchGapWriter{}, CampaignStrategist{}} {
+	for _, s := range []Specialist{SEOAdvisor{}, ContentCreator{}, SearchGapWriter{}, CampaignStrategist{}, ChannelCopyWriter{}, LeadResponder{}} {
 		if err := r.Register(s); err != nil {
 			panic(fmt.Sprintf("agents built-in registration failed: %v", err))
 		}

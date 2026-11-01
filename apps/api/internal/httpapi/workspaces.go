@@ -38,8 +38,8 @@ type WorkspaceStore interface {
 	RecordPublishedArtifact(ctx context.Context, jobID, integrationID string, externalID, externalURL *string) error
 	MarkContentPublished(ctx context.Context, workspaceID, itemID string) (store.ContentItem, error)
 	ListPublishingJobs(ctx context.Context, workspaceID, itemID string) ([]store.PublishingJob, error)
-	CancelPublishingJob(ctx context.Context, workspaceID, jobID string) (store.PublishingJob, error)
-	RetryPublishingJob(ctx context.Context, workspaceID, jobID string, now time.Time) (store.PublishingJob, error)
+	CancelPublishingJob(ctx context.Context, workspaceID, itemID, jobID string) (store.PublishingJob, error)
+	RetryPublishingJob(ctx context.Context, workspaceID, itemID, jobID string, now time.Time) (store.PublishingJob, error)
 	ListIntegrations(ctx context.Context, workspaceID string) ([]store.Integration, error)
 	InsertIntegration(ctx context.Context, in store.Integration) (store.Integration, error)
 	GetIntegrationInWorkspace(ctx context.Context, workspaceID, id string) (store.Integration, error)
@@ -60,8 +60,25 @@ type WorkspaceStore interface {
 	ListLeads(ctx context.Context, workspaceID string) ([]store.Lead, error)
 	GetLeadInWorkspace(ctx context.Context, workspaceID, id string) (store.Lead, error)
 	UpdateLead(ctx context.Context, workspaceID, leadID string, in store.LeadUpdate) (store.Lead, error)
+	SaveLeadReplyDraft(ctx context.Context, workspaceID, leadID, subject, body string) (store.Lead, error)
 	// Reports (Milestone 12, first increment).
 	WorkspaceReport(ctx context.Context, workspaceID string, rg store.ReportRange) (store.WorkspaceReport, error)
+	// Lead generation engine (per-workspace outreach).
+	GetLeadConfig(ctx context.Context, workspaceID string) (store.WorkspaceLeadConfig, error)
+	UpsertLeadConfig(ctx context.Context, c store.WorkspaceLeadConfig) (store.WorkspaceLeadConfig, error)
+	SetWhatsAppStatus(ctx context.Context, workspaceID, status, phone string) error
+	ListLeadEngineLeads(ctx context.Context, workspaceID string) ([]store.Lead, error)
+	ListOutreachLogs(ctx context.Context, workspaceID, leadID string) ([]store.LeadOutreachLog, error)
+	AddToBlacklist(ctx context.Context, workspaceID, phone, reason string) error
+	ListBlacklist(ctx context.Context, workspaceID string) ([]store.LeadBlacklistEntry, error)
+	CountDiscoverySearchesToday(ctx context.Context, workspaceID, dayKey string) (int, error)
+	RecordDiscoverySearch(ctx context.Context, s store.LeadDiscoverySearch) error
+	WasSearchedToday(ctx context.Context, workspaceID, dayKey, category, city string) (bool, error)
+	SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error)
+	UpdateLeadPitch(ctx context.Context, workspaceID, leadID, pitch string) error
+	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
+	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
+	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$`)
@@ -77,6 +94,29 @@ type workspaceJSON struct {
 	Status     string  `json:"status"`
 	CreatedAt  string  `json:"createdAt"`
 	UpdatedAt  string  `json:"updatedAt"`
+	// DeliveryAttention is present only when this workspace has a failed send or
+	// a bounced message waiting for a human, so the overview can flag it.
+	DeliveryAttention *deliveryAttentionJSON `json:"deliveryAttention,omitempty"`
+	// DeliveryAcknowledgedAt is when an operator last dismissed this workspace's
+	// delivery problems, so the UI can say what the current badge covers.
+	DeliveryAcknowledgedAt *string `json:"deliveryAcknowledgedAt,omitempty"`
+}
+
+type deliveryAttentionJSON struct {
+	Failed  int `json:"failed"`
+	Bounced int `json:"bounced"`
+}
+
+// deliveryAttentionStore is the optional slice of the store that counts
+// delivery problems per workspace. Stores without it simply report no counts.
+type deliveryAttentionStore interface {
+	EmailDeliveryAttention(ctx context.Context) (map[string]store.EmailDeliveryAttention, error)
+}
+
+// deliveryAcknowledgementStore is the optional slice of the store that reports
+// when each workspace last acknowledged its delivery problems.
+type deliveryAcknowledgementStore interface {
+	EmailDeliveryAcknowledgements(ctx context.Context) (map[string]time.Time, error)
 }
 
 func toWorkspaceJSON(w store.Workspace) workspaceJSON {
@@ -103,9 +143,31 @@ func listWorkspacesHandler(ws WorkspaceStore) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "workspace listing failed")
 			return
 		}
+		// Delivery problems are a convenience banner, not a fact the list owns:
+		// a counting failure must not hide the workspaces themselves.
+		attention := map[string]store.EmailDeliveryAttention{}
+		if counter, ok := ws.(deliveryAttentionStore); ok {
+			if counts, err := counter.EmailDeliveryAttention(r.Context()); err == nil {
+				attention = counts
+			}
+		}
+		acknowledged := map[string]time.Time{}
+		if acker, ok := ws.(deliveryAcknowledgementStore); ok {
+			if times, err := acker.EmailDeliveryAcknowledgements(r.Context()); err == nil {
+				acknowledged = times
+			}
+		}
 		out := make([]workspaceJSON, 0, len(workspaces))
-		for _, ws := range workspaces {
-			out = append(out, toWorkspaceJSON(ws))
+		for _, row := range workspaces {
+			item := toWorkspaceJSON(row)
+			if a := attention[row.ID]; a.Failed > 0 || a.Bounced > 0 {
+				item.DeliveryAttention = &deliveryAttentionJSON{Failed: a.Failed, Bounced: a.Bounced}
+			}
+			if at, ok := acknowledged[row.ID]; ok {
+				formatted := at.UTC().Format(time.RFC3339)
+				item.DeliveryAcknowledgedAt = &formatted
+			}
+			out = append(out, item)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"workspaces": out})
 	}

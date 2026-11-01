@@ -116,7 +116,7 @@ func cancelContentJobHandler(ws WorkspaceStore) http.HandlerFunc {
 			}
 			return
 		}
-		job, err := ws.CancelPublishingJob(r.Context(), workspaceID, jobID)
+		job, err := ws.CancelPublishingJob(r.Context(), workspaceID, itemID, jobID)
 		switch {
 		case err == nil:
 			audit(r.Context(), ws, store.AuditEvent{
@@ -155,7 +155,7 @@ func retryContentJobHandler(ws WorkspaceStore) http.HandlerFunc {
 			}
 			return
 		}
-		job, err := ws.RetryPublishingJob(r.Context(), workspaceID, jobID, time.Now().UTC())
+		job, err := ws.RetryPublishingJob(r.Context(), workspaceID, itemID, jobID, time.Now().UTC())
 		switch {
 		case err == nil:
 			audit(r.Context(), ws, store.AuditEvent{

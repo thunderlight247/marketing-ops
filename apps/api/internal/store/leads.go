@@ -28,17 +28,37 @@ type Lead struct {
 	UtmMedium    *string
 	UtmCampaign  *string
 	FollowUpAt   *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// ReplyDraft* hold the newest agent-drafted first reply for this lead.
+	// A draft is stored for review only: it is never sent by the platform and
+	// it never changes Status, because only a person can record a contact.
+	ReplyDraftSubject *string
+	ReplyDraftBody    *string
+	ReplyDraftedAt    *time.Time
+	// ReplySentAt is set only when the workspace's own email provider
+	// accepted the reply; an attempted send leaves it empty.
+	ReplySentAt *time.Time
+	// Lead engine fields — populated only for source_kind = 'lead_engine'.
+	PlaceID     *string
+	Category    string
+	City        string
+	Address     string
+	Rating      *float64
+	ReviewCount int
+	WebsiteURL  string
+	Pitch       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 const leadColumns = `id, workspace_id, campaign_id, source_kind, source_detail, status,
 	contact_name, contact_email, contact_phone, message, notes,
-	utm_source, utm_medium, utm_campaign, follow_up_at, created_at, updated_at`
+	utm_source, utm_medium, utm_campaign, follow_up_at, created_at, updated_at,
+	reply_draft_subject, reply_draft_body, reply_drafted_at, reply_sent_at,
+	place_id, category, city, address, rating, review_count, website_url, pitch`
 
 func leadValidSource(kind string) bool {
 	switch kind {
-	case "manual", "form_api", "import", "unknown":
+	case "manual", "form_api", "import", "lead_engine", "unknown":
 		return true
 	}
 	return false
@@ -46,7 +66,8 @@ func leadValidSource(kind string) bool {
 
 func leadValidStatus(status string) bool {
 	switch status {
-	case "new", "contacted", "qualified", "won", "lost":
+	case "new", "contacted", "qualified", "won", "lost",
+		"discovered", "pending", "processing", "sent", "delivered", "replied", "demo_sent", "failed", "blacklisted":
 		return true
 	}
 	return false
@@ -193,8 +214,44 @@ func scanLead(row interface{ Scan(dest ...any) error }) (Lead, error) {
 	var l Lead
 	if err := row.Scan(&l.ID, &l.WorkspaceID, &l.CampaignID, &l.SourceKind, &l.SourceDetail,
 		&l.Status, &l.ContactName, &l.ContactEmail, &l.ContactPhone, &l.Message, &l.Notes,
-		&l.UtmSource, &l.UtmMedium, &l.UtmCampaign, &l.FollowUpAt, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.UtmSource, &l.UtmMedium, &l.UtmCampaign, &l.FollowUpAt, &l.CreatedAt, &l.UpdatedAt,
+		&l.ReplyDraftSubject, &l.ReplyDraftBody, &l.ReplyDraftedAt, &l.ReplySentAt,
+		&l.PlaceID, &l.Category, &l.City, &l.Address, &l.Rating, &l.ReviewCount, &l.WebsiteURL, &l.Pitch); err != nil {
 		return Lead{}, err
 	}
 	return l, nil
+}
+
+// leadScanFields returns all Scan destinations in leadColumns order.
+func leadScanFields(l *Lead) []any {
+	return []any{
+		&l.ID, &l.WorkspaceID, &l.CampaignID, &l.SourceKind, &l.SourceDetail,
+		&l.Status, &l.ContactName, &l.ContactEmail, &l.ContactPhone, &l.Message, &l.Notes,
+		&l.UtmSource, &l.UtmMedium, &l.UtmCampaign, &l.FollowUpAt, &l.CreatedAt, &l.UpdatedAt,
+		&l.ReplyDraftSubject, &l.ReplyDraftBody, &l.ReplyDraftedAt, &l.ReplySentAt,
+		&l.PlaceID, &l.Category, &l.City, &l.Address, &l.Rating, &l.ReviewCount, &l.WebsiteURL, &l.Pitch,
+	}
+}
+
+// SaveLeadReplyDraft stores a drafted first reply on one lead, replacing any
+// earlier draft. It is deliberately narrow: the lead's status, contact facts,
+// and traceable source stay untouched, and nothing is sent anywhere. The
+// caller decides whether this lead may receive a first-reply draft at all
+// (the agent route refuses decided leads before any model call).
+func (s *Store) SaveLeadReplyDraft(ctx context.Context, workspaceID, leadID, subject, body string) (Lead, error) {
+	subject = strings.TrimSpace(subject)
+	body = strings.TrimSpace(body)
+	if subject == "" || body == "" {
+		return Lead{}, ErrNameRequired
+	}
+	out, err := scanLead(s.pool.QueryRow(ctx,
+		`UPDATE leads SET
+			reply_draft_subject = $3,
+			reply_draft_body = $4,
+			reply_drafted_at = now(),
+			updated_at = now()
+		 WHERE id = $2 AND workspace_id = $1
+		 RETURNING `+leadColumns,
+		workspaceID, leadID, subject, body))
+	return out, mapNotFound(err)
 }

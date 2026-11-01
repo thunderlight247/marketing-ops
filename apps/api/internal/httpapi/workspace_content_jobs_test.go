@@ -103,6 +103,46 @@ func TestScheduledPublishQueuesForWorker(t *testing.T) {
 	}
 }
 
+func TestScheduleRejectsPastAndExistingJobs(t *testing.T) {
+	t.Run("past schedule must not publish immediately", func(t *testing.T) {
+		h := jobsHarness(t)
+		body := `{"integrationId":"in-1","mode":"publish","scheduledAt":"` + scheduledFor(-1) + `"}`
+		rec := doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/publish", body)
+		if rec.Code != http.StatusBadRequest || len(h.fake.insertedJobs) != 0 {
+			t.Fatalf("status = %d jobs = %d body %s", rec.Code, len(h.fake.insertedJobs), rec.Body.String())
+		}
+	})
+	t.Run("existing job cannot be silently rescheduled", func(t *testing.T) {
+		h := jobsHarness(t)
+		first := `{"integrationId":"in-1","mode":"publish","scheduledAt":"` + scheduledFor(6) + `"}`
+		rec := doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/publish", first)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("first status = %d body %s", rec.Code, rec.Body.String())
+		}
+		second := `{"integrationId":"in-1","mode":"publish","scheduledAt":"` + scheduledFor(12) + `"}`
+		rec = doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/publish", second)
+		if rec.Code != http.StatusConflict || len(h.fake.insertedJobs) != 1 {
+			t.Fatalf("status = %d jobs = %d body %s", rec.Code, len(h.fake.insertedJobs), rec.Body.String())
+		}
+	})
+}
+
+func TestSanityPublishRequiresConnectedIntegration(t *testing.T) {
+	for _, status := range []string{"unconfigured", "limited", "error", "disconnected"} {
+		t.Run(status, func(t *testing.T) {
+			h := jobsHarness(t)
+			in := h.fake.integrationsByID["in-1"]
+			in.Status = status
+			h.fake.integrationsByID["in-1"] = in
+			body := `{"integrationId":"in-1","mode":"publish","scheduledAt":"` + scheduledFor(6) + `"}`
+			rec := doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/publish", body)
+			if rec.Code != http.StatusConflict || len(h.fake.insertedJobs) != 0 {
+				t.Fatalf("status = %d, jobs = %d, body %s", rec.Code, len(h.fake.insertedJobs), rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestScheduledPublishRejectsBadTimestamp(t *testing.T) {
 	h := jobsHarness(t)
 	rec := doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/publish",
@@ -172,6 +212,36 @@ func TestCancelContentJob(t *testing.T) {
 	rec = doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-1/jobs/job-2/cancel", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("succeeded cancel status = %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJobActionsRejectDifferentContentItem(t *testing.T) {
+	for _, tc := range []struct {
+		action string
+		status string
+	}{
+		{action: "cancel", status: "pending"},
+		{action: "retry", status: "failed"},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			h := jobsHarness(t)
+			h.fake.contentItemsByID["it-2"] = store.ContentItem{
+				ID: "it-2", WorkspaceID: "ws-1", Title: "Other item",
+			}
+			h.fake.jobsByKey = map[string]store.PublishingJob{
+				"key": {ID: "job-1", ContentItemID: "it-1", ContentVersionID: "v-1", Status: tc.status},
+			}
+			rec := doJSON(t, h.h, http.MethodPost, "/api/v1/workspaces/ws-1/content/it-2/jobs/job-1/"+tc.action, "")
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
+			}
+			if got := h.fake.jobsByKey["key"].Status; got != tc.status {
+				t.Fatalf("job status changed: got %s want %s", got, tc.status)
+			}
+			if len(h.fake.auditEvents) != 0 {
+				t.Fatalf("rejected request must not create a success audit event: %+v", h.fake.auditEvents)
+			}
+		})
 	}
 }
 

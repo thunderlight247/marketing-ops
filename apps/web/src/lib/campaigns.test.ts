@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createCampaign,
   createLead,
+  createLeadConnection,
+  deleteLeadConnection,
+  listLeadConnections,
   fetchWorkspaceCampaignsLeads,
   formatCampaignStatus,
   formatLeadSource,
@@ -21,6 +24,46 @@ function jsonRes(status: number, body: unknown): Response {
     json: async () => body,
   } as unknown as Response;
 }
+
+describe("website lead connections", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const connection = {
+    id: "conn-1",
+    workspaceId: "ws-1",
+    name: "Website",
+    createdAt: "2026-10-31T00:00:00Z",
+  };
+
+  it("creates a scoped connection and returns its one-time secret", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonRes(201, { connection, secret: "one-time-secret" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await createLeadConnection("", "ws-1", "Website");
+    expect(result.secret).toBe("one-time-secret");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/workspaces/ws-1/lead-connections");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ name: "Website" });
+  });
+
+  it("rejects malformed or cross-workspace connection results", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonRes(200, { connections: [{ ...connection, workspaceId: "other" }] }),
+        ),
+    );
+    await expect(listLeadConnections("", "ws-1")).rejects.toThrow(
+      "Invalid lead connections response",
+    );
+  });
+
+  it("reports revocation failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonRes(500, {})));
+    await expect(deleteLeadConnection("", "ws-1", "conn-1")).rejects.toThrow("Could not revoke");
+  });
+});
 
 describe("validation and formatting", () => {
   it("campaign validation requires a name within limits", () => {

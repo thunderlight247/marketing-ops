@@ -32,7 +32,10 @@ func authMiddleware(apiKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Health and ready probes are always public.
-			if r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/ready" {
+			// Provider callbacks authenticate themselves with the workspace's own
+			// signing secret; the provider has no operator key.
+			if r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/ready" ||
+				isLeadIntakeRequest(r) || isEmailWebhookRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}

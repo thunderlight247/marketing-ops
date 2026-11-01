@@ -2,7 +2,11 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -13,118 +17,104 @@ var (
 	sanityDatasetPattern   = regexp.MustCompile(`^[a-z0-9_~-]+$`)
 )
 
-// SanityAdapter implements Adapter for Sanity CMS.
-type SanityAdapter struct{}
-
-func (a *SanityAdapter) Kind() string {
-	return "sanity"
+// SanityAdapter verifies dataset access without making any external writes.
+// BaseURL and Client are injectable for controlled tests, never workspace config.
+type SanityAdapter struct {
+	BaseURL string
+	Client  *http.Client
 }
 
-func (a *SanityAdapter) DisplayName() string {
-	return "Sanity CMS"
-}
-
+func (a *SanityAdapter) Kind() string        { return "sanity" }
+func (a *SanityAdapter) DisplayName() string { return "Sanity CMS" }
 func (a *SanityAdapter) Description() string {
 	return "Structured content platform (Next.js + Sanity blog pilot)"
 }
 
 func (a *SanityAdapter) DefaultCapabilities() []CapabilityReport {
 	return []CapabilityReport{
-		{Capability: CapReadContent, Status: StatusUnverified, Details: "Dataset read unverified"},
-		{Capability: CapCreateDraft, Status: StatusUnverified, Details: "Draft creation requires write token"},
-		{Capability: CapPublish, Status: StatusUnverified, Details: "Publishing requires write token"},
-		{Capability: CapUpdateContent, Status: StatusUnverified, Details: "Content update requires write token"},
-		{Capability: CapSchedule, Status: StatusUnsupported, Details: "Sanity does not provide scheduled releases out of the box in this tier"},
-		{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Content CMS only; use Google Search Console or analytics integration"},
+		{Capability: CapReadContent, Status: StatusUnverified, Details: "Dataset read access has not been verified"},
+		{Capability: CapCreateDraft, Status: StatusUnverified, Details: "Write permission has not been verified"},
+		{Capability: CapPublish, Status: StatusUnverified, Details: "Write permission has not been verified"},
+		{Capability: CapUpdateContent, Status: StatusUnverified, Details: "Write permission has not been verified"},
+		{Capability: CapSchedule, Status: StatusUnsupported, Details: "Scheduling uses the platform worker, not Sanity scheduled releases"},
+		{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Content CMS only; use a separate analytics integration"},
 		{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Sanity is not an enquiry or CRM endpoint"},
 	}
 }
 
 func (a *SanityAdapter) Check(ctx context.Context, config map[string]any, creds map[string]string) CheckResult {
-	now := time.Now().UTC()
-
+	result := CheckResult{LifecycleStatus: LifecycleError, CheckedAt: time.Now().UTC(), Capabilities: a.DefaultCapabilities()}
 	projectID, _ := config["projectId"].(string)
 	projectID = strings.TrimSpace(projectID)
-
 	dataset, _ := config["dataset"].(string)
 	dataset = strings.TrimSpace(dataset)
-
-	if projectID == "" {
-		return CheckResult{
-			LifecycleStatus: LifecycleError,
-			Diagnostic:      "Configuration error: projectId is required",
-			CheckedAt:       now,
-			Capabilities: []CapabilityReport{
-				{Capability: CapReadContent, Status: StatusFailed, Details: "Missing projectId"},
-				{Capability: CapCreateDraft, Status: StatusFailed, Details: "Missing projectId"},
-				{Capability: CapPublish, Status: StatusFailed, Details: "Missing projectId"},
-				{Capability: CapUpdateContent, Status: StatusFailed, Details: "Missing projectId"},
-				{Capability: CapSchedule, Status: StatusUnsupported, Details: "Sanity does not provide scheduled releases"},
-				{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Not supported by Sanity"},
-				{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Not supported by Sanity"},
-			},
-		}
+	switch {
+	case projectID == "":
+		result.Diagnostic = "Configuration error: projectId is required"
+		return result
+	case !sanityProjectIDPattern.MatchString(projectID):
+		result.Diagnostic = "Configuration error: projectId has invalid format"
+		return result
+	case dataset == "":
+		result.Diagnostic = "Configuration error: dataset is required"
+		return result
+	case !sanityDatasetPattern.MatchString(dataset):
+		result.Diagnostic = "Configuration error: dataset has invalid format"
+		return result
 	}
-
-	if !sanityProjectIDPattern.MatchString(projectID) {
-		return CheckResult{
-			LifecycleStatus: LifecycleError,
-			Diagnostic:      "Configuration error: projectId has invalid format",
-			CheckedAt:       now,
-			Capabilities:    a.DefaultCapabilities(),
-		}
-	}
-
-	if dataset == "" {
-		return CheckResult{
-			LifecycleStatus: LifecycleError,
-			Diagnostic:      "Configuration error: dataset is required (e.g. 'production')",
-			CheckedAt:       now,
-			Capabilities:    a.DefaultCapabilities(),
-		}
-	}
-
-	if !sanityDatasetPattern.MatchString(dataset) {
-		return CheckResult{
-			LifecycleStatus: LifecycleError,
-			Diagnostic:      "Configuration error: dataset has invalid format",
-			CheckedAt:       now,
-			Capabilities:    a.DefaultCapabilities(),
-		}
-	}
-
 	token := strings.TrimSpace(creds["token"])
 	if token == "" {
-		// Read-only / limited configuration without write token.
-		return CheckResult{
-			LifecycleStatus: LifecycleLimited,
-			Diagnostic:      fmt.Sprintf("Dataset %q on project %q configured for public read; no write token provided.", dataset, projectID),
-			CheckedAt:       now,
-			Capabilities: []CapabilityReport{
-				{Capability: CapReadContent, Status: StatusSupported, Details: "Read access available for public dataset"},
-				{Capability: CapCreateDraft, Status: StatusUnsupported, Details: "Requires write token (Editor or Administrator permissions)"},
-				{Capability: CapPublish, Status: StatusUnsupported, Details: "Requires write token (Editor or Administrator permissions)"},
-				{Capability: CapUpdateContent, Status: StatusUnsupported, Details: "Requires write token (Editor or Administrator permissions)"},
-				{Capability: CapSchedule, Status: StatusUnsupported, Details: "Sanity does not provide scheduled releases out of the box in this tier"},
-				{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Content CMS only; use Google Search Console or analytics integration"},
-				{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Sanity is not an enquiry or CRM endpoint"},
-			},
-		}
+		result.LifecycleStatus = LifecycleLimited
+		result.Diagnostic = "Add a project token to verify dataset access; access has not been checked."
+		return result
 	}
-
-	// Token is configured.
-	return CheckResult{
-		LifecycleStatus: LifecycleConnected,
-		Diagnostic:      fmt.Sprintf("Connected to project %q (dataset %q) with write token.", projectID, dataset),
-		CheckedAt:       now,
-		Capabilities: []CapabilityReport{
-			{Capability: CapReadContent, Status: StatusSupported, Details: "Read access verified"},
-			{Capability: CapCreateDraft, Status: StatusSupported, Details: "Draft mutation supported with write token"},
-			{Capability: CapPublish, Status: StatusSupported, Details: "Publish mutation supported (gated by operator approval)"},
-			{Capability: CapUpdateContent, Status: StatusSupported, Details: "Content update mutation supported"},
-			{Capability: CapSchedule, Status: StatusUnsupported, Details: "Sanity does not provide scheduled releases out of the box in this tier"},
-			{Capability: CapAnalytics, Status: StatusUnsupported, Details: "Content CMS only; use Google Search Console or analytics integration"},
-			{Capability: CapLeadIntake, Status: StatusUnsupported, Details: "Sanity is not an enquiry or CRM endpoint"},
-		},
+	base := a.BaseURL
+	if base == "" {
+		base = "https://" + projectID + ".api.sanity.io"
 	}
+	u, err := url.Parse(strings.TrimRight(base, "/") + "/v2024-10-14/data/query/" + url.PathEscape(dataset))
+	if err != nil {
+		result.Diagnostic = "Sanity connection configuration is invalid."
+		return result
+	}
+	q := u.Query()
+	q.Set("query", "count(*[_id in path('drafts.**')])")
+	q.Set("perspective", "raw")
+	u.RawQuery = q.Encode()
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		result.Diagnostic = "Sanity connection configuration is invalid."
+		return result
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := a.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	// Never forward credentials to a redirected host.
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := copyClient.Do(req)
+	if err != nil {
+		result.Diagnostic = "Could not reach Sanity; check the network and try again."
+		return result
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		result.Diagnostic = fmt.Sprintf("Sanity refused the dataset check (HTTP %d); verify the project, dataset and token permissions.", resp.StatusCode)
+		return result
+	}
+	var body struct {
+		Result *int `json:"result"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&body); err != nil || body.Result == nil {
+		result.Diagnostic = "Sanity returned an unexpected response; dataset access could not be verified."
+		return result
+	}
+	result.LifecycleStatus = LifecycleConnected
+	result.Diagnostic = "Sanity accepted the token and dataset query. Write permissions and the website schema are not verified by this read-only check."
+	result.Capabilities[0] = CapabilityReport{Capability: CapReadContent, Status: StatusSupported, Details: "Authenticated dataset query succeeded"}
+	return result
 }

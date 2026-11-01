@@ -51,6 +51,10 @@ type Deps struct {
 	SanityOpsBase string
 	HTTPClient    *http.Client
 
+	// EmailAPIBase overrides the outbound email provider host in
+	// development/tests only; production always uses the real provider.
+	EmailAPIBase string
+
 	// AIGenerator drafts content; nil makes the generate route answer 501.
 	AIGenerator     ContentGenerator
 	GenerateTimeout time.Duration
@@ -126,8 +130,46 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/leads", listWorkspaceLeadsHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/leads", createWorkspaceLeadHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/leads/{leadId}", patchWorkspaceLeadHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-connections", manageLeadIntake(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-connections", manageLeadIntake(d.Workspaces))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/lead-connections/{connectionId}", manageLeadIntake(d.Workspaces))
+	intakeLimiter := NewRateLimiter(60, time.Minute)
+	mux.Handle("POST /api/v1/workspaces/{id}/lead-connections/{connectionId}/submissions", intakeLimiter.Middleware(receiveLeadIntake(d.Workspaces)))
+	mux.Handle("POST /api/v1/workspaces/{id}/lead-connections/{connectionId}/verify", intakeLimiter.Middleware(verifyLeadIntake(d.Workspaces)))
+	// Outbound email: one provider account per workspace, used for new-lead
+	// alerts and for sending the replies an operator approved.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/email-settings", getEmailSettingsHandler(d.Workspaces))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/email-settings", putEmailSettingsHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/email-settings", deleteEmailSettingsHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/email-deliveries", listEmailDeliveriesHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/leads/{leadId}/email-deliveries", listLeadEmailDeliveriesHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/email-deliveries/acknowledged", listAcknowledgedEmailProblemsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/email-deliveries/{deliveryId}/retry", retryEmailDeliveryHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/delivery-attention/acknowledge", acknowledgeDeliveryAttentionHandler(d.Workspaces))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/email-settings/webhook", putEmailWebhookSecretHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/email-settings/webhook", deleteEmailWebhookSecretHandler(d.Workspaces))
+	// Provider delivery callbacks. This route bypasses operator auth (the
+	// provider has no operator key) and verifies the provider's signature with
+	// the workspace's own secret instead; see isEmailWebhookRequest.
+	mux.HandleFunc("POST /api/v1/email/webhooks/{provider}/{id}", receiveEmailWebhook(d.Workspaces, d.CredentialKey))
+	mux.Handle("POST /api/v1/workspaces/{id}/email-settings/test",
+		intakeLimiter.Middleware(http.HandlerFunc(testEmailSettingsHandler(d.Workspaces, d.CredentialKey, d.EmailAPIBase, d.HTTPClient))))
+	mux.Handle("POST /api/v1/workspaces/{id}/leads/{leadId}/reply-send",
+		intakeLimiter.Middleware(http.HandlerFunc(sendLeadReplyHandler(d.Workspaces))))
 	// Reporting (Milestone 12, first increment); workspace-scoped.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/reports", getWorkspaceReportHandler(d.Workspaces))
+	// Lead Generation & Outreach Engine; per-workspace, isolated by workspace_id.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/config", getLeadEngineConfigHandler(d.Workspaces, d.CredentialKey))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/lead-engine/config", putLeadEngineConfigHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/whatsapp/status", getWhatsAppStatusHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/connect", connectWhatsAppHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/disconnect", disconnectWhatsAppHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads", listLeadEngineLeadsHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads/{leadId}/logs", listLeadOutreachLogsHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/blacklist", listBlacklistHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/blacklist", addToBlacklistHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/discover", triggerDiscoveryHandler(d.Workspaces, d.CredentialKey))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/dispatch", triggerDispatchHandler(d.Workspaces, d.CredentialKey))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations", listWorkspaceIntegrationsHandler(d.Workspaces))

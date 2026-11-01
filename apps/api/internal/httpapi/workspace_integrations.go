@@ -316,17 +316,23 @@ func putIntegrationCredentialsHandler(ws WorkspaceStore, reg *integration.Regist
 		adapter, ok := reg.Get(in.AdapterKind)
 		if ok {
 			checkRes := adapter.Check(r.Context(), in.Config, req.Credentials)
-			_ = ws.SetIntegrationStatus(r.Context(), workspaceID, integrationID, checkRes.LifecycleStatus)
+			if err := ws.SetIntegrationStatus(r.Context(), workspaceID, integrationID, checkRes.LifecycleStatus); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "credentials were saved but the connection status could not be updated; run the check again")
+				return
+			}
 			for _, c := range checkRes.Capabilities {
 				details := c.Details
 				verifiedAt := checkRes.CheckedAt
-				_ = ws.UpsertCapability(r.Context(), integrationID, store.IntegrationCapability{
+				if err := ws.UpsertCapability(r.Context(), integrationID, store.IntegrationCapability{
 					IntegrationID: integrationID,
 					Capability:    c.Capability,
 					Status:        c.Status,
 					Details:       &details,
 					VerifiedAt:    &verifiedAt,
-				})
+				}); err != nil {
+					writeJSONError(w, http.StatusInternalServerError, "credentials were saved but capability results could not be stored; run the check again")
+					return
+				}
 			}
 		}
 
@@ -340,8 +346,16 @@ func putIntegrationCredentialsHandler(ws WorkspaceStore, reg *integration.Regist
 		})
 
 		// Return fresh state
-		updated, _ := ws.GetIntegrationInWorkspace(r.Context(), workspaceID, integrationID)
-		caps, _ := ws.ListCapabilities(r.Context(), integrationID)
+		updated, err := ws.GetIntegrationInWorkspace(r.Context(), workspaceID, integrationID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "credentials were saved but the connection could not be loaded")
+			return
+		}
+		caps, err := ws.ListCapabilities(r.Context(), integrationID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "credentials were saved but capability results could not be loaded")
+			return
+		}
 		writeJSON(w, http.StatusOK, toIntegrationJSON(updated, true, caps))
 	}
 }

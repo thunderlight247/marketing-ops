@@ -118,4 +118,10 @@ func TestDefaultRegistryContracts(t *testing.T) {
 		len(strategist.Actions) != 1 || strategist.Actions[0] != ActionCreateCampaign {
 		t.Fatalf("unexpected strategist descriptor: %#v", strategist)
 	}
+	copywriter, ok := byID[ChannelCopyWriterID]
+	if !ok || copywriter.OutputContract != ContractChannelCopy || copywriter.Version != ChannelCopyWriterVersion ||
+		len(copywriter.DataNeeds) != 0 ||
+		len(copywriter.Actions) != 1 || copywriter.Actions[0] != ActionFileChannelCopy {
+		t.Fatalf("unexpected channel-copy descriptor: %#v", copywriter)
+	}
 }

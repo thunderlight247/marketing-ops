@@ -41,8 +41,16 @@ type leadJSON struct {
 	UtmMedium    *string    `json:"utmMedium"`
 	UtmCampaign  *string    `json:"utmCampaign"`
 	FollowUpAt   *time.Time `json:"followUpAt"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	// The newest agent-drafted first reply, stored for review only. It is
+	// never sent by the platform and never changes the lead's status.
+	ReplyDraftSubject *string    `json:"replyDraftSubject"`
+	ReplyDraftBody    *string    `json:"replyDraftBody"`
+	ReplyDraftedAt    *time.Time `json:"replyDraftedAt"`
+	// ReplySentAt is set only when this workspace's own email provider
+	// accepted that reply.
+	ReplySentAt *time.Time `json:"replySentAt"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 func toLeadJSON(l store.Lead) leadJSON {
@@ -62,8 +70,13 @@ func toLeadJSON(l store.Lead) leadJSON {
 		UtmMedium:    l.UtmMedium,
 		UtmCampaign:  l.UtmCampaign,
 		FollowUpAt:   l.FollowUpAt,
-		CreatedAt:    l.CreatedAt.UTC(),
-		UpdatedAt:    l.UpdatedAt.UTC(),
+
+		ReplyDraftSubject: l.ReplyDraftSubject,
+		ReplyDraftBody:    l.ReplyDraftBody,
+		ReplyDraftedAt:    l.ReplyDraftedAt,
+		ReplySentAt:       l.ReplySentAt,
+		CreatedAt:         l.CreatedAt.UTC(),
+		UpdatedAt:         l.UpdatedAt.UTC(),
 	}
 }
 
@@ -154,6 +167,8 @@ func createWorkspaceLeadHandler(ws WorkspaceStore) http.HandlerFunc {
 				EntityID:    &created.ID,
 				Details:     map[string]any{"sourceKind": created.SourceKind},
 			})
+			// The team learns about the enquiry without opening the dashboard.
+			queueNewLeadEmail(r.Context(), ws, workspaceID, created.ID)
 			writeJSON(w, http.StatusCreated, toLeadJSON(created))
 		case errors.Is(err, store.ErrInvalidStatus):
 			writeJSONError(w, http.StatusBadRequest, "unknown sourceKind or status")

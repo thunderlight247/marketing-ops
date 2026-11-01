@@ -18,6 +18,16 @@ import (
 // maxAgentPayloadBytes bounds one agent run request, regardless of contract.
 const maxAgentPayloadBytes = 8 * 1024
 
+// maxChannelCopyExcerptRunes is how much of the target draft's body enters
+// the channel-copy brief: enough to adapt from, far below the payload and
+// prompt caps of the pipeline.
+const maxChannelCopyExcerptRunes = 1200
+
+// maxLeadReplyEnquiryRunes is how much of a lead's own message enters the
+// lead-reply brief: enough to answer what was asked, far below the prompt and
+// payload caps of the pipeline.
+const maxLeadReplyEnquiryRunes = 1200
+
 // AgentSnapshotLoader supplies one declared data need for one workspace, or
 // (any(nil), note, nil) when no connected data exists. Loaders are read-only
 // and see only the requested workspace's rows.
@@ -84,6 +94,8 @@ type runRequest struct {
 	Kind          *string `json:"kind"`
 	Focus         *string `json:"focus"`
 	ContentItemID *string `json:"contentItemId"`
+	// LeadID selects the existing lead a lead_reply run answers.
+	LeadID *string `json:"leadId"`
 }
 
 // POST /api/v1/workspaces/{id}/agents/{agentId}/run executes one enabled
@@ -159,7 +171,10 @@ func workspaceAgentRunHandler(
 		// brief, not a separate channel of context.
 		draft := draftFiling{}
 		runFocus := focus
-		if agent.OutputContract() == agents.ContractDrafting {
+		var copyFiling channelCopyFiling
+		var leadFiling leadReplyFiling
+		switch agent.OutputContract() {
+		case agents.ContractDrafting:
 			prepared, reqErr := prepareDraftFiling(r, ws, workspaceID, req.Kind, req.ContentItemID)
 			if reqErr != nil {
 				reqErr.respond(w)
@@ -171,6 +186,22 @@ func workspaceAgentRunHandler(
 			} else {
 				runFocus = "Content kind for this piece: " + draft.kind + "\n" + focus
 			}
+		case agents.ContractChannelCopy:
+			prepared, reqErr := prepareChannelCopyFiling(r, ws, workspaceID, req.ContentItemID)
+			if reqErr != nil {
+				reqErr.respond(w)
+				return
+			}
+			copyFiling = prepared
+			runFocus = copyFiling.brief + focus
+		case agents.ContractLeadReply:
+			prepared, reqErr := prepareLeadReplyFiling(r, ws, workspaceID, req.LeadID)
+			if reqErr != nil {
+				reqErr.respond(w)
+				return
+			}
+			leadFiling = prepared
+			runFocus = leadFiling.brief + focus
 		}
 
 		runTimeout := timeout
@@ -186,6 +217,7 @@ func workspaceAgentRunHandler(
 			Workspace: workspaceContext(workspace, brand),
 			Focus:     runFocus,
 			Data:      data,
+			LeadEmail: leadFiling.leadEmail(),
 		})
 		runDuration := time.Since(runStarted)
 		if agentErr != nil {
@@ -231,6 +263,22 @@ func workspaceAgentRunHandler(
 				return
 			}
 			if !respondCreateCampaign(w, r, ws, workspaceID, output.Proposal, runDuration) {
+				return
+			}
+		case agents.ContractChannelCopy:
+			if output.Copy == nil {
+				writeJSONError(w, http.StatusInternalServerError, "the agent returned an unexpected contract")
+				return
+			}
+			if !respondFileChannelCopy(w, r, ws, workspaceID, copyFiling, output.Copy, runDuration) {
+				return
+			}
+		case agents.ContractLeadReply:
+			if output.Reply == nil {
+				writeJSONError(w, http.StatusInternalServerError, "the agent returned an unexpected contract")
+				return
+			}
+			if !respondFileLeadReply(w, r, ws, workspaceID, leadFiling, output.Reply, runDuration) {
 				return
 			}
 		default:
@@ -443,6 +491,308 @@ func respondFileDraft(
 		KeyPoints:  plan.KeyPoints,
 		DurationMs: runDuration.Milliseconds(),
 		SlugDrift:  emptyToNil(plan.Slug),
+	})
+	return true
+}
+
+// channelCopyFiling is the prepared file_channel_copy input for one run: the
+// already-authorized target item, the channels its newest version already
+// carries (new copy merges over these, never drops them), and the bounded
+// brief the specialist adapts from. The run never creates an item; it always
+// targets an existing one.
+type channelCopyFiling struct {
+	item store.ContentItem
+	// existingChannels is the newest version's channel-copy map, including
+	// copies written by humans or earlier runs; the executor only adds keys.
+	existingChannels map[string]string
+	brief            string // title and capped body excerpt, rendered once, before the run
+}
+
+// prepareChannelCopyFiling validates the file_channel_copy request before any
+// model call: a target item is required, must exist in this workspace, and
+// must be in status "draft". This is deliberately stricter than the ordinary
+// draft-save rule: filing copy into an approved or rejected item would reset
+// it to draft and invalidate a human decision, and no agent run does that —
+// a status change stays an operator action.
+func prepareChannelCopyFiling(
+	r *http.Request, ws WorkspaceStore, workspaceID string, contentItemID *string,
+) (channelCopyFiling, *requestError) {
+	itemID := trim(contentItemID)
+	if itemID == "" {
+		return channelCopyFiling{}, &requestError{status: http.StatusBadRequest,
+			message: "contentItemId is required for this agent"}
+	}
+	item, latest, err := ws.GetContentItemDetail(r.Context(), workspaceID, itemID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return channelCopyFiling{}, &requestError{status: http.StatusNotFound,
+				message: "no such content item in this workspace"}
+		}
+		return channelCopyFiling{}, &requestError{status: http.StatusInternalServerError,
+			message: "content item lookup failed"}
+	}
+	if item.Status != "draft" {
+		return channelCopyFiling{}, &requestError{status: http.StatusConflict,
+			message: "the channel copy files only into draft items; move the item to draft first"}
+	}
+
+	// Carried-forward channels from the newest version, when one exists.
+	existing := make(map[string]string)
+	if latest != nil {
+		for name, value := range latest.ChannelCopy {
+			if message, ok := value.(string); ok && name != "" {
+				existing[name] = message
+			}
+		}
+	}
+
+	// The brief carries the item's proven text only: its title and a capped
+	// excerpt of the newest version's body, when one exists.
+	var out strings.Builder
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = "(untitled)"
+	}
+	fmt.Fprintf(&out, "Draft to adapt — Title: %s\n", title)
+	if latest != nil && strings.TrimSpace(latest.Body) != "" {
+		excerpt := strings.TrimSpace(latest.Body)
+		if runeCount(excerpt) > maxChannelCopyExcerptRunes {
+			runes := []rune(excerpt)
+			excerpt = string(runes[:maxChannelCopyExcerptRunes]) + "…"
+		}
+		fmt.Fprintf(&out, "Body excerpt: %s\n", excerpt)
+	}
+	return channelCopyFiling{item: item, existingChannels: existing, brief: out.String()}, nil
+}
+
+// respondFileChannelCopy runs the file_channel_copy action: it saves the
+// validated per-channel copy into the target item through the ordinary
+// draft-save path (a new immutable version). New copy merges over the
+// newest version's existing channels — a run only ever adds, never drops —
+// and the item's proven text (title, excerpt, body, call to action) carries
+// forward via the store's nil handling, so the run replaces nothing else and
+// stamps agent provenance into the version metadata. It never creates
+// items, publishes, or schedules.
+func respondFileChannelCopy(
+	w http.ResponseWriter,
+	r *http.Request,
+	ws WorkspaceStore,
+	workspaceID string,
+	filing channelCopyFiling,
+	plan *agents.ChannelCopyPlan,
+	runDuration time.Duration,
+) bool {
+	merged := make(map[string]any, len(filing.existingChannels)+len(plan.Channels))
+	for name, message := range filing.existingChannels {
+		merged[name] = message
+	}
+	for name, message := range plan.Channels {
+		merged[name] = message
+	}
+	saved, version, err := ws.SaveContentDraft(r.Context(), workspaceID, filing.item.ID, store.ContentDraftInput{
+		Title:       filing.item.Title, // carried forward, not agent-authored
+		ChannelCopy: merged,
+		Metadata: map[string]any{
+			"source":       "agent",
+			"agentId":      plan.AgentID,
+			"agentVersion": plan.Version,
+			"provider":     plan.Provider,
+			"model":        plan.Model,
+		},
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotEditable) {
+			writeJSONError(w, http.StatusConflict,
+				"the content item is frozen (review, queued, publishing, or published); its text can no longer be replaced")
+			return false
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "no such content item in this workspace")
+			return false
+		}
+		writeJSONError(w, http.StatusInternalServerError, "storing the channel copy failed")
+		return false
+	}
+
+	audit(r.Context(), ws, store.AuditEvent{
+		WorkspaceID: &workspaceID,
+		Action:      "agent.action.file_channel_copy.completed",
+		EntityType:  "content_item",
+		EntityID:    &filing.item.ID,
+		Details: map[string]any{
+			"id":            filing.item.ID,
+			"kind":          filing.item.Kind,
+			"agent_id":      plan.AgentID,
+			"agent_version": plan.Version,
+			"provider":      plan.Provider,
+			"model":         plan.Model,
+			"channels":      len(plan.Channels),
+		},
+	})
+
+	writeJSON(w, http.StatusCreated, struct {
+		Item       contentItemJSON    `json:"item"`
+		Version    contentVersionJSON `json:"version"`
+		Provider   string             `json:"provider"`
+		Model      string             `json:"model"`
+		AgentID    string             `json:"agentId"`
+		Channels   map[string]string  `json:"channels"`
+		DurationMs int64              `json:"durationMs"`
+	}{
+		Item:       toContentItemJSON(saved),
+		Version:    toContentVersionJSON(version),
+		Provider:   plan.Provider,
+		Model:      plan.Model,
+		AgentID:    plan.AgentID,
+		Channels:   plan.Channels,
+		DurationMs: runDuration.Milliseconds(),
+	})
+	return true
+}
+
+// leadReplyFiling is the prepared file_lead_reply input for one run: the
+// already-authorized target lead and the bounded brief the specialist answers.
+// The run never creates a lead; it always answers an existing enquiry.
+type leadReplyFiling struct {
+	lead  store.Lead
+	brief string // the lead's own bounded facts, rendered once, before the run
+}
+
+// leadEmail returns the target lead's own address, or "" when none was
+// recorded. Replies may contain that address only.
+func (f leadReplyFiling) leadEmail() string {
+	if f.lead.ContactEmail == nil {
+		return ""
+	}
+	return *f.lead.ContactEmail
+}
+
+// prepareLeadReplyFiling validates the file_lead_reply request before any
+// model call: a target lead is required, must exist in this workspace, must
+// not be decided yet (won/lost), and must carry something to answer (an
+// enquiry or at least a name). Drafting a "first reply" to a decided lead, or
+// to a lead with nothing recorded, would produce text grounded in nothing.
+func prepareLeadReplyFiling(
+	r *http.Request, ws WorkspaceStore, workspaceID string, leadID *string,
+) (leadReplyFiling, *requestError) {
+	id := trim(leadID)
+	if id == "" {
+		return leadReplyFiling{}, &requestError{status: http.StatusBadRequest,
+			message: "leadId is required for this agent"}
+	}
+	lead, err := ws.GetLeadInWorkspace(r.Context(), workspaceID, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return leadReplyFiling{}, &requestError{status: http.StatusNotFound,
+				message: "no such lead in this workspace"}
+		}
+		return leadReplyFiling{}, &requestError{status: http.StatusInternalServerError,
+			message: "lead lookup failed"}
+	}
+	if lead.Status == "won" || lead.Status == "lost" {
+		return leadReplyFiling{}, &requestError{status: http.StatusConflict,
+			message: "this lead is already decided (won or lost); move it back to an open status before drafting a reply"}
+	}
+	message := ""
+	if lead.Message != nil {
+		message = strings.TrimSpace(*lead.Message)
+	}
+	name := ""
+	if lead.ContactName != nil {
+		name = strings.TrimSpace(*lead.ContactName)
+	}
+	if message == "" && name == "" {
+		return leadReplyFiling{}, &requestError{status: http.StatusBadRequest,
+			message: "this lead has no enquiry text or contact name to reply to"}
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "Reply to this lead\nRecorded status: %s\nSource: %s", lead.Status, lead.SourceKind)
+	if strings.TrimSpace(lead.SourceDetail) != "" {
+		fmt.Fprintf(&out, " (%s)", strings.TrimSpace(lead.SourceDetail))
+	}
+	out.WriteString("\n")
+	if name != "" {
+		fmt.Fprintf(&out, "Contact name: %s\n", name)
+	}
+	if email := lead.ContactEmail; email != nil && strings.TrimSpace(*email) != "" {
+		fmt.Fprintf(&out, "Contact email: %s\n", strings.TrimSpace(*email))
+	}
+	if message != "" {
+		if runeCount(message) > maxLeadReplyEnquiryRunes {
+			message = string([]rune(message)[:maxLeadReplyEnquiryRunes]) + "…"
+		}
+		fmt.Fprintf(&out, "Enquiry (the lead's own words): %s\n", message)
+	}
+	if lead.FollowUpAt != nil {
+		fmt.Fprintf(&out, "Follow-up already scheduled for: %s\n", lead.FollowUpAt.UTC().Format(time.RFC3339))
+	}
+	return leadReplyFiling{lead: lead, brief: out.String()}, nil
+}
+
+// respondFileLeadReply runs the file_lead_reply action: it stores the
+// validated draft on the target lead for the operator to review, edit, and
+// send themselves. Nothing is sent here, no lead is created or deleted, and
+// the lead's status, source, attribution, and notes are untouched — only a
+// person can record that a lead was contacted.
+func respondFileLeadReply(
+	w http.ResponseWriter,
+	r *http.Request,
+	ws WorkspaceStore,
+	workspaceID string,
+	filing leadReplyFiling,
+	reply *agents.LeadReply,
+	runDuration time.Duration,
+) bool {
+	saved, err := ws.SaveLeadReplyDraft(r.Context(), workspaceID, filing.lead.ID, reply.Subject, reply.Body)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "no such lead in this workspace")
+			return false
+		}
+		if errors.Is(err, store.ErrNameRequired) {
+			writeJSONError(w, http.StatusBadGateway, "the drafted reply was missing a subject or body")
+			return false
+		}
+		writeJSONError(w, http.StatusInternalServerError, "storing the drafted reply failed")
+		return false
+	}
+
+	audit(r.Context(), ws, store.AuditEvent{
+		WorkspaceID: &workspaceID,
+		Action:      "agent.action.file_lead_reply.completed",
+		EntityType:  "lead",
+		EntityID:    &filing.lead.ID,
+		Details: map[string]any{
+			"id":              filing.lead.ID,
+			"status":          saved.Status, // unchanged by this action
+			"agent_id":        reply.AgentID,
+			"agent_version":   reply.Version,
+			"provider":        reply.Provider,
+			"model":           reply.Model,
+			"subject_runes":   runeCount(reply.Subject),
+			"body_runes":      runeCount(reply.Body),
+			"has_enquiry":     filing.lead.Message != nil && strings.TrimSpace(*filing.lead.Message) != "",
+			"campaign_linked": filing.lead.CampaignID != nil,
+		},
+	})
+
+	writeJSON(w, http.StatusCreated, struct {
+		Lead       leadJSON `json:"lead"`
+		Subject    string   `json:"subject"`
+		Body       string   `json:"body"`
+		Provider   string   `json:"provider"`
+		Model      string   `json:"model"`
+		AgentID    string   `json:"agentId"`
+		DurationMs int64    `json:"durationMs"`
+	}{
+		Lead:       toLeadJSON(saved),
+		Subject:    reply.Subject,
+		Body:       reply.Body,
+		Provider:   reply.Provider,
+		Model:      reply.Model,
+		AgentID:    reply.AgentID,
+		DurationMs: runDuration.Milliseconds(),
 	})
 	return true
 }

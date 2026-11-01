@@ -75,6 +75,7 @@ export function WorkspaceIntegrationsSection({
   const [name, setName] = useState("");
   const [adapterKind, setAdapterKind] = useState("sanity");
   const [sanityProjectId, setSanityProjectId] = useState("");
+  const [sanityToken, setSanityToken] = useState("");
   const [sanityDataset, setSanityDataset] = useState("production");
   const [sanityDocType, setSanityDocType] = useState("post");
   const [sanityPublicUrlPrefix, setSanityPublicUrlPrefix] = useState("/posts/");
@@ -134,14 +135,21 @@ export function WorkspaceIntegrationsSection({
 
     const config: Record<string, unknown> = {};
     if (adapterKind === "sanity") {
-      if (!sanityProjectId.trim()) {
-        setAddErrors(["Sanity Project ID is required"]);
+      if (!sanityProjectId.trim() || !sanityDataset.trim() || !sanityToken.trim()) {
+        setAddErrors(["Sanity project ID, dataset, and project API token are required."]);
+        return;
+      }
+      if (
+        !/^[a-z0-9_-]{4,30}$/.test(sanityProjectId.trim()) ||
+        !/^[a-z0-9_~-]+$/.test(sanityDataset.trim())
+      ) {
+        setAddErrors([
+          "Check the project ID and dataset: use lowercase letters and valid Sanity identifier characters.",
+        ]);
         return;
       }
       config.projectId = sanityProjectId.trim();
       config.dataset = sanityDataset.trim() || "production";
-      config.docType = sanityDocType.trim() || "post";
-      config.publicUrlPrefix = sanityPublicUrlPrefix.trim() || "/posts/";
       config.docType = sanityDocType.trim() || "post";
       config.publicUrlPrefix = sanityPublicUrlPrefix.trim() || "/posts/";
     } else if (adapterKind === "generic_api") {
@@ -200,9 +208,30 @@ export function WorkspaceIntegrationsSection({
       config,
     });
 
-    setAdding(false);
-
     if (res.kind === "created") {
+      let sanityMessage: string | null = null;
+      if (adapterKind === "sanity") {
+        const saved = await saveIntegrationCredentials(
+          apiBaseUrl,
+          workspaceId,
+          res.integration.id,
+          {
+            token: sanityToken.trim(),
+          },
+        );
+        setSanityToken("");
+        if (saved.kind !== "saved") {
+          sanityMessage = `The destination was created, but setup could not be completed: ${saved.message} Use Set credentials or Run check below to try again.`;
+          setCredIntegrationId(res.integration.id);
+        } else if (saved.integration.status === "connected") {
+          sanityMessage =
+            "Sanity accepted the dataset query with the supplied token. Write permissions and website schema still need a controlled publishing test. Approved content can be published or scheduled in the content editor.";
+        } else {
+          sanityMessage = `Sanity was not verified (status: ${formatLifecycleStatus(saved.integration.status)}). Run check below for details or update the token.`;
+        }
+        setDiagnostic({ id: res.integration.id, message: sanityMessage });
+      }
+      setAdding(false);
       setName("");
       setSanityProjectId("");
       setSanityDataset("production");
@@ -221,10 +250,13 @@ export function WorkspaceIntegrationsSection({
       setShowAddForm(false);
       void load();
     } else if (res.kind === "conflict") {
+      setAdding(false);
       setServerError(res.message);
     } else if (res.kind === "rejected") {
+      setAdding(false);
       setAddErrors(res.problems);
     } else {
+      setAdding(false);
       setServerError(res.message);
     }
   }
@@ -350,9 +382,9 @@ export function WorkspaceIntegrationsSection({
             Connect this workspace&apos;s publishing destination
           </h3>
           <p className="mt-1 text-xs text-slate-600">
-            Enter the business&apos;s Sanity project details below. The API token is saved
-            separately as an encrypted server-side credential; never paste it into the project ID or
-            dataset fields.
+            Each connection belongs to this workspace. For Sanity, enter the project details and its
+            project token; the token is encrypted separately and the dataset is checked
+            automatically.
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
@@ -391,6 +423,12 @@ export function WorkspaceIntegrationsSection({
 
           {adapterKind === "sanity" && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <p className="sm:col-span-2 text-xs text-slate-600">
+                In Sanity Manage, open the client&apos;s project, then Settings → API → Tokens and
+                create a project token with the required write access. Use a separate token per
+                client. The read-only connection check cannot confirm write permissions or schema
+                compatibility.
+              </p>
               <div>
                 <label htmlFor="sanity-proj" className={labelClasses}>
                   Sanity Project ID
@@ -417,6 +455,23 @@ export function WorkspaceIntegrationsSection({
                   placeholder="production"
                   className={`mt-1 ${inputClasses}`}
                 />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="sanity-token" className={labelClasses}>
+                  Sanity project API token
+                </label>
+                <input
+                  id="sanity-token"
+                  type="password"
+                  autoComplete="new-password"
+                  value={sanityToken}
+                  onChange={(e) => setSanityToken(e.target.value)}
+                  required
+                  className={`mt-1 ${inputClasses}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Stored encrypted on the server; never put the token in the project ID field.
+                </p>
               </div>
               <div>
                 <label htmlFor="sanity-doctype" className={labelClasses}>
@@ -775,10 +830,9 @@ export function WorkspaceIntegrationsSection({
                 >
                   <p className="font-medium text-red-900">Needs reconnection</p>
                   <p className="mt-1 text-red-800">
-                    The saved credentials were rejected or expired — for example an access token
-                    that was revoked, or an OAuth refresh token whose authorization ended.
-                    Publishing stays blocked until you save new credentials and the check passes
-                    again.
+                    The connection check failed or the saved credentials were rejected. Run check
+                    for details, then update the credentials if needed. Sanity publishing is blocked
+                    until its connection check passes.
                   </p>
                   <button
                     type="button"

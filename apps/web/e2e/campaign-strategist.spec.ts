@@ -62,6 +62,11 @@ test("campaign strategist files a planned proposal and the campaigns panel refle
       campaignReads += 1;
       json = proposed ? { campaigns: [campaign] } : { campaigns: [] };
     } else if (path.endsWith("/leads")) json = { leads: [] };
+    else if (path.endsWith("/lead-connections")) json = { connections: [] };
+    else if (path.endsWith("/email-settings")) json = { configured: false, settings: null };
+    else if (path.endsWith("/email-deliveries/acknowledged"))
+      json = { acknowledgedAt: null, deliveries: [] };
+    else if (path.endsWith("/email-deliveries")) json = { deliveries: [] };
     else if (path.endsWith("/content")) json = { items: [] };
     else if (path.endsWith("/reports")) {
       // The workspace report is optional evidence; a 404 renders "missing"

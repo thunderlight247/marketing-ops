@@ -89,6 +89,11 @@ test("content creator saves a draft, refreshes content and offers human review",
     } else if (path.endsWith("/integrations")) json = { integrations: [] };
     else if (path.endsWith("/campaigns")) json = { campaigns: [] };
     else if (path.endsWith("/leads")) json = { leads: [] };
+    else if (path.endsWith("/lead-connections")) json = { connections: [] };
+    else if (path.endsWith("/email-settings")) json = { configured: false, settings: null };
+    else if (path.endsWith("/email-deliveries/acknowledged"))
+      json = { acknowledgedAt: null, deliveries: [] };
+    else if (path.endsWith("/email-deliveries")) json = { deliveries: [] };
     else if (path.endsWith("/adapters")) json = { adapters: [] };
     else if (path.endsWith("/agents")) json = { agents: agentDescriptors };
     else if (path.endsWith(`/workspaces/${workspace.id}`)) json = { workspace, brand: null };

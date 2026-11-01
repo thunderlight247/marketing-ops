@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  countDeliveryAttentionWorkspaces,
   createWorkspace,
   deleteWorkspace,
+  describeDeliveryAttention,
   fetchWorkspaceDetail,
   fetchWorkspaces,
   parseWorkspace,
@@ -48,6 +50,62 @@ describe("parseWorkspace", () => {
     expect(parseWorkspace({ ...validWorkspace, websiteUrl: 5 })).toBeNull();
     expect(parseWorkspace({ ...validWorkspace, status: undefined })).toBeNull();
     expect(parseWorkspace({ ...validWorkspace, createdAt: 1 })).toBeNull();
+  });
+
+  it("keeps delivery problems that need a human", () => {
+    expect(
+      parseWorkspace({ ...validWorkspace, deliveryAttention: { failed: 1, bounced: 2 } }),
+    ).toEqual({ ...validWorkspace, deliveryAttention: { failed: 1, bounced: 2 } });
+  });
+
+  it("drops a zero count and rejects malformed attention counts", () => {
+    expect(
+      parseWorkspace({ ...validWorkspace, deliveryAttention: { failed: 0, bounced: 0 } }),
+    ).toEqual(validWorkspace);
+    expect(parseWorkspace({ ...validWorkspace, deliveryAttention: null })).toEqual(validWorkspace);
+    expect(parseWorkspace({ ...validWorkspace, deliveryAttention: 2 })).toBeNull();
+    expect(
+      parseWorkspace({ ...validWorkspace, deliveryAttention: { failed: -1, bounced: 0 } }),
+    ).toBeNull();
+    expect(parseWorkspace({ ...validWorkspace, deliveryAttention: { failed: 1 } })).toBeNull();
+    expect(
+      parseWorkspace({ ...validWorkspace, deliveryAttention: { failed: "1", bounced: 0 } }),
+    ).toBeNull();
+  });
+
+  it("keeps when the problems were last acknowledged", () => {
+    expect(
+      parseWorkspace({ ...validWorkspace, deliveryAcknowledgedAt: "2026-10-31T09:00:00Z" }),
+    ).toEqual({ ...validWorkspace, deliveryAcknowledgedAt: "2026-10-31T09:00:00Z" });
+    expect(parseWorkspace({ ...validWorkspace, deliveryAcknowledgedAt: null })).toEqual(
+      validWorkspace,
+    );
+    expect(parseWorkspace({ ...validWorkspace, deliveryAcknowledgedAt: "" })).toBeNull();
+    expect(parseWorkspace({ ...validWorkspace, deliveryAcknowledgedAt: 7 })).toBeNull();
+  });
+});
+
+describe("describeDeliveryAttention", () => {
+  it("names every problem the workspace has", () => {
+    expect(describeDeliveryAttention({ failed: 1, bounced: 2 })).toBe(
+      "1 failed to send · 2 bounced",
+    );
+    expect(describeDeliveryAttention({ failed: 3, bounced: 0 })).toBe("3 failed to send");
+    expect(describeDeliveryAttention({ failed: 0, bounced: 1 })).toBe("1 bounced");
+  });
+});
+
+describe("countDeliveryAttentionWorkspaces", () => {
+  it("counts flagged workspaces only, and works on an empty list", () => {
+    expect(countDeliveryAttentionWorkspaces([])).toBe(0);
+    expect(countDeliveryAttentionWorkspaces([validWorkspace])).toBe(0);
+    expect(
+      countDeliveryAttentionWorkspaces([
+        validWorkspace,
+        { ...validWorkspace, id: "flagged-1", deliveryAttention: { failed: 1, bounced: 0 } },
+        { ...validWorkspace, id: "flagged-2", deliveryAttention: { failed: 0, bounced: 2 } },
+      ]),
+    ).toBe(2);
   });
 });
 

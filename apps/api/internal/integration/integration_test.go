@@ -89,18 +89,20 @@ func TestSanityAdapter(t *testing.T) {
 		for _, c := range res.Capabilities {
 			caps[c.Capability] = c.Status
 		}
-		if caps[CapReadContent] != StatusSupported {
-			t.Errorf("read_content = %s, want %s", caps[CapReadContent], StatusSupported)
-		}
-		if caps[CapCreateDraft] != StatusUnsupported {
-			t.Errorf("create_draft = %s, want %s", caps[CapCreateDraft], StatusUnsupported)
-		}
-		if caps[CapPublish] != StatusUnsupported {
-			t.Errorf("publish = %s, want %s", caps[CapPublish], StatusUnsupported)
+		if caps[CapReadContent] != StatusUnverified || caps[CapPublish] != StatusUnverified {
+			t.Errorf("unchecked capabilities must remain unverified: %+v", caps)
 		}
 	})
 
-	t.Run("connected mode when token is present", func(t *testing.T) {
+	t.Run("connected mode after authenticated dataset check", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/v2024-10-14/data/query/production" || r.Header.Get("Authorization") != "Bearer sk-secret-token-value" || r.URL.Query().Get("perspective") != "raw" {
+				t.Errorf("unexpected read-only request: %s %s", r.Method, r.URL.String())
+			}
+			_, _ = w.Write([]byte(`{"result":0}`))
+		}))
+		defer server.Close()
+		adapter := &SanityAdapter{BaseURL: server.URL, Client: server.Client()}
 		res := adapter.Check(ctx, map[string]any{
 			"projectId": "y97t5m4h",
 			"dataset":   "production",
@@ -121,11 +123,25 @@ func TestSanityAdapter(t *testing.T) {
 		if caps[CapReadContent] != StatusSupported {
 			t.Errorf("read_content = %s, want %s", caps[CapReadContent], StatusSupported)
 		}
-		if caps[CapCreateDraft] != StatusSupported {
-			t.Errorf("create_draft = %s, want %s", caps[CapCreateDraft], StatusSupported)
+		if caps[CapCreateDraft] != StatusUnverified || caps[CapPublish] != StatusUnverified {
+			t.Errorf("read-only check must not claim write permissions: %+v", caps)
 		}
-		if caps[CapPublish] != StatusSupported {
-			t.Errorf("publish = %s, want %s", caps[CapPublish], StatusSupported)
+	})
+
+	t.Run("rejected and malformed responses are not connected or leaked", func(t *testing.T) {
+		for _, tc := range []struct {
+			status int
+			body   string
+		}{{401, `{"error":"sk-secret"}`}, {200, `{}`}, {503, `unavailable`}} {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			res := (&SanityAdapter{BaseURL: server.URL, Client: server.Client()}).Check(ctx, map[string]any{"projectId": "proj123", "dataset": "production"}, map[string]string{"token": "sk-secret"})
+			server.Close()
+			if res.LifecycleStatus != LifecycleError || strings.Contains(res.Diagnostic, "sk-secret") {
+				t.Fatalf("unexpected response: %+v", res)
+			}
 		}
 	})
 }

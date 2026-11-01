@@ -1,4 +1,98 @@
 import { withAuth } from "@/lib/config";
+
+export interface LeadConnection {
+  id: string;
+  workspaceId: string;
+  name: string;
+  createdAt: string;
+}
+
+export async function listLeadConnections(
+  base: string,
+  workspaceId: string,
+): Promise<LeadConnection[]> {
+  const response = await fetch(
+    `${base}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/lead-connections`,
+    { headers: withAuth() },
+  );
+  if (!response.ok) throw new Error("Could not load lead connections.");
+  const data: unknown = await response.json();
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("connections" in data) ||
+    !Array.isArray(data.connections) ||
+    !data.connections.every(
+      (c: unknown) =>
+        typeof c === "object" &&
+        c !== null &&
+        "id" in c &&
+        typeof c.id === "string" &&
+        "name" in c &&
+        typeof c.name === "string" &&
+        "workspaceId" in c &&
+        c.workspaceId === workspaceId &&
+        "createdAt" in c &&
+        typeof c.createdAt === "string",
+    )
+  )
+    throw new Error("Invalid lead connections response.");
+  return data.connections as LeadConnection[];
+}
+
+export async function createLeadConnection(
+  base: string,
+  workspaceId: string,
+  name: string,
+): Promise<{ connection: LeadConnection; secret: string }> {
+  const response = await fetch(
+    `${base}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/lead-connections`,
+    {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      typeof body?.error === "string" ? body.error : "Could not create lead connection.",
+    );
+  }
+  const data: unknown = await response.json();
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("secret" in data) ||
+    typeof data.secret !== "string" ||
+    !("connection" in data) ||
+    typeof data.connection !== "object" ||
+    data.connection === null ||
+    !("id" in data.connection) ||
+    typeof data.connection.id !== "string" ||
+    !("workspaceId" in data.connection) ||
+    data.connection.workspaceId !== workspaceId ||
+    !("name" in data.connection) ||
+    typeof data.connection.name !== "string" ||
+    !("createdAt" in data.connection) ||
+    typeof data.connection.createdAt !== "string"
+  )
+    throw new Error("Invalid lead connection response.");
+  return data as { connection: LeadConnection; secret: string };
+}
+
+export async function deleteLeadConnection(
+  base: string,
+  workspaceId: string,
+  id: string,
+): Promise<void> {
+  const response = await fetch(
+    `${base}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/lead-connections/${encodeURIComponent(id)}`,
+    { method: "DELETE", headers: withAuth() },
+  );
+  if (!response.ok) throw new Error("Could not revoke lead connection.");
+}
+
 // Campaign and lead client library.
 // Network layer mirrors lib/integrations.ts: explicit result kinds, strict
 // response parsing, and no thrown errors on clean failures.
@@ -34,6 +128,13 @@ export interface Lead {
   utmMedium: string | null;
   utmCampaign: string | null;
   followUpAt: string | null;
+  // The newest agent-drafted first reply, shown for operator review. It is
+  // never sent by the platform and never changes the lead's status.
+  replyDraftSubject: string | null;
+  replyDraftBody: string | null;
+  replyDraftedAt: string | null;
+  // Set only when this workspace's own email provider accepted the reply.
+  replySentAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -214,6 +315,10 @@ function parseLead(raw: unknown): Lead | null {
     utmMedium: optString(obj, "utmMedium"),
     utmCampaign: optString(obj, "utmCampaign"),
     followUpAt: optString(obj, "followUpAt"),
+    replyDraftSubject: optString(obj, "replyDraftSubject"),
+    replyDraftBody: optString(obj, "replyDraftBody"),
+    replyDraftedAt: optString(obj, "replyDraftedAt"),
+    replySentAt: optString(obj, "replySentAt"),
     createdAt: typeof obj.createdAt === "string" ? obj.createdAt : "",
     updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : "",
   };

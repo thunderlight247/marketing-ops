@@ -25,7 +25,13 @@ if [[ -f .env.local ]]; then
   had_env_file=1
 fi
 trap restore_build_files EXIT
-NEXT_DIST_DIR="$dist_dir" NEXT_PUBLIC_API_BASE_URL="$api_base_url" npm run build
+NEXT_DIST_DIR="$dist_dir" API_BASE_URL="$api_base_url" WEB_AUTH_DISABLED=true npm run build
 restore_build_files
 trap - EXIT
-exec env NEXT_DIST_DIR="$dist_dir" NEXT_PUBLIC_API_BASE_URL="$api_base_url" ./node_modules/.bin/next start --hostname 127.0.0.1 --port "$web_port"
+# WEB_ORIGIN is the browser's origin for this server. It is explicit because
+# Next derives its own request origin as localhost, while the suite (and the
+# bind address) use 127.0.0.1: without it every same-origin POST to the API
+# proxy is rejected as a cross-origin request.
+exec env NEXT_DIST_DIR="$dist_dir" API_BASE_URL="$api_base_url" WEB_AUTH_DISABLED=true \
+  WEB_ORIGIN="http://127.0.0.1:$web_port" \
+  ./node_modules/.bin/next start --hostname 127.0.0.1 --port "$web_port"

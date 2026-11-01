@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import { describeDatabase, fetchHealth, type HealthState, type Tone } from "@/lib/health";
+import {
+  countDeliveryAttentionWorkspaces,
+  DELIVERY_ATTENTION_CHANGED_EVENT,
+  fetchWorkspaces,
+  type WorkspacesState,
+} from "@/lib/workspaces";
 
 const toneClasses: Record<Tone, { badge: string; dot: string }> = {
   good: { badge: "bg-emerald-50 text-emerald-800 ring-emerald-600/20", dot: "bg-emerald-500" },
@@ -33,16 +39,33 @@ function Row({ term, children }: Readonly<{ term: string; children: React.ReactN
 
 export function StatusPanel() {
   const [state, setState] = useState<HealthState>({ kind: "loading" });
+  const [workspaces, setWorkspaces] = useState<WorkspacesState>({ kind: "loading" });
   const apiBaseUrl = getApiBaseUrl();
 
   const refresh = useCallback(async () => {
     setState({ kind: "loading" });
-    setState(await fetchHealth(apiBaseUrl));
+    setWorkspaces({ kind: "loading" });
+    const [health, list] = await Promise.all([
+      fetchHealth(apiBaseUrl),
+      fetchWorkspaces(apiBaseUrl),
+    ]);
+    setState(health);
+    setWorkspaces(list);
   }, [apiBaseUrl]);
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    // Acknowledging a workspace's delivery problems happens in the list below;
+    // keep this count in step instead of leaving a stale number on screen.
+    const onAttentionChanged = () => {
+      void fetchWorkspaces(apiBaseUrl).then(setWorkspaces);
+    };
+    window.addEventListener(DELIVERY_ATTENTION_CHANGED_EVENT, onAttentionChanged);
+    return () => window.removeEventListener(DELIVERY_ATTENTION_CHANGED_EVENT, onAttentionChanged);
+  }, [refresh, apiBaseUrl]);
+
+  const attentionCount =
+    workspaces.kind === "loaded" ? countDeliveryAttentionWorkspaces(workspaces.workspaces) : 0;
 
   return (
     <section
@@ -112,6 +135,43 @@ export function StatusPanel() {
                       : ""}
                   </span>
                 </div>
+              </Row>
+              <Row term="Outbound email">
+                {workspaces.kind === "loading" ? (
+                  <span className="text-xs text-slate-500">Checking delivery problems…</span>
+                ) : workspaces.kind === "unavailable" ? (
+                  <span className="text-xs text-slate-500">
+                    Delivery problems could not be checked right now.
+                  </span>
+                ) : attentionCount === 0 ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge label="No delivery problems" tone="good" />
+                    <span className="text-xs text-slate-500">
+                      Nothing failed to send and nothing bounced in{" "}
+                      {workspaces.workspaces.length === 1
+                        ? "your workspace"
+                        : `any of your ${workspaces.workspaces.length} workspaces`}
+                      .
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      label={`${attentionCount} workspace${attentionCount === 1 ? " needs" : "s need"} attention`}
+                      tone="warn"
+                    />
+                    <span className="text-xs text-slate-500">
+                      {attentionCount} of {workspaces.workspaces.length} have a send that failed or
+                      a message the provider bounced.{" "}
+                      <a
+                        href="#overview-workspaces-heading"
+                        className="font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        Review below
+                      </a>
+                    </span>
+                  </div>
+                )}
               </Row>
               <Row term="Last checked">
                 <time dateTime={state.health.checkedAt} className="text-xs text-slate-500">

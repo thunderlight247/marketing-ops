@@ -1,4 +1,11 @@
 import { withAuth } from "@/lib/config";
+
+/** Counts of email problems waiting for a human in one workspace. */
+export interface DeliveryAttention {
+  failed: number;
+  bounced: number;
+}
+
 export interface Workspace {
   id: string;
   slug: string;
@@ -7,6 +14,54 @@ export interface Workspace {
   status: string;
   createdAt: string;
   updatedAt: string;
+  /** Present only when this workspace has a failed send or a bounced message. */
+  deliveryAttention?: DeliveryAttention;
+  /**
+   * When an operator last acknowledged this workspace's delivery problems. The
+   * badge only covers problems recorded after it, so the UI shows it alongside.
+   */
+  deliveryAcknowledgedAt?: string;
+}
+
+/**
+ * How many workspaces currently need a human for outbound email. The overview's
+ * status panel uses it so the count and the per-workspace badges never disagree.
+ */
+export function countDeliveryAttentionWorkspaces(workspaces: Workspace[]): number {
+  return workspaces.filter((workspace) => workspace.deliveryAttention).length;
+}
+
+// Delivery problems are acknowledged in one component (the workspace list) and
+// counted in another (the status panel). This event lets the count follow a
+// dismissal without lifting the whole page into one client component.
+export const DELIVERY_ATTENTION_CHANGED_EVENT = "marketing-ops:delivery-attention-changed";
+
+export function notifyDeliveryAttentionChanged(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(DELIVERY_ATTENTION_CHANGED_EVENT));
+}
+
+/** Human label for the delivery problems of one workspace, e.g. "1 failed · 2 bounced". */
+export function describeDeliveryAttention(attention: DeliveryAttention): string {
+  const parts: string[] = [];
+  if (attention.failed > 0) {
+    parts.push(`${attention.failed} failed to send`);
+  }
+  if (attention.bounced > 0) {
+    parts.push(`${attention.bounced} bounced`);
+  }
+  return parts.join(" · ");
+}
+
+function parseDeliveryAttention(data: unknown): DeliveryAttention | null | undefined {
+  if (data === undefined || data === null) return undefined;
+  if (!isRecord(data)) return null;
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0;
+  if (!count(data.failed) || !count(data.bounced)) return null;
+  const attention = { failed: data.failed as number, bounced: data.bounced as number };
+  if (attention.failed === 0 && attention.bounced === 0) return undefined;
+  return attention;
 }
 
 export interface BrandProfile {
@@ -100,7 +155,16 @@ export function parseWorkspace(data: unknown): Workspace | null {
   );
   if (!stringsOk) return null;
   if (data.websiteUrl !== null && typeof data.websiteUrl !== "string") return null;
-  return {
+  const deliveryAttention = parseDeliveryAttention(data.deliveryAttention);
+  if (deliveryAttention === null) return null;
+  if (
+    data.deliveryAcknowledgedAt !== undefined &&
+    data.deliveryAcknowledgedAt !== null &&
+    (typeof data.deliveryAcknowledgedAt !== "string" || data.deliveryAcknowledgedAt === "")
+  ) {
+    return null;
+  }
+  const workspace: Workspace = {
     id: data.id as string,
     slug: data.slug as string,
     name: data.name as string,
@@ -109,6 +173,11 @@ export function parseWorkspace(data: unknown): Workspace | null {
     createdAt: data.createdAt as string,
     updatedAt: data.updatedAt as string,
   };
+  if (deliveryAttention) workspace.deliveryAttention = deliveryAttention;
+  if (typeof data.deliveryAcknowledgedAt === "string") {
+    workspace.deliveryAcknowledgedAt = data.deliveryAcknowledgedAt;
+  }
+  return workspace;
 }
 
 /** Validates a workspaces list response body. Returns null if it is not well-formed. */

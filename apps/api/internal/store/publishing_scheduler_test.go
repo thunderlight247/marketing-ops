@@ -235,7 +235,7 @@ func TestTerminalFailureAndOperatorRetry(t *testing.T) {
 		t.Fatalf("terminal job wrong: %+v err=%v", stored, err)
 	}
 
-	retry, err := s.RetryPublishingJob(ctx, ws.ID, job.ID, now)
+	retry, err := s.RetryPublishingJob(ctx, ws.ID, item.ID, job.ID, now)
 	if err != nil {
 		t.Fatalf("RetryPublishingJob: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestTerminalFailureAndOperatorRetry(t *testing.T) {
 	}
 	// The first retry already re-queued the job, so a second retry is refused
 	// as a lifecycle error: only failed (terminal/backoff) jobs may retry.
-	if _, err := s.RetryPublishingJob(ctx, ws.ID, job.ID, now); !errors.Is(err, ErrInvalidStatus) {
+	if _, err := s.RetryPublishingJob(ctx, ws.ID, item.ID, job.ID, now); !errors.Is(err, ErrInvalidStatus) {
 		t.Fatalf("retrying a pending job must be ErrInvalidStatus, got %v", err)
 	}
 }
@@ -274,7 +274,7 @@ func TestCancelQueuedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertPublishingJob: %v", err)
 	}
-	cancelled, err := s.CancelPublishingJob(ctx, ws.ID, job.ID)
+	cancelled, err := s.CancelPublishingJob(ctx, ws.ID, item.ID, job.ID)
 	if err != nil {
 		t.Fatalf("CancelPublishingJob: %v", err)
 	}
@@ -286,8 +286,47 @@ func TestCancelQueuedJob(t *testing.T) {
 		t.Fatalf("cancelled job claimed: %v", err)
 	}
 	// Cancelling an already-cancelled job is a no-op refusal.
-	if _, err := s.CancelPublishingJob(ctx, ws.ID, job.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.CancelPublishingJob(ctx, ws.ID, item.ID, job.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("double cancel must be ErrNotFound, got %v", err)
+	}
+}
+
+func TestJobActionsRejectDifferentContentItem(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ws, item, version, in := seedApprovedVersion(t, s)
+	other, err := s.InsertContentItem(ctx, ContentItem{WorkspaceID: ws.ID, Kind: "blog_article", Title: "Other item"})
+	if err != nil {
+		t.Fatalf("insert other item: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	job, err := s.InsertPublishingJob(ctx, ws.ID, PublishingJob{
+		ContentItemID: item.ID, ContentVersionID: version.ID, IntegrationID: in.ID,
+		IdempotencyKey: ws.Slug + ":item-scope:1", NextAttemptAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("insert job: %v", err)
+	}
+	if _, err := s.CancelPublishingJob(ctx, ws.ID, other.ID, job.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel with a different item must be ErrNotFound, got %v", err)
+	}
+	stored, err := s.GetPublishingJobByID(ctx, ws.ID, job.ID)
+	if err != nil || stored.Status != "pending" {
+		t.Fatalf("job must remain pending: %+v err=%v", stored, err)
+	}
+	// Set up a failed job without executing a provider or affecting another job.
+	if _, err := s.pool.Exec(ctx, `UPDATE publishing_jobs SET status = 'failed', next_attempt_at = NULL WHERE id = $1`, job.ID); err != nil {
+		t.Fatalf("mark job failed: %v", err)
+	}
+	if _, err := s.RetryPublishingJob(ctx, ws.ID, other.ID, job.ID, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retry with a different item must be ErrNotFound, got %v", err)
+	}
+	stored, err = s.GetPublishingJobByID(ctx, ws.ID, job.ID)
+	if err != nil || stored.Status != "failed" || stored.NextAttemptAt != nil {
+		t.Fatalf("job must remain failed: %+v err=%v", stored, err)
+	}
+	if _, err := s.RetryPublishingJob(ctx, ws.ID, item.ID, job.ID, now); err != nil {
+		t.Fatalf("retry with the correct item: %v", err)
 	}
 }
 
@@ -339,10 +378,10 @@ func TestPublishingJobsScopedToWorkspace(t *testing.T) {
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("cross-workspace job list must be empty: n=%d err=%v", len(jobs), err)
 	}
-	if _, err := s.CancelPublishingJob(ctx, wsB.ID, "99999999-9999-9999-9999-999999999999"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.CancelPublishingJob(ctx, wsB.ID, itemA.ID, "99999999-9999-9999-9999-999999999999"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-workspace cancel must be ErrNotFound, got %v", err)
 	}
-	if _, err := s.RetryPublishingJob(ctx, wsB.ID, "99999999-9999-9999-9999-999999999999", now); !errors.Is(err, ErrNotFound) {
+	if _, err := s.RetryPublishingJob(ctx, wsB.ID, itemA.ID, "99999999-9999-9999-9999-999999999999", now); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-workspace retry must be ErrNotFound, got %v", err)
 	}
 }

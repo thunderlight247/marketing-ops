@@ -157,6 +157,8 @@ export function formatAgentContract(contract: string): string {
     advisory: "Advisory only — returns a report, never edits",
     drafting: "Drafts into the human approval workflow",
     proposal: "Proposes one planned campaign for operator review",
+    channel_copy: "Writes per-channel copy into an existing draft item",
+    lead_reply: "Drafts a first reply to one recorded lead for the operator to review",
   };
   return labels[contract] ?? contract;
 }
@@ -172,6 +174,10 @@ export function formatAgentAction(action: string): string {
   const labels: Record<string, string> = {
     file_draft: "May file drafts in the approval workflow",
     create_campaign: "May create campaign proposals (always planned; activation stays manual)",
+    file_channel_copy:
+      "May file per-channel copy into a draft item's version (never changes status or approval)",
+    file_lead_reply:
+      "May store a drafted reply on a lead (never sends it, never changes the lead's status)",
   };
   return labels[action] ?? action;
 }
@@ -388,6 +394,190 @@ function parseProposalEnvelope(value: unknown): CampaignProposalEnvelope | null 
     model: typeof value.model === "string" ? value.model : "",
     agentId: typeof value.agentId === "string" ? value.agentId : "campaign_strategist",
     keyPoints: value.keyPoints.filter((p): p is string => typeof p === "string"),
+    durationMs: typeof value.durationMs === "number" ? value.durationMs : 0,
+  };
+}
+
+// ---- Fifth specialist: channel copy writer ---------------------------------
+
+// ChannelCopyEnvelope is one filed per-channel copy run: the target item's
+// new version, the copy this run wrote per channel, and the agent identity.
+// The server merged the copy over the version's previous channels; the item
+// stays a draft and its approval state is untouched.
+export interface ChannelCopyEnvelope {
+  item: {
+    id: string;
+    kind: string;
+    status: string;
+    title: string;
+  };
+  version: {
+    versionNumber: number;
+  };
+  provider: string;
+  model: string;
+  agentId: string;
+  channels: Record<string, string>;
+  durationMs: number;
+}
+
+export type ChannelCopyState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; copy: ChannelCopyEnvelope }
+  | { kind: "unavailable"; message: string };
+
+const copyWriterAgentId = "channel_copy_writer";
+
+// requestChannelCopy asks the channel-copy writer to adapt one existing draft
+// item into per-channel copy variants, filed through the server's
+// file_channel_copy executor into that item's newest version. The client
+// checks the response shape; status and approval stay operator decisions.
+export async function requestChannelCopy(
+  baseUrl: string,
+  workspaceId: string,
+  contentItemId: string,
+  focus: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ChannelCopyState> {
+  const itemId = contentItemId.trim();
+  if (itemId === "") {
+    return { kind: "unavailable", message: "pick a draft content item first" };
+  }
+  try {
+    const res = await fetchImpl(agentRunUrl(baseUrl, workspaceId, copyWriterAgentId), {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify({
+        contentItemId: itemId,
+        ...(focus.trim() === "" ? {} : { focus: focus.trim() }),
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      const message =
+        detail && typeof detail.error === "string"
+          ? detail.error
+          : `request failed (${res.status})`;
+      return { kind: "unavailable", message };
+    }
+    const copy = parseChannelCopyEnvelope(await res.json().catch(() => null));
+    if (!copy) {
+      return { kind: "unavailable", message: "the channel-copy response had an unexpected shape" };
+    }
+    return { kind: "done", copy };
+  } catch {
+    return { kind: "unavailable", message: "the API could not be reached" };
+  }
+}
+
+function parseChannelCopyEnvelope(value: unknown): ChannelCopyEnvelope | null {
+  if (!isRecord(value) || !isRecord(value.item) || !isRecord(value.version)) return null;
+  if (!isRecord(value.channels)) return null;
+  const item = value.item;
+  const version = value.version;
+  if (typeof item.id !== "string" || item.id === "") return null;
+  if (typeof version.versionNumber !== "number") return null;
+  const channels: Record<string, string> = {};
+  for (const [channel, message] of Object.entries(value.channels)) {
+    if (typeof message !== "string") return null;
+    channels[channel] = message;
+  }
+  if (Object.keys(channels).length === 0) return null;
+  return {
+    item: {
+      id: item.id,
+      kind: typeof item.kind === "string" ? item.kind : "",
+      status: typeof item.status === "string" ? item.status : "",
+      title: typeof item.title === "string" ? item.title : "",
+    },
+    version: { versionNumber: version.versionNumber },
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    agentId: typeof value.agentId === "string" ? value.agentId : "channel_copy_writer",
+    channels,
+    durationMs: typeof value.durationMs === "number" ? value.durationMs : 0,
+  };
+}
+
+// ---- Sixth specialist: lead responder ---------------------------------------
+
+// LeadReplyEnvelope is one drafted first reply, stored on the lead. The
+// platform never sends it and the lead's status is unchanged: the operator
+// reviews, edits, and sends it themselves.
+export interface LeadReplyEnvelope {
+  leadId: string;
+  leadStatus: string;
+  subject: string;
+  body: string;
+  replyDraftedAt: string | null;
+  provider: string;
+  model: string;
+  agentId: string;
+  durationMs: number;
+}
+
+export type LeadReplyState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; reply: LeadReplyEnvelope }
+  | { kind: "unavailable"; message: string };
+
+const leadResponderAgentId = "lead_responder";
+
+// requestLeadReply asks the lead responder to draft a first reply to one
+// existing lead. The server stores it on that lead for review; nothing is
+// sent and the lead's status stays exactly as recorded.
+export async function requestLeadReply(
+  baseUrl: string,
+  workspaceId: string,
+  leadId: string,
+  focus: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<LeadReplyState> {
+  const id = leadId.trim();
+  if (id === "") {
+    return { kind: "unavailable", message: "pick a lead first" };
+  }
+  try {
+    const res = await fetchImpl(agentRunUrl(baseUrl, workspaceId, leadResponderAgentId), {
+      method: "POST",
+      headers: withAuth({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify({ leadId: id, ...(focus.trim() === "" ? {} : { focus: focus.trim() }) }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      const message =
+        detail && typeof detail.error === "string"
+          ? detail.error
+          : `request failed (${res.status})`;
+      return { kind: "unavailable", message };
+    }
+    const reply = parseLeadReplyEnvelope(await res.json().catch(() => null));
+    if (!reply) {
+      return { kind: "unavailable", message: "the lead-reply response had an unexpected shape" };
+    }
+    return { kind: "done", reply };
+  } catch {
+    return { kind: "unavailable", message: "the API could not be reached" };
+  }
+}
+
+function parseLeadReplyEnvelope(value: unknown): LeadReplyEnvelope | null {
+  if (!isRecord(value) || !isRecord(value.lead)) return null;
+  const lead = value.lead;
+  if (typeof lead.id !== "string" || lead.id === "") return null;
+  if (typeof value.subject !== "string" || value.subject.trim() === "") return null;
+  if (typeof value.body !== "string" || value.body.trim() === "") return null;
+  return {
+    leadId: lead.id,
+    leadStatus: typeof lead.status === "string" ? lead.status : "",
+    subject: value.subject,
+    body: value.body,
+    replyDraftedAt: typeof lead.replyDraftedAt === "string" ? lead.replyDraftedAt : null,
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    agentId: typeof value.agentId === "string" ? value.agentId : leadResponderAgentId,
     durationMs: typeof value.durationMs === "number" ? value.durationMs : 0,
   };
 }

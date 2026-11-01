@@ -7,6 +7,8 @@ import {
   formatDataSource,
   formatRecommendationPriority,
   requestCampaignProposal,
+  requestChannelCopy,
+  requestLeadReply,
   requestSeoAdvisory,
 } from "./agents";
 import { getApiBaseUrl } from "./config";
@@ -157,11 +159,13 @@ describe("formatAgent helpers", () => {
     expect(formatAgentContract("advisory")).toContain("Advisory");
     expect(formatAgentContract("drafting")).toContain("approval");
     expect(formatAgentContract("proposal")).toContain("campaign");
+    expect(formatAgentContract("channel_copy")).toContain("existing draft item");
     expect(formatAgentContract("future_contract")).toBe("future_contract");
     expect(formatAgentDataNeed("search_console")).toContain("Search Console");
     expect(formatAgentDataNeed("campaigns")).toBe("campaigns");
     expect(formatAgentAction("file_draft")).toContain("file drafts");
     expect(formatAgentAction("create_campaign")).toContain("planned");
+    expect(formatAgentAction("file_channel_copy")).toContain("draft item");
     expect(formatAgentAction("future_action")).toBe("future_action");
   });
 });
@@ -223,6 +227,162 @@ describe("requestCampaignProposal", () => {
   it("maps network failures to an unavailable state", async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error("offline"));
     const state = await requestCampaignProposal(base, "ws-1", "", fetchImpl);
+    expect(state).toEqual({ kind: "unavailable", message: "the API could not be reached" });
+  });
+});
+
+describe("requestChannelCopy", () => {
+  const base = getApiBaseUrl("http://api.example");
+
+  const validCopy = {
+    item: { id: "item-1", kind: "social_post", status: "draft", title: "Winter service" },
+    version: { versionNumber: 2 },
+    provider: "stub",
+    model: "stub-v1",
+    agentId: "channel_copy_writer",
+    channels: { facebook: "Open all winter.", x: "Winter service. Book today." },
+    durationMs: 11,
+  };
+
+  it("refuses to run without a picked item, before any request", async () => {
+    const fetchImpl = vi.fn();
+    const state = await requestChannelCopy(base, "ws-1", "   ", "", fetchImpl);
+    expect(state).toEqual({ kind: "unavailable", message: "pick a draft content item first" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("posts the item id, trims the focus, and returns a done state", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(validCopy, 201));
+    const state = await requestChannelCopy(
+      base,
+      "ws-1",
+      " item-1 ",
+      "  booking deadline  ",
+      fetchImpl,
+    );
+    expect(state).toEqual({ kind: "done", copy: validCopy });
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/workspaces/ws-1/agents/channel_copy_writer/run");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ contentItemId: "item-1", focus: "booking deadline" }));
+  });
+
+  it("posts no focus when it is blank", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(validCopy, 201));
+    await requestChannelCopy(base, "ws-1", "item-1", "   ", fetchImpl);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(JSON.stringify({ contentItemId: "item-1" }));
+  });
+
+  it("surfaces the frozen-item conflict message", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(
+          { error: "the channel copy files only into draft items; move the item to draft first" },
+          409,
+        ),
+      );
+    const state = await requestChannelCopy(base, "ws-1", "item-1", "", fetchImpl);
+    expect(state.kind).toBe("unavailable");
+    expect(state.kind === "unavailable" && state.message).toContain("draft items");
+  });
+
+  it("rejects a response without usable channels as unavailable", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ item: { id: "item-1" }, version: { versionNumber: 2 }, channels: {} }),
+      );
+    const state = await requestChannelCopy(base, "ws-1", "item-1", "", fetchImpl);
+    expect(state.kind).toBe("unavailable");
+  });
+
+  it("maps network failures to an unavailable state", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("offline"));
+    const state = await requestChannelCopy(base, "ws-1", "item-1", "", fetchImpl);
+    expect(state).toEqual({ kind: "unavailable", message: "the API could not be reached" });
+  });
+});
+
+describe("requestLeadReply", () => {
+  const base = getApiBaseUrl("http://api.example");
+
+  const validReply = {
+    lead: {
+      id: "lead-1",
+      status: "new",
+      replyDraftSubject: "Re: furnace check",
+      replyDraftBody: "Hi Jane, thanks for the note about the north side.",
+      replyDraftedAt: "2026-10-31T09:00:00Z",
+    },
+    subject: "Re: furnace check",
+    body: "Hi Jane, thanks for the note about the north side.",
+    provider: "stub",
+    model: "stub-v1",
+    agentId: "lead_responder",
+    durationMs: 9,
+  };
+
+  it("refuses to run without a picked lead, before any request", async () => {
+    const fetchImpl = vi.fn();
+    const state = await requestLeadReply(base, "ws-1", "  ", "", fetchImpl);
+    expect(state).toEqual({ kind: "unavailable", message: "pick a lead first" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("posts the lead id, trims the focus, and returns a done state", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(validReply, 201));
+    const state = await requestLeadReply(base, "ws-1", " lead-1 ", "  one working day ", fetchImpl);
+    expect(state).toEqual({
+      kind: "done",
+      reply: {
+        leadId: "lead-1",
+        leadStatus: "new",
+        subject: "Re: furnace check",
+        body: "Hi Jane, thanks for the note about the north side.",
+        replyDraftedAt: "2026-10-31T09:00:00Z",
+        provider: "stub",
+        model: "stub-v1",
+        agentId: "lead_responder",
+        durationMs: 9,
+      },
+    });
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/workspaces/ws-1/agents/lead_responder/run");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ leadId: "lead-1", focus: "one working day" }));
+  });
+
+  it("surfaces the decided-lead conflict message", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(
+          { error: "this lead is already decided (won or lost); move it back to an open status" },
+          409,
+        ),
+      );
+    const state = await requestLeadReply(base, "ws-1", "lead-1", "", fetchImpl);
+    expect(state.kind).toBe("unavailable");
+    expect(state.kind === "unavailable" && state.message).toContain("already decided");
+  });
+
+  it("rejects a response without a subject or body as unavailable", async () => {
+    for (const body of [
+      { lead: { id: "lead-1" }, subject: "", body: "Hi" },
+      { lead: { id: "lead-1" }, subject: "Re", body: "  " },
+      { subject: "Re", body: "Hi" },
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(body, 201));
+      const state = await requestLeadReply(base, "ws-1", "lead-1", "", fetchImpl);
+      expect(state.kind).toBe("unavailable");
+    }
+  });
+
+  it("maps network failures to an unavailable state", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("offline"));
+    const state = await requestLeadReply(base, "ws-1", "lead-1", "", fetchImpl);
     expect(state).toEqual({ kind: "unavailable", message: "the API could not be reached" });
   });
 });

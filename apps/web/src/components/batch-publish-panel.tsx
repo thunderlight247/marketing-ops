@@ -183,7 +183,7 @@ export function BatchPublishPanel() {
         ) : null}
         {workspaces.kind === "unavailable" ? (
           <p className="text-sm text-red-800" role="alert">
-            Could not load businesses: {workspaces.reason}
+            Could not load businesses: {workspaces.reason} (API base: {apiBaseUrl})
           </p>
         ) : null}
         {loadError ? (

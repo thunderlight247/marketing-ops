@@ -87,11 +87,9 @@ test("campaigns and leads can be created, linked, listed, and moved through stat
     );
     expect(patchedCampaign.status).toBe("paused");
     await page.reload();
-    const campaignRow = section
-      .locator("ul")
-      .first()
-      .locator("li")
-      .filter({ hasText: campaignName });
+    // The campaigns list is not the section's first list (the website lead
+    // connections list comes first), so target the row by its text.
+    const campaignRow = section.locator("li").filter({ hasText: campaignName });
     await expect(campaignRow).toContainText("Paused");
     await section.getByRole("button", { name: "New campaign" }).click();
     await section.getByLabel("Campaign name").fill(campaignName);

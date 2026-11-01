@@ -222,6 +222,10 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, registry *int
 			writeJSONError(w, http.StatusBadRequest, "mode must be draft or publish")
 			return
 		}
+		if hasSchedule && (mode != "publish" || !scheduledAt.After(time.Now().UTC())) {
+			writeJSONError(w, http.StatusBadRequest, "scheduledAt requires publish mode and must be in the future")
+			return
+		}
 		if version == nil {
 			writeJSONError(w, http.StatusConflict, "this item has no saved content yet; save the draft once before publishing steps")
 			return
@@ -238,6 +242,10 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, registry *int
 			} else {
 				writeJSONError(w, http.StatusInternalServerError, "integration lookup failed")
 			}
+			return
+		}
+		if integrationRow.AdapterKind == "sanity" && integrationRow.Status != integration.LifecycleConnected {
+			writeJSONError(w, http.StatusConflict, "check and connect this Sanity integration before publishing or scheduling")
 			return
 		}
 		publisher, setupErr := buildPublisher(r.Context(), ws, integrationRow, key, registry, apiBase, httpClient)
@@ -300,6 +308,9 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, registry *int
 			writeJSONError(w, http.StatusConflict,
 				"this exact version was already published through this integration; it is recorded in the publishing history")
 			return
+		case keyErr == nil && hasSchedule:
+			writeJSONError(w, http.StatusConflict, "a publishing job already exists for this version and destination; review its history before scheduling again")
+			return
 		case keyErr == nil && item.Status != "approved":
 			writeJSONError(w, http.StatusConflict,
 				"the newest version must still be approved before a failed publish can be retried")
@@ -336,11 +347,9 @@ func publishWorkspaceContentHandler(ws WorkspaceStore, key []byte, registry *int
 			return
 		}
 
-		// A future schedule queues the job for the background worker instead of
-		// publishing inline right now. A past/absent schedule keeps the previous
-		// synchronous behavior. The scheduled request still creates a durable
-		// job — restarting the process cannot lose it (Milestone 9 acceptance).
-		if hasSchedule && scheduledAt.After(time.Now().UTC()) {
+		// A valid scheduled request always queues the durable job, even if its
+		// due time arrives while the request is being processed.
+		if hasSchedule {
 			// No inline "running" claim is made, so the worker still owns it.
 			audit(r.Context(), ws, store.AuditEvent{
 				WorkspaceID: &workspaceID,

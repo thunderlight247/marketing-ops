@@ -24,17 +24,34 @@ test("agents panel lists every registered specialist from the live registry", as
     const panel = page.getByRole("region", { name: "Enabled agents (registry)" });
     await expect(panel).toBeVisible();
 
-    // The live registry currently enables four built-in specialists; each must
+    // The live registry currently enables six built-in specialists; each must
     // appear by its descriptor id chip, proving the panel is registry-driven.
     for (const id of [
       "content_creator",
       "search_gap_writer",
       "seo_specialist",
       "campaign_strategist",
+      "channel_copy_writer",
+      "lead_responder",
     ]) {
       await expect(panel.getByText(id, { exact: true })).toBeVisible();
     }
     await expect(panel.getByText("Search-gap writer", { exact: true })).toBeVisible();
+    // The latest specialist's registry entry renders through the shared
+    // labels: its contract and action lines must both be human-readable.
+    await expect(
+      panel.getByText("Writes per-channel copy into an existing draft item"),
+    ).toBeVisible();
+    await expect(
+      panel.getByText(
+        "May file per-channel copy into a draft item's version (never changes status or approval)",
+      ),
+    ).toBeVisible();
+    await expect(
+      panel.getByText(
+        "May store a drafted reply on a lead (never sends it, never changes the lead's status)",
+      ),
+    ).toBeVisible();
     // The two Search Console specialists show the formatted data-need line;
     // the description of search_gap_writer also names Search Console, so the
     // count below deliberately anchors on the "Reads:" line instead.

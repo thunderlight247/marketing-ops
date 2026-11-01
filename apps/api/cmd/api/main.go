@@ -16,6 +16,7 @@ import (
 	"marketingops/api/internal/aiprovider"
 	"marketingops/api/internal/config"
 	"marketingops/api/internal/database"
+	"marketingops/api/internal/emailworker"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
 	"marketingops/api/internal/integration"
@@ -53,6 +54,7 @@ func run() error {
 	var workspaceStore httpapi.WorkspaceStore
 	var operatorProvider httpapi.OperatorProvider
 	var jobStore publishworker.RunStore
+	var mailStore emailworker.RunStore
 	registry := integration.NewDefaultRegistry()
 	if cfg.DatabaseConfigured() {
 		pool, err := database.NewPool(ctx, cfg.DatabaseURL)
@@ -65,6 +67,7 @@ func run() error {
 		workspaceStore = wsStore
 		operatorProvider = wsStore
 		jobStore = wsStore
+		mailStore = wsStore
 	} else {
 		logger.Warn("DATABASE_URL is not set; running without a database")
 	}
@@ -82,6 +85,23 @@ func run() error {
 			MaxAttempts:   cfg.PublishWorkerMaxAttempts,
 			BaseDelay:     cfg.PublishWorkerBaseDelay,
 			MaxDelay:      cfg.PublishWorkerMaxDelay,
+		})
+		go worker.Run(ctx)
+	}
+
+	// Background email worker: sends reviewed replies and new-lead alerts
+	// through each workspace's own provider account. A request never waits on
+	// the provider; this loop owns every send and its delivery record.
+	if mailStore != nil {
+		worker := emailworker.New(emailworker.Options{
+			Store:         mailStore,
+			CredentialKey: cfg.CredentialKey,
+			APIBase:       cfg.EmailBase,
+			Logger:        logger,
+			Interval:      cfg.EmailWorkerInterval,
+			MaxAttempts:   cfg.EmailWorkerMaxAttempts,
+			BaseDelay:     cfg.EmailWorkerBaseDelay,
+			MaxDelay:      cfg.EmailWorkerMaxDelay,
 		})
 		go worker.Run(ctx)
 	}
@@ -134,6 +154,7 @@ func run() error {
 			AgentLoaders:         agentLoaders,
 			AgentTimeout:         cfg.GenerateTimeout,
 			SanityOpsBase:        cfg.SanityOpsBase,
+			EmailAPIBase:         cfg.EmailBase,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

@@ -47,9 +47,10 @@ export function WorkspaceAgentsSection() {
       </div>
       <div className="px-4 py-5 sm:px-5">
         <p className="max-w-prose text-sm text-slate-600">
-          Agents are curated prompt profiles, not tools: they advise or draft within the bounds
-          listed here, and every capability beyond that is a human decision through the ordinary
-          flows.
+          Agents can advise, draft content, and propose campaigns within the bounds listed here.
+          They do not automatically find customers, receive enquiries, or verify leads. Leads must
+          currently be recorded through the workspace&apos;s lead workflow; review generated content
+          and campaign proposals before use.
         </p>
 
         {state.kind === "loading" ? (
