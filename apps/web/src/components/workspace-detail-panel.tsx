@@ -433,7 +433,7 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
         </form>
       </section>
 
-      <WorkspaceContentSection key={contentRevision} workspaceId={workspace.id} />
+      <WorkspaceContentSection key={`content-${contentRevision}`} workspaceId={workspace.id} />
 
       <WorkspaceContentCreatorSection
         workspaceId={workspace.id}
@@ -447,7 +447,7 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
 
       <WorkspaceIntegrationsSection workspaceId={workspace.id} />
 
-      <WorkspaceCampaignsSection key={campaignRevision} workspaceId={workspace.id} />
+      <WorkspaceCampaignsSection key={`campaigns-${campaignRevision}`} workspaceId={workspace.id} />
 
       <WorkspaceEmailSection workspaceId={workspace.id} />
 
