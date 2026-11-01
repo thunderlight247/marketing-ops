@@ -428,65 +428,103 @@ export function WorkspaceContentSection({
                 </span>
               )}
             </div>
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs font-medium uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th scope="col" className="py-2.5 pr-4">
-                    Title
-                  </th>
-                  <th scope="col" className="py-2.5 px-4">
-                    Kind
-                  </th>
-                  <th scope="col" className="py-2.5 px-4">
-                    Status
-                  </th>
-                  <th scope="col" className="py-2.5 px-4">
-                    Slug
-                  </th>
-                  <th scope="col" className="py-2.5 pl-4 text-right">
-                    Created
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {state.items
-                  .filter((item) => statusFilter === "all" || item.status === statusFilter)
-                  .map((item: ContentItem) => (
-                  <tr key={item.id} className="hover:bg-slate-50">
-                    <td className="py-3 pr-4 font-medium text-slate-900">
-                      <Link
-                        href={`/content/${item.workspaceId}/${item.id}`}
-                        className="font-medium text-slate-900 underline-offset-2 hover:text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
-                      >
-                        {item.title}
-                      </Link>
-                    </td>
-                    <td className="py-3 px-4">
+            {/* Mobile list view */}
+            <div className="grid gap-2.5 sm:hidden">
+              {state.items
+                .filter((item) => statusFilter === "all" || item.status === statusFilter)
+                .map((item: ContentItem) => (
+                  <div
+                    key={`m-content-${item.id}`}
+                    className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm"
+                  >
+                    <Link
+                      href={`/content/${item.workspaceId}/${item.id}`}
+                      className="font-medium text-slate-900 hover:text-indigo-600 block break-words text-sm"
+                    >
+                      {item.title}
+                    </Link>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <span
-                        className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${kindBadgeClass(item.kind)}`}
+                        className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-medium ${kindBadgeClass(item.kind)}`}
                       >
                         {formatContentKind(item.kind)}
                       </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-600/20">
+                      <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-600/20">
                         {formatContentStatus(item.status)}
                       </span>
-                    </td>
-                    <td className="py-3 px-4 text-xs text-slate-600 font-mono">
-                      {item.slug ? (
-                        <code className="rounded bg-slate-100 px-1 py-0.5">{item.slug}</code>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className="py-3 pl-4 text-right text-xs text-slate-500 whitespace-nowrap">
-                      {new Date(item.createdAt).toLocaleDateString()}
-                    </td>
-                  </tr>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-400 border-t border-slate-100 pt-2">
+                      <span className="font-mono text-[11px] truncate max-w-[12rem]">
+                        {item.slug ? `/${item.slug}` : "no slug"}
+                      </span>
+                      <span>{new Date(item.createdAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+            </div>
+
+            {/* Desktop table view */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-slate-200 text-xs font-medium uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th scope="col" className="py-2.5 pr-4">
+                      Title
+                    </th>
+                    <th scope="col" className="py-2.5 px-4">
+                      Kind
+                    </th>
+                    <th scope="col" className="py-2.5 px-4">
+                      Status
+                    </th>
+                    <th scope="col" className="py-2.5 px-4">
+                      Slug
+                    </th>
+                    <th scope="col" className="py-2.5 pl-4 text-right">
+                      Created
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {state.items
+                    .filter((item) => statusFilter === "all" || item.status === statusFilter)
+                    .map((item: ContentItem) => (
+                    <tr key={item.id} className="hover:bg-slate-50">
+                      <td className="py-3 pr-4 font-medium text-slate-900">
+                        <Link
+                          href={`/content/${item.workspaceId}/${item.id}`}
+                          className="font-medium text-slate-900 underline-offset-2 hover:text-indigo-600 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+                        >
+                          {item.title}
+                        </Link>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${kindBadgeClass(item.kind)}`}
+                        >
+                          {formatContentKind(item.kind)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-600/20">
+                          {formatContentStatus(item.status)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-slate-600 font-mono">
+                        {item.slug ? (
+                          <code className="rounded bg-slate-100 px-1 py-0.5">{item.slug}</code>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 pl-4 text-right text-xs text-slate-500 whitespace-nowrap">
+                        {new Date(item.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

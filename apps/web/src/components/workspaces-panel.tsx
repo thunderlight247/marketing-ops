@@ -34,7 +34,7 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
       {workspaces.map((workspace) => (
         <li
           key={workspace.id}
-          className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 hover:bg-slate-50 transition-colors"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 sm:px-5 sm:py-3.5 hover:bg-slate-50 transition-colors"
         >
           <div className="flex min-w-0 items-center gap-3">
             <WorkspaceAvatar name={workspace.name} />
@@ -47,7 +47,7 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
                   {workspace.name}
                 </Link>
               </p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
+              <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
                 <code className="rounded bg-slate-100 px-1 font-mono">{workspace.slug}</code>
                 {workspace.websiteUrl ? (
                   <>
@@ -56,7 +56,7 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
                       href={workspace.websiteUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="truncate max-w-[14rem] hover:underline hover:text-indigo-600"
+                      className="truncate max-w-[12rem] sm:max-w-[18rem] hover:underline hover:text-indigo-600"
                     >
                       {workspace.websiteUrl}
                     </a>
@@ -88,7 +88,7 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
               ) : null}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
             <span
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset capitalize ${STATUS_STYLES[workspace.status] ?? STATUS_STYLES.active}`}
             >

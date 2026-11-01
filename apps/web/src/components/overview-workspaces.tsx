@@ -183,7 +183,7 @@ export function OverviewWorkspaces() {
         {state.workspaces.map((workspace) => (
           <li
             key={workspace.id}
-            className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 hover:bg-slate-50 transition-colors"
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 sm:px-5 sm:py-3.5 hover:bg-slate-50 transition-colors"
           >
             <div className="flex min-w-0 items-center gap-3">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 text-xs font-bold uppercase">
@@ -237,7 +237,7 @@ export function OverviewWorkspaces() {
             </div>
             <Link
               href={`/workspaces/${encodeURIComponent(workspace.id)}`}
-              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+              className="self-start sm:self-center rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
             >
               Open →
             </Link>

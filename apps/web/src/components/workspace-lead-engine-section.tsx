@@ -669,85 +669,173 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
           &quot;Run Discovery&quot; to find potential clients.
         </Alert>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-left">
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Business</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 hidden sm:table-cell">City</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 hidden md:table-cell">Rating</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((lead) => (
-                <Fragment key={lead.id}>
-                  <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{lead.name}</p>
-                      <p className="text-xs text-slate-400">{lead.phone}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{lead.category}</td>
-                    <td className="px-4 py-3 text-slate-600 hidden sm:table-cell">{lead.city}</td>
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      {lead.rating ? (
-                        <span className="text-amber-600">⭐ {lead.rating.toFixed(1)}</span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={lead.status} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => void viewLogs(lead.id)}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+        <>
+          {/* Mobile card view */}
+          <div className="grid gap-3 md:hidden">
+            {leads.map((lead) => (
+              <div
+                key={`mobile-${lead.id}`}
+                className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900 break-words">{lead.name}</p>
+                    {lead.phone && (
+                      <a
+                        href={`tel:${lead.phone}`}
+                        className="mt-0.5 inline-block font-mono text-xs text-indigo-600 hover:underline"
                       >
-                        {selectedLead === lead.id ? "Hide logs" : "View logs"}
-                      </button>
-                    </td>
-                  </tr>
-                  {selectedLead === lead.id && (
-                    <tr key={`${lead.id}-logs`}>
-                      <td colSpan={6} className="bg-slate-50 px-4 py-3">
-                        {lead.pitch && (
-                          <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3">
-                            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pitch</p>
-                            <p className="text-sm text-slate-700 whitespace-pre-wrap">{lead.pitch}</p>
+                        {lead.phone}
+                      </a>
+                    )}
+                  </div>
+                  <StatusBadge status={lead.status} />
+                </div>
+
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+                    {lead.category}
+                  </span>
+                  {lead.city && <span>📍 {lead.city}</span>}
+                  {lead.rating ? (
+                    <span className="text-amber-600 font-medium">⭐ {lead.rating.toFixed(1)}</span>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">
+                  <button
+                    type="button"
+                    onClick={() => void viewLogs(lead.id)}
+                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                  >
+                    {selectedLead === lead.id ? "Hide logs & pitch ▲" : "View logs & pitch ▼"}
+                  </button>
+                  <span className="text-[11px] text-slate-400">
+                    {new Date(lead.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+
+                {selectedLead === lead.id && (
+                  <div className="mt-3 rounded-lg bg-slate-50 p-3 border border-slate-200 text-xs">
+                    {lead.pitch && (
+                      <div className="mb-3 rounded-md border border-slate-200 bg-white p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Pitch
+                        </p>
+                        <p className="text-slate-700 whitespace-pre-wrap">{lead.pitch}</p>
+                      </div>
+                    )}
+                    {loadingLogs ? (
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <Spinner size={14} /> Loading logs…
+                      </div>
+                    ) : logs.length === 0 ? (
+                      <p className="text-slate-400">No outreach logs for this lead.</p>
+                    ) : (
+                      <div className="grid gap-2">
+                        {logs.map((log) => (
+                          <div
+                            key={log.id}
+                            className="rounded border border-slate-200 bg-white p-2.5"
+                          >
+                            <div className="flex flex-wrap items-center gap-1.5 text-slate-500 text-[11px]">
+                              <span className="font-mono">{new Date(log.createdAt).toLocaleTimeString()}</span>
+                              <span className="uppercase font-semibold">{log.direction}</span>
+                              <StatusBadge status={log.status} />
+                            </div>
+                            {log.body && <p className="mt-1 text-slate-700">{log.body}</p>}
+                            {log.error && <p className="mt-1 text-red-600 font-medium">Error: {log.error}</p>}
                           </div>
-                        )}
-                        {loadingLogs ? (
-                          <div className="flex items-center gap-2 text-sm text-slate-500">
-                            <Spinner size={14} /> Loading logs…
-                          </div>
-                        ) : logs.length === 0 ? (
-                          <p className="text-xs text-slate-400">No outreach logs for this lead.</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table view */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-200">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Business</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 hidden sm:table-cell">City</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 hidden md:table-cell">Rating</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leads.map((lead) => (
+                  <Fragment key={lead.id}>
+                    <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-900">{lead.name}</p>
+                        <p className="text-xs text-slate-400">{lead.phone}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{lead.category}</td>
+                      <td className="px-4 py-3 text-slate-600 hidden sm:table-cell">{lead.city}</td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {lead.rating ? (
+                          <span className="text-amber-600">⭐ {lead.rating.toFixed(1)}</span>
                         ) : (
-                          <div className="grid gap-2">
-                            {logs.map((log) => (
-                              <div key={log.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
-                                <div className="flex items-center gap-2 text-slate-500">
-                                  <span className="font-mono">{new Date(log.createdAt).toLocaleString()}</span>
-                                  <span className="uppercase">{log.direction}</span>
-                                  <StatusBadge status={log.status} />
-                                </div>
-                                {log.body && <p className="mt-1 text-slate-700">{log.body}</p>}
-                                {log.error && <p className="mt-1 text-red-600">Error: {log.error}</p>}
-                              </div>
-                            ))}
-                          </div>
+                          <span className="text-slate-400">—</span>
                         )}
                       </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={lead.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => void viewLogs(lead.id)}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          {selectedLead === lead.id ? "Hide logs" : "View logs"}
+                        </button>
+                      </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    {selectedLead === lead.id && (
+                      <tr key={`${lead.id}-logs`}>
+                        <td colSpan={6} className="bg-slate-50 px-4 py-3">
+                          {lead.pitch && (
+                            <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3">
+                              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pitch</p>
+                              <p className="text-sm text-slate-700 whitespace-pre-wrap">{lead.pitch}</p>
+                            </div>
+                          )}
+                          {loadingLogs ? (
+                            <div className="flex items-center gap-2 text-sm text-slate-500">
+                              <Spinner size={14} /> Loading logs…
+                            </div>
+                          ) : logs.length === 0 ? (
+                            <p className="text-xs text-slate-400">No outreach logs for this lead.</p>
+                          ) : (
+                            <div className="grid gap-2">
+                              {logs.map((log) => (
+                                <div key={log.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+                                  <div className="flex items-center gap-2 text-slate-500">
+                                    <span className="font-mono">{new Date(log.createdAt).toLocaleString()}</span>
+                                    <span className="uppercase">{log.direction}</span>
+                                    <StatusBadge status={log.status} />
+                                  </div>
+                                  {log.body && <p className="mt-1 text-slate-700">{log.body}</p>}
+                                  {log.error && <p className="mt-1 text-red-600">Error: {log.error}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
@@ -834,28 +922,46 @@ function BlacklistTab({ workspaceId }: { workspaceId: string }) {
       ) : list.length === 0 ? (
         <Alert kind="info">No suppressed numbers yet.</Alert>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-left">
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Added</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((entry) => (
-                <tr key={entry.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-3 font-mono text-slate-700">{entry.phoneNumber}</td>
-                  <td className="px-4 py-3 text-slate-500">{entry.reason || "—"}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">
+        <>
+          {/* Mobile card view */}
+          <div className="grid gap-2 sm:hidden">
+            {list.map((entry) => (
+              <div key={`m-bl-${entry.id}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold text-slate-800">{entry.phoneNumber}</span>
+                  <span className="text-[11px] text-slate-400">
                     {new Date(entry.createdAt).toLocaleDateString()}
-                  </td>
+                  </span>
+                </div>
+                {entry.reason && <p className="mt-1 text-xs text-slate-600">{entry.reason}</p>}
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table view */}
+          <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Phone</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Added</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {list.map((entry) => (
+                  <tr key={entry.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-3 font-mono text-slate-700">{entry.phoneNumber}</td>
+                    <td className="px-4 py-3 text-slate-500">{entry.reason || "—"}</td>
+                    <td className="px-4 py-3 text-slate-400 text-xs">
+                      {new Date(entry.createdAt).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

@@ -10,7 +10,7 @@ export function EmptyState({
   action?: React.ReactNode;
 }>) {
   return (
-    <div className="flex flex-col items-center rounded-xl border border-dashed border-slate-200 bg-white px-6 py-14 text-center">
+    <div className="flex flex-col items-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 sm:px-6 sm:py-14 text-center">
       {icon ? (
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
           {icon}

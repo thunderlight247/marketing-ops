@@ -109,15 +109,16 @@ func RunDiscovery(ctx context.Context, p DiscoveryParams, s LeadEngineStore) (in
 
 // DispatchParams holds everything RunDispatch needs.
 type DispatchParams struct {
-	WorkspaceID  string
-	AIKey        string
-	AIModel      string
-	SenderName   string
-	PortfolioURL string
-	MinDelayMs   int
-	MaxDelayMs   int
-	DailyLimit   int
-	DispatchURL  string // WhatsApp dispatcher base URL e.g. http://localhost:8083
+	WorkspaceID      string
+	AIKey            string
+	AIModel          string
+	SenderName       string
+	PortfolioURL     string
+	MinDelayMs       int
+	MaxDelayMs       int
+	DailyLimit       int
+	DispatchURL      string // WhatsApp dispatcher base URL e.g. http://localhost:8083
+	DispatcherSecret string // X-Internal-Secret header value; empty means no auth
 }
 
 // RunDispatch generates pitches for discovered leads and sends them via WhatsApp.
@@ -186,7 +187,16 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 			"phone":   phone,
 			"message": pitch,
 		})
-		resp, err := http.Post(sendURL, "application/json", bytes.NewReader(payload)) //nolint:noctx
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(payload))
+		if reqErr != nil {
+			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "failed")
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if p.DispatcherSecret != "" {
+			req.Header.Set("X-Internal-Secret", p.DispatcherSecret)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode >= 400 {
 			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "failed")
 			if resp != nil {

@@ -196,6 +196,29 @@ func dispatcherURL() string {
 	return u
 }
 
+// dispatcherSecret returns the shared secret used to authenticate calls to the
+// WhatsApp dispatcher. An empty string means no secret is configured and the
+// header is omitted, which keeps the existing "no-auth" mode working.
+func dispatcherSecret() string {
+	return os.Getenv("WHATSAPP_DISPATCHER_SECRET")
+}
+
+// newDispatcherRequest builds an *http.Request pre-signed with the dispatcher
+// secret header when one is configured.
+func newDispatcherRequest(ctx context.Context, method, url string, body io.Reader, contentType string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if s := dispatcherSecret(); s != "" {
+		req.Header.Set("X-Internal-Secret", s)
+	}
+	return req, nil
+}
+
 // POST /api/v1/workspaces/{id}/lead-engine/whatsapp/connect
 func connectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +227,12 @@ func connectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 			return
 		}
 		url := dispatcherURL() + "/sessions/" + workspaceID + "/start"
-		resp, err := http.Post(url, "application/json", nil) //nolint:noctx
+		req, err := newDispatcherRequest(r.Context(), http.MethodPost, url, nil, "application/json")
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "could not build dispatcher request")
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			writeJSONError(w, http.StatusBadGateway, "WhatsApp dispatcher unreachable")
 			return
@@ -235,7 +263,13 @@ func disconnectWhatsAppHandler(ws WorkspaceStore) http.HandlerFunc {
 			return
 		}
 		url := dispatcherURL() + "/sessions/" + workspaceID + "/disconnect"
-		resp, err := http.Post(url, "application/json", nil) //nolint:noctx
+		req, err := newDispatcherRequest(r.Context(), http.MethodPost, url, nil, "application/json")
+		if err != nil {
+			_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "disconnected", "")
+			writeJSONError(w, http.StatusInternalServerError, "could not build dispatcher request")
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			// Best-effort: still mark disconnected in DB.
 			_ = ws.SetWhatsAppStatus(r.Context(), workspaceID, "disconnected", "")
@@ -256,7 +290,12 @@ func getWhatsAppStatusHandler(ws WorkspaceStore) http.HandlerFunc {
 			return
 		}
 		url := dispatcherURL() + "/sessions/" + workspaceID + "/status"
-		resp, err := http.Get(url) //nolint:noctx
+		req, err := newDispatcherRequest(r.Context(), http.MethodGet, url, nil, "")
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "could not build dispatcher request")
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			writeJSONError(w, http.StatusBadGateway, "WhatsApp dispatcher unreachable")
 			return
@@ -495,15 +534,16 @@ func triggerDispatchHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc 
 		ctx := context.Background()
 		go func() {
 			_ = leadengine.RunDispatch(ctx, leadengine.DispatchParams{
-				WorkspaceID:  workspaceID,
-				AIKey:        string(aiKey),
-				AIModel:      cfg.AIModel,
-				SenderName:   cfg.SenderName,
-				PortfolioURL: cfg.PortfolioURL,
-				MinDelayMs:   cfg.MinDelayMs,
-				MaxDelayMs:   cfg.MaxDelayMs,
-				DailyLimit:   cfg.DailyLimit,
-				DispatchURL:  dispatcherURL(),
+				WorkspaceID:      workspaceID,
+				AIKey:            string(aiKey),
+				AIModel:          cfg.AIModel,
+				SenderName:       cfg.SenderName,
+				PortfolioURL:     cfg.PortfolioURL,
+				MinDelayMs:       cfg.MinDelayMs,
+				MaxDelayMs:       cfg.MaxDelayMs,
+				DailyLimit:       cfg.DailyLimit,
+				DispatchURL:      dispatcherURL(),
+				DispatcherSecret: dispatcherSecret(),
 			}, ws)
 		}()
 
@@ -519,7 +559,15 @@ func postJSON(url string, payload any, dst any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(b)) //nolint:noctx
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s := dispatcherSecret(); s != "" {
+		req.Header.Set("X-Internal-Secret", s)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
