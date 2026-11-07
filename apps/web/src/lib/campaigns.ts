@@ -141,7 +141,13 @@ export interface Lead {
 
 export type CampaignsLeadsState =
   | { kind: "loading" }
-  | { kind: "loaded"; campaigns: Campaign[]; leads: Lead[] }
+  | {
+      kind: "loaded";
+      campaigns: Campaign[];
+      leads: Lead[];
+      /** Outreach rows the WhatsApp lead engine owns; never in `leads`. */
+      leadEngineCount?: number;
+    }
   | { kind: "unavailable"; message: string }
   | { kind: "missing"; message: string };
 
@@ -347,7 +353,10 @@ export async function fetchWorkspaceCampaignsLeads(
       return { kind: "unavailable", message: `The server answered with status ${code}.` };
     }
     const campaignData = (await campaignsRes.json()) as { campaigns?: unknown[] };
-    const leadData = (await leadsRes.json()) as { leads?: unknown[] };
+    const leadData = (await leadsRes.json()) as {
+      leads?: unknown[];
+      leadEngineCount?: unknown;
+    };
     if (!Array.isArray(campaignData.campaigns) || !Array.isArray(leadData.leads)) {
       return { kind: "unavailable", message: "Server returned malformed campaign/lead data." };
     }
@@ -361,7 +370,9 @@ export async function fetchWorkspaceCampaignsLeads(
       const parsed = parseLead(raw);
       if (parsed) leads.push(parsed);
     }
-    return { kind: "loaded", campaigns, leads };
+    const leadEngineCount =
+      typeof leadData.leadEngineCount === "number" ? leadData.leadEngineCount : 0;
+    return { kind: "loaded", campaigns, leads, leadEngineCount };
   } catch (err) {
     return {
       kind: "unavailable",

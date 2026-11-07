@@ -36,7 +36,10 @@ async function proxy(request: NextRequest) {
   if (key) headers.set("authorization", `Bearer ${key}`);
 
   try {
-    const isSSE = request.headers.get("accept")?.includes("text/event-stream");
+    // Live event streams stay open indefinitely; they must not hit the 120s abort below.
+    const isSSE =
+      request.headers.get("accept")?.includes("text/event-stream") ||
+      /\/events$/.test(request.nextUrl.pathname);
     const response = await fetch(target, {
       method: request.method,
       headers,

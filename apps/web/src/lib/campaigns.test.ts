@@ -119,10 +119,10 @@ describe("fetchWorkspaceCampaignsLeads", () => {
         return jsonRes(200, {
           campaigns: [{ id: "c1", workspaceId: "w", name: "C", status: "active" }],
         });
-      }
-      return jsonRes(200, {
-        leads: [
-          {
+      }	      return jsonRes(200, {
+	        leadEngineCount: 3,
+	        leads: [
+	          {
             id: "l1",
             workspaceId: "w",
             sourceKind: "form_api",
@@ -139,9 +139,9 @@ describe("fetchWorkspaceCampaignsLeads", () => {
       throw new Error(`expected loaded, got ${state.kind}`);
     }
     expect(state.campaigns).toHaveLength(1);
-    expect(state.campaigns[0].status).toBe("active");
-    expect(state.leads[0].sourceKind).toBe("form_api");
-    expect(state.leads[0].contactEmail).toBe("a@b.test");
+    expect(state.campaigns[0].status).toBe("active");	    expect(state.leads[0].sourceKind).toBe("form_api");
+	    expect(state.leads[0].contactEmail).toBe("a@b.test");
+	    expect(state.leadEngineCount).toBe(3);
     expect(calls.some((u) => u.includes("/campaigns"))).toBe(true);
     expect(calls.some((u) => u.includes("/leads"))).toBe(true);
   });

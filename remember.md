@@ -1671,3 +1671,19 @@ However, the latest recorded status does not establish that every milestone is c
 **The next action is a repository audit—not a rewrite.** Confirm the current state, run the relevant checks, identify the highest-priority missing acceptance criterion, implement the smallest appropriate change, verify it, and update this document.
 
 This file is intended to preserve the reasoning behind the roadmap as well as its implementation history, so future assistants can continue the project without losing earlier work or confusing planned capabilities with verified behavior.
+## Stable public entrypoint via Cloudflare Worker — 1 November 2026
+
+Platform deployed on Neon (branch `production`, all 16 migrations applied) and now served behind the
+stable URL **https://marketing-ops-entry.marketing-ops-team.workers.dev** — a Cloudflare Worker in the
+new `marketing-ops` Cloudflare account (free `workers.dev` subdomain `marketing-ops-team` registered via the
+API because wrangler v4 dropped the `subdomain` command). The Worker (source under
+`infra/cloudflare-worker/`, deployable with `./update-target.sh <tunnel-url>`) proxies to the rotating
+trycloudflare quick tunnel that fronts Next.js :3000, which proxies `/api/v1` to the Go API :8081 on
+Neon. `WEB_ORIGIN` on the web process must equal the stable URL or non-GET API writes 403. A named
+cloudflared tunnel exists for the future (bind a real domain with `cloudflared tunnel route dns
+marketing-ops <host>`); without a domain it cannot get a public hostname. Full details:
+`docs/stable-entrypoint.md`.
+
+Not yet production-hardened: the entrypoint is unauthenticated (`WEB_AUTH_DISABLED=true`, API has no
+`API_KEY`). Turning on real auth requires `OPERATOR_USERNAME`/`OPERATOR_PASSWORD` on web and
+`APP_ENV=production` + `API_KEY` on the API.

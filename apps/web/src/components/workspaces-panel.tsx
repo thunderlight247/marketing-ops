@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { getApiBaseUrl } from "@/lib/config";
+import { listWhatsAppSessions, type WhatsAppSession } from "@/lib/leadEngine";
 import {
   createWorkspace,
   describeDeliveryAttention,
@@ -28,7 +29,13 @@ function WorkspaceAvatar({ name }: { name: string }) {
   );
 }
 
-function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
+function WorkspaceList({
+  workspaces,
+  sessions,
+}: {
+  workspaces: Workspace[];
+  sessions: WhatsAppSession[] | null;
+}) {
   return (
     <ul className="divide-y divide-slate-100">
       {workspaces.map((workspace) => (
@@ -63,10 +70,51 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
                   </>
                 ) : null}
               </p>
+              {sessions !== null ? (
+                <p className="mt-1">
+                  {(() => {
+                    const session = sessions.find((s) => s.workspaceId === workspace.id);
+                    if (!session) {
+                      return (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-400" aria-hidden="true" />
+                          No WhatsApp session
+                        </span>
+                      );
+                    }
+                    return (
+                      <span
+                        className={`inline-flex flex-wrap items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
+                          session.connected
+                            ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+                            : "bg-slate-100 text-slate-600 ring-slate-400/20"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            session.connected ? "bg-emerald-500" : "bg-slate-400"
+                          }`}
+                          aria-hidden="true"
+                        />
+                        {session.source === "own" ? "Own number" : "Shared number"}
+                        <span className="text-slate-400" aria-hidden="true">
+                          ·
+                        </span>
+                        <span className="font-mono font-normal text-slate-500">
+                          {session.phone || "not paired"}
+                        </span>
+                        <span className="text-slate-400">
+                          · {session.connected ? "connected" : "offline"}
+                        </span>
+                      </span>
+                    );
+                  })()}
+                </p>
+              ) : null}
               {workspace.deliveryAttention ? (
                 <p className="mt-1">
                   <Link
-                    href={`/workspaces/${encodeURIComponent(workspace.id)}#email-deliveries`}
+                    href={`/workspaces/${encodeURIComponent(workspace.id)}/email#email-deliveries`}
                     data-testid={`workspace-delivery-attention-${workspace.id}`}
                     className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500"
                   >
@@ -96,9 +144,12 @@ function WorkspaceList({ workspaces }: { workspaces: Workspace[] }) {
             </span>
             <Link
               href={`/workspaces/${encodeURIComponent(workspace.id)}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Open in a new tab — workspaces in other tabs keep running"
               className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
             >
-              Open →
+              Open ↗
             </Link>
           </div>
         </li>
@@ -119,16 +170,30 @@ export function WorkspacesPanel() {
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+  // null = pairing status unavailable (dispatcher down or still starting).
+  const [sessions, setSessions] = useState<WhatsAppSession[] | null>(null);
   const apiBaseUrl = getApiBaseUrl();
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const res = await listWhatsAppSessions(apiBaseUrl);
+      setSessions(res.sessions ?? []);
+    } catch {
+      setSessions(null);
+    }
+  }, [apiBaseUrl]);
 
   const refresh = useCallback(async () => {
     setState({ kind: "loading" });
-    setState(await fetchWorkspaces(apiBaseUrl));
-  }, [apiBaseUrl]);
+    const [next] = await Promise.all([fetchWorkspaces(apiBaseUrl), loadSessions()]);
+    setState(next);
+  }, [apiBaseUrl, loadSessions]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const connectedCount = sessions?.filter((s) => s.connected).length ?? null;
 
   const submit = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -170,10 +235,16 @@ export function WorkspacesPanel() {
             id="workspaces-list-heading"
             className="text-xs font-semibold uppercase tracking-widest text-slate-500"
           >
-            Client workspaces
+            Connected workspaces
             {state.kind === "loaded" && (
               <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                 {state.workspaces.length}
+              </span>
+            )}
+            {connectedCount !== null && connectedCount > 0 && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                {connectedCount} WhatsApp live
               </span>
             )}
           </h2>
@@ -228,7 +299,7 @@ export function WorkspacesPanel() {
                 />
               </div>
             ) : (
-              <WorkspaceList workspaces={state.workspaces} />
+              <WorkspaceList workspaces={state.workspaces} sessions={sessions} />
             )
           ) : null}
         </div>
@@ -244,7 +315,7 @@ export function WorkspacesPanel() {
             id="workspaces-create-heading"
             className="text-xs font-semibold uppercase tracking-widest text-slate-500"
           >
-            New workspace
+            Add another workspace
           </h2>
         </div>
         <div className="px-5 py-5">
@@ -322,7 +393,7 @@ export function WorkspacesPanel() {
               disabled={submitting || state.kind === "loading"}
               className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
             >
-              {submitting ? "Creating…" : "Create workspace"}
+              {submitting ? "Adding…" : "Add workspace"}
             </button>
           </form>
         </div>

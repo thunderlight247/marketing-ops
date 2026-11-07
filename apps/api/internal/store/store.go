@@ -39,6 +39,13 @@ var (
 	ErrVersionNotLatest  = errors.New("approval must target the newest version of the item")
 	ErrAlreadyDecided    = errors.New("that version already has an approval decision")
 	ErrNotApproved       = errors.New("the content version is not approved")
+	// ErrAlreadyContacted means the workspace already holds a lead for this
+	// phone. It mirrors the legacy engine's UNIQUE phone_number: the contact
+	// exists once and must never be queued again.
+	ErrAlreadyContacted = errors.New("contact phone already has a lead in this workspace")
+	// ErrLastAdmin blocks demoting or deactivating the final active admin, so
+	// a team cannot lock itself out of administration.
+	ErrLastAdmin = errors.New("at least one active admin is required")
 )
 
 // Store is the repository target. It wraps a pgx pool so the process shares one.

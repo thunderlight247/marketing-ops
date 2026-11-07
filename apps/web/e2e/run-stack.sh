@@ -130,12 +130,35 @@ bring_api_up() { # $1 = base URL the API must answer on
 }
 
 api_pid=""
+supervisor_pid=""
 cleanup() {
+  if [[ -n "$supervisor_pid" ]]; then
+    kill "$supervisor_pid" 2>/dev/null || true
+  fi
   if [[ -n "$api_pid" ]]; then
     # go run wraps the actual binary in a child process; stop both.
     pkill -P "$api_pid" 2>/dev/null || true
     kill "$api_pid" 2>/dev/null || true
   fi
+}
+
+# supervise_api runs in the background while the dashboard is up. If the API
+# this script started stops answering, it restarts it, so the dashboard never
+# stays on "API unavailable" because of a crashed API process.
+supervise_api() { # $1 = API base URL
+  local base=$1 child=""
+  trap '[[ -n "$child" ]] && pkill -P "$child" 2>/dev/null; [[ -n "$child" ]] && kill "$child" 2>/dev/null; exit 0' TERM INT
+  while sleep 5; do
+    if [[ -n "$child" ]] && kill -0 "$child" 2>/dev/null; then
+      continue
+    fi
+    if ready "$base" || port_open "${base##*:}"; then
+      continue
+    fi
+    echo "run-stack: the API on $base stopped; restarting it" >&2
+    (cd "$api_dir" && exec go run ./cmd/api) &
+    child=$!
+  done
 }
 trap cleanup EXIT
 
@@ -195,6 +218,8 @@ for candidate in "${api_candidates[@]}"; do
   fi
   if bring_api_up "$candidate" "$web_port_used"; then
     api_base_used=$candidate
+    supervise_api "$candidate" &
+    supervisor_pid=$!
     break
   fi
 done

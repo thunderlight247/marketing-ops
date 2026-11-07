@@ -11,6 +11,77 @@ import (
 	"time"
 )
 
+// The CRM panel lists enquiries, not outreach contacts: engine rows must stay
+// out of ListLeads while still being countable for the "tracked elsewhere" note.
+func TestCrmLeadListExcludesLeadEngineRows(t *testing.T) {
+	s := requireStore(t)
+	ctx := context.Background()
+	ws := uniqueWorkspace(t, s, "crm-vs-engine")
+
+	phone, engineName := "+233200000001", "Engine contact"
+	if _, err := s.InsertLead(ctx, Lead{
+		WorkspaceID:  ws.ID,
+		SourceKind:   "lead_engine",
+		Status:       "sent",
+		ContactName:  &engineName,
+		ContactPhone: &phone,
+	}); err != nil {
+		t.Fatalf("insert engine lead: %v", err)
+	}
+	if _, err := s.InsertLead(ctx, Lead{
+		WorkspaceID: ws.ID,
+		SourceKind:  "manual",
+		Status:      "new",
+	}); err != nil {
+		t.Fatalf("insert CRM lead: %v", err)
+	}
+	// A queued outreach lead must show up as backlog, not as a CRM lead.
+	queuedPhone := "+233200000002"
+	if _, err := s.InsertLead(ctx, Lead{
+		WorkspaceID:  ws.ID,
+		SourceKind:   "lead_engine",
+		Status:       "pending",
+		ContactPhone: &queuedPhone,
+	}); err != nil {
+		t.Fatalf("insert queued engine lead: %v", err)
+	}
+
+	listed, err := s.ListLeads(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("ListLeads: %v", err)
+	}
+	if len(listed) != 1 || listed[0].SourceKind != "manual" {
+		t.Fatalf("CRM list must hold only non-engine rows, got %+v", listed)
+	}
+	count, err := s.CountLeadEngineLeads(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("CountLeadEngineLeads: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("CountLeadEngineLeads = %d, want 2", count)
+	}
+
+	progress, err := s.ListLeadEngineProgress(ctx)
+	if err != nil {
+		t.Fatalf("ListLeadEngineProgress: %v", err)
+	}
+	var row *LeadEngineProgress
+	for i := range progress {
+		if progress[i].WorkspaceID == ws.ID {
+			row = &progress[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("progress missing this workspace: %+v", progress)
+	}
+	if row.Queued != 1 || row.InFlight != 0 {
+		t.Fatalf("progress = %+v, want queued 1 and none in flight", *row)
+	}
+	if row.LastOutboundAt != nil {
+		t.Fatalf("no outbound message was sent yet, got lastOutboundAt %v", row.LastOutboundAt)
+	}
+}
+
 func insertTestCampaign(t *testing.T, s *Store, workspaceID, name string) Campaign {
 	t.Helper()
 	ctx := context.Background()

@@ -246,7 +246,7 @@ export function BatchPublishPanel() {
                         No Sanity integration with saved credentials.{" "}
                         <Link
                           className="underline"
-                          href={`/workspaces/${encodeURIComponent(workspace.id)}`}
+                          href={`/workspaces/${encodeURIComponent(workspace.id)}/integrations`}
                         >
                           Configure this business
                         </Link>

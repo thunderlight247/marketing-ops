@@ -17,8 +17,10 @@ export interface LeadEngineConfig {
   dailyLimit: number;
   minDelayMs: number;
   maxDelayMs: number;
-  whatsappStatus: "disconnected" | "qr_ready" | "connected" | "initializing" | "authenticated" | string;
+  whatsappStatus:
+    "disconnected" | "qr_ready" | "connected" | "initializing" | "authenticated" | string;
   whatsappPhone: string;
+  pitchTemplate: string;
 }
 
 export interface LeadEngineConfigInput {
@@ -35,6 +37,7 @@ export interface LeadEngineConfigInput {
   dailyLimit?: number;
   minDelayMs?: number;
   maxDelayMs?: number;
+  pitchTemplate?: string;
 }
 
 export interface LeadEngineLead {
@@ -66,6 +69,22 @@ export interface OutreachLog {
   createdAt: string;
 }
 
+// Daily outreach activity row: one log entry enriched with the lead name/phone.
+export interface OutreachActivity {
+  id: string;
+  workspaceId: string;
+  leadId: string;
+  direction: string;
+  messageId?: string;
+  body: string;
+  status: string;
+  ack?: number | null;
+  error?: string;
+  createdAt: string;
+  leadName: string;
+  leadPhone: string;
+}
+
 export interface BlacklistEntry {
   id: string;
   workspaceId: string;
@@ -74,10 +93,29 @@ export interface BlacklistEntry {
   createdAt: string;
 }
 
-export type WhatsAppConnectResult =
+// One paired WhatsApp session: a workspace's own number, or the shared
+// fallback account that workspaces without their own number still use.
+export interface WhatsAppSession {
+  workspaceId: string;
+  workspaceName: string;
+  source: "own" | "shared" | string;
+  status: string;
+  phone: string;
+  connected: boolean;
+}
+
+export type WhatsAppConnectResult = {
+  source?: "own" | "shared";
+  /** The number a pairing code was requested for, when one is pending. */
+  pairingPhone?: string;
+  /** The 8-character code WhatsApp issued; the QR remains usable too. */
+  pairingCode?: string;
+  pairingError?: string;
+} & (
   | { status: "connected"; phone: string }
   | { status: "qr_ready"; qr: string }
-  | { status: string; phone?: string; qr?: string };
+  | { status: string; phone?: string; qr?: string }
+);
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,8 +174,53 @@ export function connectWhatsApp(base: string, workspaceId: string): Promise<What
   );
 }
 
+// Links this workspace's OWN number (its own persistent session) instead of
+// the shared account it may have been borrowing. One-time QR scan, restored on
+// every later start.
+export function connectOwnWhatsApp(
+  base: string,
+  workspaceId: string,
+): Promise<WhatsAppConnectResult> {
+  return jsonPost<WhatsAppConnectResult>(
+    base,
+    `/api/v1/workspaces/${workspaceId}/lead-engine/whatsapp/connect?own=1`,
+  );
+}
+
+// Pair via a code WhatsApp sends to the phone number instead of scanning the
+// QR. The code and the QR authenticate the same saved session, so either can
+// be used; the dashboard shows both while pairing.
+export function pairOwnWhatsApp(
+  base: string,
+  workspaceId: string,
+  phone: string,
+): Promise<WhatsAppConnectResult> {
+  return jsonPost<WhatsAppConnectResult>(
+    base,
+    `/api/v1/workspaces/${workspaceId}/lead-engine/whatsapp/pair?own=1`,
+    { phone },
+  );
+}
+
 export function disconnectWhatsApp(base: string, workspaceId: string): Promise<unknown> {
   return jsonPost(base, `/api/v1/workspaces/${workspaceId}/lead-engine/whatsapp/disconnect`);
+}
+
+// Per-workspace outreach backlog, for the "which workspace is sending" rail.
+export interface LeadEngineProgress {
+  workspaceId: string;
+  queued: number;
+  inFlight: number;
+  lastOutboundAt?: string;
+}
+
+export function listLeadEngineProgress(base: string): Promise<{ progress: LeadEngineProgress[] }> {
+  return apiFetch(base, `/api/v1/lead-engine/progress`);
+}
+
+// Audit of every paired session: which workspace sends from which number.
+export function listWhatsAppSessions(base: string): Promise<{ sessions: WhatsAppSession[] }> {
+  return apiFetch(base, `/api/v1/lead-engine/whatsapp/sessions`);
 }
 
 export function getWhatsAppStatus(
@@ -160,16 +243,47 @@ export function triggerDispatch(base: string, workspaceId: string): Promise<{ st
   return jsonPost(base, `/api/v1/workspaces/${workspaceId}/lead-engine/dispatch`);
 }
 
-// ─── leads ────────────────────────────────────────────────────────────────────
+// ─── follow-up ────────────────────────────────────────────────────────────────
 
-export function listLeadEngineLeads(
+// One contact this workspace has ALREADY messaged successfully — the
+// selectable pool for follow-up rounds.
+export interface MessagedContact {
+  id: string;
+  name: string;
+  phone: string;
+  category: string;
+  city: string;
+  lastSentAt: string;
+  blacklisted: boolean;
+}
+
+export function listMessagedContacts(
   base: string,
   workspaceId: string,
-): Promise<LeadEngineLead[]> {
-  return apiFetch<LeadEngineLead[]>(
+): Promise<MessagedContact[]> {
+  return apiFetch<MessagedContact[]>(
     base,
-    `/api/v1/workspaces/${workspaceId}/lead-engine/leads`,
+    `/api/v1/workspaces/${workspaceId}/lead-engine/contacts`,
   );
+}
+
+/** Starts a background follow-up run for the selected contact IDs. */
+export function sendFollowUp(
+  base: string,
+  workspaceId: string,
+  message: string,
+  leadIds: string[],
+): Promise<{ status?: string; total?: number }> {
+  return jsonPost(base, `/api/v1/workspaces/${workspaceId}/lead-engine/followup`, {
+    message,
+    leadIds,
+  });
+}
+
+// ─── leads ────────────────────────────────────────────────────────────────────
+
+export function listLeadEngineLeads(base: string, workspaceId: string): Promise<LeadEngineLead[]> {
+  return apiFetch<LeadEngineLead[]>(base, `/api/v1/workspaces/${workspaceId}/lead-engine/leads`);
 }
 
 // ─── logs ─────────────────────────────────────────────────────────────────────
@@ -185,10 +299,27 @@ export function listOutreachLogs(
   );
 }
 
+// ─── daily activity ───────────────────────────────────────────────────────
+
+// days=0 → today only (each day starts empty); days=N → last N days.
+export function listDailyOutreach(
+  base: string,
+  workspaceId: string,
+  days = 0,
+): Promise<OutreachActivity[]> {
+  return apiFetch<OutreachActivity[]>(
+    base,
+    `/api/v1/workspaces/${workspaceId}/lead-engine/outreach?days=${days}`,
+  );
+}
+
 // ─── blacklist ────────────────────────────────────────────────────────────────
 
 export function listBlacklist(base: string, workspaceId: string): Promise<BlacklistEntry[]> {
-  return apiFetch<BlacklistEntry[]>(base, `/api/v1/workspaces/${workspaceId}/lead-engine/blacklist`);
+  return apiFetch<BlacklistEntry[]>(
+    base,
+    `/api/v1/workspaces/${workspaceId}/lead-engine/blacklist`,
+  );
 }
 
 export function addToBlacklist(

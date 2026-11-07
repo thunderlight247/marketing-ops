@@ -609,7 +609,7 @@ export function DraftEditor({
       <div className="rounded-md bg-amber-50 p-4 ring-1 ring-inset ring-amber-700/15">
         <p className="text-sm font-medium text-amber-900">{state.message}</p>
         <Link
-          href="/content"
+          href={`/workspaces/${encodeURIComponent(workspaceId)}/content`}
           className="mt-2 inline-block text-sm font-medium text-amber-900 underline underline-offset-2 hover:no-underline"
         >
           Back to content
@@ -642,7 +642,7 @@ export function DraftEditor({
         <div>
           <p className="text-sm text-slate-600">
             <Link
-              href="/content"
+              href={`/workspaces/${encodeURIComponent(workspaceId)}/content`}
               className="font-medium text-indigo-600 underline-offset-2 hover:text-indigo-700 hover:underline"
             >
               Content
@@ -808,7 +808,7 @@ export function DraftEditor({
             <p className="mt-1 text-xs text-slate-600">
               This workspace has no Sanity integration yet — connect one under
               <Link
-                href={`/workspaces/${workspaceId}`}
+                href={`/workspaces/${encodeURIComponent(workspaceId)}/integrations`}
                 className="ml-1 font-medium text-indigo-600 underline-offset-2 hover:underline"
               >
                 workspace integrations

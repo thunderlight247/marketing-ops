@@ -70,9 +70,15 @@ export interface EmailDelivery {
   sentAt: string | null;
 }
 
+export interface EmailDeliveryTotals {
+  total: number;
+  sent: number;
+  delivered: number;
+}
+
 export type DeliveriesState =
   | { kind: "loading" }
-  | { kind: "loaded"; deliveries: EmailDelivery[] }
+  | { kind: "loaded"; deliveries: EmailDelivery[]; totals?: EmailDeliveryTotals }
   | { kind: "unavailable"; message: string };
 
 export type SendLeadReplyResult =
@@ -645,7 +651,10 @@ export async function fetchEmailDeliveries(
         message: detail?.error ?? `The API answered with status ${res.status}.`,
       };
     }
-    const body = (await res.json().catch(() => null)) as { deliveries?: unknown } | null;
+    const body = (await res.json().catch(() => null)) as {
+      deliveries?: unknown;
+      totals?: unknown;
+    } | null;
     if (!body || !Array.isArray(body.deliveries)) {
       return { kind: "unavailable", message: "The delivery log had an unexpected shape." };
     }
@@ -654,7 +663,20 @@ export async function fetchEmailDeliveries(
       const parsed = parseDelivery(raw);
       if (parsed) deliveries.push(parsed);
     }
-    return { kind: "loaded", deliveries };
+    let totals: EmailDeliveryTotals | undefined;
+    if (body.totals && typeof body.totals === "object") {
+      const t = body.totals as Record<string, unknown>;
+      if (
+        typeof t.total === "number" &&
+        typeof t.sent === "number" &&
+        typeof t.delivered === "number"
+      ) {
+        totals = { total: t.total, sent: t.sent, delivered: t.delivered };
+      }
+    }
+    return totals
+      ? { kind: "loaded", deliveries, totals }
+      : { kind: "loaded", deliveries };
   } catch (err) {
     return { kind: "unavailable", message: messageOf(err, "Could not reach the API.") };
   }

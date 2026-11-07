@@ -13,6 +13,7 @@ export default function SettingsPage() {
   // Team RBAC state
   const [operators, setOperators] = useState<Operator[]>([]);
   const [loadingOperators, setLoadingOperators] = useState(true);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
@@ -23,7 +24,14 @@ export default function SettingsPage() {
 
   const loadTeam = useCallback(async () => {
     setLoadingOperators(true);
-    setOperators(await fetchOperators(apiBaseUrl));
+    const state = await fetchOperators(apiBaseUrl);
+    if (state.kind === "loaded") {
+      setOperators(state.operators);
+      setTeamError(null);
+    } else {
+      setOperators([]);
+      setTeamError(state.message);
+    }
     setLoadingOperators(false);
   }, [apiBaseUrl]);
 
@@ -61,14 +69,22 @@ export default function SettingsPage() {
   }
 
   async function handleRoleChange(opId: string, newRole: string) {
-    await updateOperator(apiBaseUrl, opId, { role: newRole });
+    const result = await updateOperator(apiBaseUrl, opId, { role: newRole });
     await loadTeam();
+    if (!result.ok) setTeamError(result.error ?? "Could not update the role.");
   }
 
   async function handleStatusToggle(op: Operator) {
+    if (
+      op.status === "active" &&
+      !window.confirm(`Deactivate ${op.name}? Their history is kept, but they are marked inactive.`)
+    ) {
+      return;
+    }
     const nextStatus = op.status === "active" ? "inactive" : "active";
-    await updateOperator(apiBaseUrl, op.id, { status: nextStatus });
+    const result = await updateOperator(apiBaseUrl, op.id, { status: nextStatus });
     await loadTeam();
+    if (!result.ok) setTeamError(result.error ?? "Could not update the status.");
   }
 
   function copyText(key: string, text: string) {
@@ -86,7 +102,8 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-xl font-bold text-slate-900">Platform Settings & Operations</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Monitor system services, database health, environment parameters, and production readiness.
+          Monitor system services, database health, environment parameters, and production
+          readiness.
         </p>
       </div>
 
@@ -109,7 +126,8 @@ export default function SettingsPage() {
           {healthState.kind === "loading" ? (
             <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
               <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
-              Checking API health at <code className="font-mono text-xs">{apiBaseUrl}</code>…
+              Checking API health at{" "}
+              <code className="font-mono text-xs">{apiBaseUrl || "the same-origin proxy"}</code>…
             </div>
           ) : healthState.kind === "unavailable" ? (
             <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -128,7 +146,9 @@ export default function SettingsPage() {
                       health.status === "ok" ? "bg-emerald-500" : "bg-amber-500"
                     }`}
                   />
-                  <span className="text-sm font-bold uppercase text-slate-800">{health.status}</span>
+                  <span className="text-sm font-bold uppercase text-slate-800">
+                    {health.status}
+                  </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">{health.service}</p>
               </div>
@@ -172,8 +192,11 @@ export default function SettingsPage() {
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                   API Base URL
                 </span>
-                <p className="mt-1 font-mono text-xs font-medium text-slate-800 truncate" title={apiBaseUrl}>
-                  {apiBaseUrl}
+                <p
+                  className="mt-1 font-mono text-xs font-medium text-slate-800 truncate"
+                  title={apiBaseUrl || "Same-origin /api/v1 proxy"}
+                >
+                  {apiBaseUrl || "Same origin (proxied)"}
                 </p>
                 <p className="mt-1 text-[11px] text-slate-400">
                   Checked: {new Date(health.checkedAt).toLocaleTimeString()}
@@ -189,10 +212,12 @@ export default function SettingsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-5 py-3">
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-              Team Members & Role-Based Access (RBAC)
+              Team Members & Roles
             </h2>
             <p className="mt-0.5 text-xs text-slate-400">
-              Manage operators, assign permissions (Admin, Editor, Viewer), and control platform access.
+              Roles are recorded for attribution and future access control. Requests are currently
+              authorized by the operator API key, not by these role labels. The final active admin
+              cannot be demoted or deactivated.
             </p>
           </div>
           <button
@@ -220,7 +245,10 @@ export default function SettingsPage() {
         )}
 
         {showInviteForm && (
-          <form onSubmit={(e) => void handleInviteSubmit(e)} className="border-b border-slate-200 bg-slate-50/70 p-5 grid gap-4 sm:grid-cols-3 sm:items-end">
+          <form
+            onSubmit={(e) => void handleInviteSubmit(e)}
+            className="border-b border-slate-200 bg-slate-50/70 p-5 grid gap-4 sm:grid-cols-3 sm:items-end"
+          >
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">
                 Full Name
@@ -278,6 +306,20 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 py-4 text-xs text-slate-500">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
               Loading team members…
+            </div>
+          ) : teamError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-800"
+            >
+              <span>{teamError}</span>
+              <button
+                type="button"
+                onClick={() => void loadTeam()}
+                className="font-semibold underline hover:text-red-900"
+              >
+                Retry
+              </button>
             </div>
           ) : operators.length === 0 ? (
             <p className="text-xs text-slate-500">No team members registered yet.</p>
@@ -358,8 +400,10 @@ export default function SettingsPage() {
               </div>
               <p className="mt-1 text-xs text-slate-500 pl-7">
                 LocalAuth storage preserves credentials across restarts in{" "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">services/whatsapp-dispatcher/data/sessions/</code>.
-                No repeated QR scanning required.
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  services/whatsapp-dispatcher/data/sessions/
+                </code>
+                . No repeated QR scanning required.
               </p>
             </div>
             <span className="self-start sm:self-auto rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
@@ -378,8 +422,12 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-500 pl-7">
-                User lingering is enabled (<code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">loginctl enable-linger light</code>).
-                All 3 systemd services (API, Web, WhatsApp Dispatcher) keep running even after SSH logout.
+                User lingering is enabled (
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  loginctl enable-linger light
+                </code>
+                ). The API and WhatsApp dispatcher keep running after SSH logout; the dashboard is
+                started only when you need it.
               </p>
             </div>
             <span className="self-start sm:self-auto rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
@@ -398,8 +446,15 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-500 pl-7">
-                Go API communicates with the dispatcher using <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">X-Internal-Secret</code> header.
-                Configure <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">WHATSAPP_DISPATCHER_SECRET</code> in production to enforce auth.
+                Go API communicates with the dispatcher using{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  X-Internal-Secret
+                </code>{" "}
+                header. Configure{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  WHATSAPP_DISPATCHER_SECRET
+                </code>{" "}
+                in production to enforce auth.
               </p>
             </div>
             <span className="self-start sm:self-auto rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
@@ -418,9 +473,15 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="mt-1 text-xs text-slate-500 pl-7">
-                To enforce strict Bearer authentication and operator login on public networks, set{" "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">APP_ENV=production</code> and{" "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">API_KEY=&lt;secret&gt;</code> in both API and Web environments.
+                To enforce strict Bearer authentication on public networks, set{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  APP_ENV=production
+                </code>{" "}
+                and{" "}
+                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">
+                  API_KEY=&lt;secret&gt;
+                </code>{" "}
+                for the API and the dashboard proxy.
               </p>
             </div>
             <span className="self-start sm:self-auto rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
@@ -439,20 +500,26 @@ export default function SettingsPage() {
         </div>
         <div className="p-5 space-y-4">
           <p className="text-xs text-slate-600">
-            Services run under user-level systemd. Use these commands in terminal to check status or restart:
+            The API and WhatsApp dispatcher run under user-level systemd. The dashboard is started
+            on demand, so port 3000 stays free when it is not in use.
           </p>
 
           <div className="grid gap-3">
             {[
               {
                 id: "status",
-                title: "Check Status of All Services",
-                cmd: "systemctl --user status marketing-ops-api marketing-ops-web marketing-ops-whatsapp",
+                title: "Check API and dispatcher status",
+                cmd: "systemctl --user status marketing-ops-api marketing-ops-whatsapp",
               },
               {
                 id: "restart",
-                title: "Restart All Services",
-                cmd: "systemctl --user restart marketing-ops-api marketing-ops-web marketing-ops-whatsapp",
+                title: "Restart API and dispatcher",
+                cmd: "systemctl --user restart marketing-ops-api marketing-ops-whatsapp",
+              },
+              {
+                id: "web",
+                title: "Start the dashboard on demand",
+                cmd: "cd apps/web && npm run dev",
               },
               {
                 id: "logs-api",

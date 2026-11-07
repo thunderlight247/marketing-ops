@@ -81,3 +81,4 @@ services/whatsapp-dispatcher/.wwebjs_cache/
 backups/*.sql.gz
 backups/*.tmp
 
+.neon

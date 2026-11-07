@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,6 +55,7 @@ func run() error {
 	var dbPinger health.Pinger
 	var workspaceStore httpapi.WorkspaceStore
 	var operatorProvider httpapi.OperatorProvider
+	var analyticsProvider httpapi.AnalyticsStore
 	var jobStore publishworker.RunStore
 	var mailStore emailworker.RunStore
 	registry := integration.NewDefaultRegistry()
@@ -67,6 +69,7 @@ func run() error {
 		wsStore := store.New(pool)
 		workspaceStore = wsStore
 		operatorProvider = wsStore
+		analyticsProvider = wsStore
 		jobStore = wsStore
 		mailStore = wsStore
 	} else {
@@ -109,13 +112,20 @@ func run() error {
 
 	// Background automated lead engine scheduler: automatically discovers
 	// and dispatches leads on a recurring interval for enabled workspaces.
+	// LEAD_ENGINE_AUTOMATION=off|false|0 disables it so discovery and dispatch
+	// run only when triggered from the dashboard.
 	if workspaceStore != nil {
-		dispatcherURL := os.Getenv("WHATSAPP_DISPATCHER_URL")
-		if dispatcherURL == "" {
-			dispatcherURL = "http://localhost:8083"
+		switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAD_ENGINE_AUTOMATION"))) {
+		case "off", "false", "0", "no":
+			logger.Info("lead engine automation disabled (LEAD_ENGINE_AUTOMATION)")
+		default:
+			dispatcherURL := os.Getenv("WHATSAPP_DISPATCHER_URL")
+			if dispatcherURL == "" {
+				dispatcherURL = "http://localhost:8083"
+			}
+			dispatcherSecret := os.Getenv("WHATSAPP_DISPATCHER_SECRET")
+			leadengine.StartScheduler(ctx, workspaceStore.(leadengine.SchedulerStore), cfg.CredentialKey, dispatcherURL, dispatcherSecret, 6*time.Hour)
 		}
-		dispatcherSecret := os.Getenv("WHATSAPP_DISPATCHER_SECRET")
-		leadengine.StartScheduler(ctx, workspaceStore.(leadengine.SchedulerStore), cfg.CredentialKey, dispatcherURL, dispatcherSecret, 6*time.Hour)
 	}
 
 	// AI drafting: real provider when a key is present, offline stub otherwise.
@@ -159,6 +169,7 @@ func run() error {
 			CredentialKeyVersion: cfg.CredentialKeyVersion,
 			APIKey:               cfg.APIKey,
 			Operators:            operatorProvider,
+			Analytics:            analyticsProvider,
 			AIGenerator:          aiGenerator,
 			GenerateTimeout:      cfg.GenerateTimeout,
 			AgentRunner:          agentRunner,

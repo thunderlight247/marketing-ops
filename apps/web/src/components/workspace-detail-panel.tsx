@@ -3,18 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/config";
-import { WorkspaceContentSection } from "@/components/workspace-content-section";
-import { WorkspaceIntegrationsSection } from "@/components/workspace-integrations-section";
-import { WorkspaceCampaignsSection } from "@/components/workspace-campaigns-section";
-import { WorkspaceCampaignStrategistSection } from "@/components/workspace-campaign-strategist-section";
-import { WorkspaceReportsSection } from "@/components/workspace-reports-section";
-import { WorkspaceSeoAdvisorSection } from "@/components/workspace-seo-advisor-section";
-import { WorkspaceAgentsSection } from "@/components/workspace-agents-section";
-import { WorkspaceContentCreatorSection } from "@/components/workspace-content-creator-section";
-import { WorkspaceChannelCopySection } from "@/components/workspace-channel-copy-section";
-import { WorkspaceLeadReplySection } from "@/components/workspace-lead-reply-section";
-import { WorkspaceEmailSection } from "@/components/workspace-email-section";
-import { WorkspaceLeadEngineSection } from "@/components/workspace-lead-engine-section";
 import {
   deleteWorkspace,
   fetchWorkspaceDetail,
@@ -77,8 +65,6 @@ const DANGER_BUTTON =
 
 export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const router = useRouter();
-  const [contentRevision, setContentRevision] = useState(0);
-  const [campaignRevision, setCampaignRevision] = useState(0);
   const [state, setState] = useState<WorkspaceDetailState>({ kind: "loading" });
 
   // Facts form state.
@@ -432,42 +418,6 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
           </div>
         </form>
       </section>
-
-      <WorkspaceContentSection key={`content-${contentRevision}`} workspaceId={workspace.id} />
-
-      <WorkspaceContentCreatorSection
-        workspaceId={workspace.id}
-        onCreated={() => setContentRevision((revision) => revision + 1)}
-      />
-
-      <WorkspaceChannelCopySection
-        workspaceId={workspace.id}
-        onFiled={() => setContentRevision((revision) => revision + 1)}
-      />
-
-      <WorkspaceIntegrationsSection workspaceId={workspace.id} />
-
-      <WorkspaceCampaignsSection key={`campaigns-${campaignRevision}`} workspaceId={workspace.id} />
-
-      <WorkspaceEmailSection workspaceId={workspace.id} />
-
-      <WorkspaceLeadReplySection
-        workspaceId={workspace.id}
-        onFiled={() => setCampaignRevision((revision) => revision + 1)}
-      />
-
-      <WorkspaceCampaignStrategistSection
-        workspaceId={workspace.id}
-        onProposed={() => setCampaignRevision((revision) => revision + 1)}
-      />
-
-      <WorkspaceReportsSection workspaceId={workspace.id} />
-
-      <WorkspaceLeadEngineSection workspaceId={workspace.id} />
-
-      <WorkspaceSeoAdvisorSection workspaceId={workspace.id} />
-
-      <WorkspaceAgentsSection />
 
       <section
         aria-labelledby="danger-zone-heading"

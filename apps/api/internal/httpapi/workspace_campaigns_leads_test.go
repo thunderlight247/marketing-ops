@@ -257,7 +257,7 @@ func TestWorkspaceLeadEndpoints(t *testing.T) {
 			{ID: "l-2", WorkspaceID: wsID, SourceKind: "unknown", Status: "contacted", FollowUpAt: &follow},
 			{ID: "l-3", WorkspaceID: wsID, SourceKind: "manual", Status: "new"},
 		}
-		fake := &fakeWorkspaceStore{byID: map[string]store.Workspace{wsID: workspace}, leadsList: listed}
+		fake := &fakeWorkspaceStore{byID: map[string]store.Workspace{wsID: workspace}, leadsList: listed, leadEngineCount: 3}
 		h := NewRouter(Deps{Logger: testLogger, Workspaces: fake})
 
 		rec := doJSON(t, h, "GET", "/api/v1/workspaces/"+wsID+"/leads", "")
@@ -265,13 +265,17 @@ func TestWorkspaceLeadEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 		}
 		var body struct {
-			Leads []leadJSON `json:"leads"`
+			Leads           []leadJSON `json:"leads"`
+			LeadEngineCount int        `json:"leadEngineCount"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
 		if len(body.Leads) != 2 || body.Leads[0].ID != "l-2" {
 			t.Errorf("unexpected list: %+v", body.Leads)
+		}
+		if body.LeadEngineCount != 3 {
+			t.Errorf("leadEngineCount = %d, want 3 (the panel note depends on it)", body.LeadEngineCount)
 		}
 
 		// Unknown workspace is 404.

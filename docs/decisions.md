@@ -1,6 +1,6 @@
 # Decision log
 
-Short records of choices made in Milestone 0, so later work does not have to rediscover the reasoning.
+Short records of choices made as the platform evolved, so later work does not have to rediscover the reasoning. D14/D15/D16 are historical: the dashboard now uses a server-side proxy, operator Basic auth, and an API key (D19/D20).
 
 | # | Decision | Why |
 | --- | --- | --- |
@@ -21,3 +21,8 @@ Short records of choices made in Milestone 0, so later work does not have to red
 | D15 | Frontend calls the API directly from the browser | Simple, and a stopped API shows a clear error. A server-side proxy can be added if cookies or secrets ever require it |
 | D16 | No operator login in the initial implementation; authorization is assumed single-operator | The tool runs on the operator's own machine for now. HTTP middleware already sits at a single choke point, so a session/cookie layer can wrap requests later without touching handlers. Revisited in Milestone 13. Integration credentials still get negative design decisions now (D17) so isolation is schema-enforced |
 | D17 | Per-client integration credentials are encrypted at rest in PostgreSQL (AES-GCM), key from an env secret, with a `key_version` column for rotation | Self-contained: no OS keychain or external secret service to deploy. Plaintext at rest is the failure mode to avoid; the key stays out of the database so a DB leak alone is not enough. Only the Milestone 3+ adapter layer, never handlers or logs, sees decrypted values |
+| D18 | Analytics is one SQL aggregate endpoint (`GET /api/v1/analytics/summary`), not per-workspace list fetches | The browser previously made 13 requests and downloaded every engine lead to count statuses. Three aggregate queries keep latency and payload flat as tables grow, and the counts stay consistent with the database |
+| D19 | `WEB_AUTH_DISABLED=true` is ignored by a production build, which answers 503 until it is removed | A bypass that works in production is one environment mistake away from exposing client PII. The local development launcher still uses it deliberately, but production must configure `OPERATOR_USERNAME`/`OPERATOR_PASSWORD` |
+| D20 | The final active admin cannot be demoted or deactivated | Team roles are labels today, but the admin row is the only path to managing the team. Refusing the last change prevents a permanent lockout without pretending roles are fully enforced |
+| D21 | CI runs Go format/vet/tests with a real PostgreSQL, the Go build, and web lint/typecheck/tests/build | The browser-only workflow missed type, lint, unit, and build regressions. A database-backed job exercises workspace isolation and migration code, not just fakes |
+| D22 | Calendar exports an all-day `.ics` locally and highlights overdue follow-ups | A read-only month grid cannot remind anyone. Local export avoids uploading lead names, and overdue highlighting makes the existing follow-up data actionable without a notification service |

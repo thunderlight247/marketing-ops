@@ -104,12 +104,15 @@ func (s *Store) InsertLead(ctx context.Context, l Lead) (Lead, error) {
 	return out, mapNotFound(err)
 }
 
-// ListLeads returns the leads of exactly one workspace, most urgent first:
-// following-up leads before others, then newest activity first.
+// ListLeads returns the CRM leads of exactly one workspace, most urgent first:
+// following-up leads before others, then newest activity first. Lead-engine
+// rows are excluded: outreach contacts are managed by the lead engine and its
+// own list, not by the enquiry pipeline.
 func (s *Store) ListLeads(ctx context.Context, workspaceID string) ([]Lead, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+leadColumns+` FROM leads
 		 WHERE workspace_id = $1
+		   AND source_kind <> 'lead_engine'
 		 ORDER BY (follow_up_at IS NOT NULL AND status NOT IN ('won','lost')) DESC,
 			follow_up_at ASC NULLS LAST, updated_at DESC`, workspaceID)
 	if err != nil {
@@ -125,6 +128,17 @@ func (s *Store) ListLeads(ctx context.Context, workspaceID string) ([]Lead, erro
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// CountLeadEngineLeads reports how many outreach rows this workspace has, so
+// the CRM panel can point at them instead of looking empty.
+func (s *Store) CountLeadEngineLeads(ctx context.Context, workspaceID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM leads
+		 WHERE workspace_id = $1 AND source_kind = 'lead_engine'`,
+		workspaceID).Scan(&n)
+	return n, err
 }
 
 // GetLeadInWorkspace reads one lead only if both match.

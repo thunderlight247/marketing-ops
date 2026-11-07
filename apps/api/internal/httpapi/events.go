@@ -32,6 +32,11 @@ func workspaceEventsHandler(hub *events.Hub) http.HandlerFunc {
 			return
 		}
 
+		// The server's WriteTimeout is sized for one-shot responses and would
+		// cut this long-lived stream after about a minute and a half. Clear the
+		// deadline for this connection only; errors just mean it is unsupported.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 		// Set SSE headers
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache, no-transform")

@@ -302,6 +302,26 @@ func (s *Store) ListEmailDeliveries(ctx context.Context, workspaceID string, lim
 	return out, rows.Err()
 }
 
+// EmailDeliveryTotals is the lifetime count of a workspace's outbound
+// messages. Analytics needs totals, not the newest page of rows, so it cannot
+// undercount once the log grows past a list limit.
+type EmailDeliveryTotals struct {
+	Total     int
+	Sent      int
+	Delivered int
+}
+
+func (s *Store) EmailDeliveryTotals(ctx context.Context, workspaceID string) (EmailDeliveryTotals, error) {
+	var t EmailDeliveryTotals
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*),
+		        count(*) FILTER (WHERE status = 'sent'),
+		        count(*) FILTER (WHERE delivery_state = 'delivered')
+		 FROM email_deliveries WHERE workspace_id = $1`,
+		workspaceID).Scan(&t.Total, &t.Sent, &t.Delivered)
+	return t, err
+}
+
 // EmailDeliveryAttention is how many outbound messages in a workspace need a
 // human: sends that failed, and messages the provider reported as bounced. A
 // failed send and a bounce cannot be the same row, so the two never overlap.

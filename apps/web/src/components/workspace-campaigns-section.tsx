@@ -771,6 +771,21 @@ export function WorkspaceCampaignsSection({ workspaceId }: Readonly<{ workspaceI
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Leads ({state.leads.length})
             </h3>
+            {(state.leadEngineCount ?? 0) > 0 ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {(state.leadEngineCount ?? 0) === 1
+                  ? "1 WhatsApp lead-engine lead is"
+                  : `${state.leadEngineCount} WhatsApp lead-engine leads are`}{" "}
+                tracked in the{" "}
+                <a
+                  href={`/workspaces/${encodeURIComponent(workspaceId)}/lead-engine`}
+                  className="text-indigo-600 underline hover:text-indigo-800"
+                >
+                  Lead Generation &amp; Outreach Engine
+                </a>{" "}
+                below — this list holds CRM and website enquiries only.
+              </p>
+            ) : null}
             {state.leads.length === 0 ? (
               <p className="mt-2 text-sm text-slate-500">No leads recorded yet.</p>
             ) : (

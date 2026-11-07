@@ -60,7 +60,7 @@ export function parseHealth(data: unknown): ApiHealth | null {
 export async function fetchHealth(
   baseUrl: string,
   fetchImpl: typeof fetch = fetch,
-  timeoutMs = 4000,
+  timeoutMs = 10000,
 ): Promise<HealthState> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

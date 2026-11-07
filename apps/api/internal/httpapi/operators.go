@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -108,8 +109,16 @@ func updateOperatorHandler(ops OperatorProvider) http.HandlerFunc {
 		}
 
 		updated, err := ops.UpdateOperator(r.Context(), id, in.Role, in.Status)
-		if err != nil {
+		if errors.Is(err, store.ErrLastAdmin) {
+			writeJSONError(w, http.StatusConflict, "at least one active admin is required")
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
 			writeJSONError(w, http.StatusNotFound, "operator not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "could not update operator")
 			return
 		}
 

@@ -89,7 +89,9 @@ func Load(getenv func(string) string) (Config, error) {
 		LogLevel:        slog.LevelInfo,
 		AllowedOrigins:  []string{"http://localhost:3000"},
 		ShutdownTimeout: 10 * time.Second,
-		HealthTimeout:   2 * time.Second,
+		// 10s: remote databases over TLS can take >2s per round trip on a cold
+		// connection; a tight budget flagged healthy cloud databases as unavailable.
+		HealthTimeout: 10 * time.Second,
 
 		// AI drafting defaults: no provider until a key exists; the stub
 		// keeps local development moving without any network access.

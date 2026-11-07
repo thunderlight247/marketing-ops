@@ -18,8 +18,11 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, errors.New("DATABASE_URL could not be parsed by the PostgreSQL driver")
 	}
-	cfg.MaxConns = 5
-	cfg.ConnConfig.ConnectTimeout = 3 * time.Second
+	cfg.MaxConns = 25
+	cfg.MinConns = 2
+	cfg.MaxConnIdleTime = 10 * time.Minute
+	cfg.MaxConnLifetime = 1 * time.Hour
+	cfg.ConnConfig.ConnectTimeout = 15 * time.Second
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

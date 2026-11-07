@@ -6,6 +6,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,6 +25,12 @@ var validLeadSources = map[string]bool{
 
 var validLeadStatuses = map[string]bool{
 	"new": true, "contacted": true, "qualified": true, "won": true, "lost": true,
+}
+
+// leadEngineLeadCounter is optional: stores that cannot count outreach rows
+// still serve the CRM list, and test fakes need not implement it.
+type leadEngineLeadCounter interface {
+	CountLeadEngineLeads(ctx context.Context, workspaceID string) (int, error)
 }
 
 type leadJSON struct {
@@ -97,7 +104,15 @@ func listWorkspaceLeadsHandler(ws WorkspaceStore) http.HandlerFunc {
 		for _, l := range leads {
 			out = append(out, toLeadJSON(l))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"leads": out})
+		// Outreach rows are deliberately absent from this list, so say how many
+		// exist: an empty CRM list is otherwise indistinguishable from a broken one.
+		leadEngineCount := 0
+		if counter, ok := ws.(leadEngineLeadCounter); ok {
+			if n, countErr := counter.CountLeadEngineLeads(r.Context(), workspaceID); countErr == nil {
+				leadEngineCount = n
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"leads": out, "leadEngineCount": leadEngineCount})
 	}
 }
 

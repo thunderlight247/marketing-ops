@@ -17,7 +17,21 @@ async function equalDigest(left: string, right: string): Promise<boolean> {
 }
 
 export async function middleware(request: NextRequest) {
-  const disabled = process.env.WEB_AUTH_DISABLED === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  const bypassRequested = process.env.WEB_AUTH_DISABLED === "true";
+
+  // The bypass exists only for a trusted local development server. A
+  // production build refuses to run with it set, even if credentials are
+  // present, because that combination is how a public URL silently loses its
+  // login. The operator must remove the variable to start the app.
+  if (isProduction && bypassRequested) {
+    return new NextResponse(
+      "WEB_AUTH_DISABLED is not allowed in a production build. Remove it and configure OPERATOR_USERNAME and OPERATOR_PASSWORD.",
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  const disabled = !isProduction && bypassRequested;
   const username = process.env.OPERATOR_USERNAME;
   const password = process.env.OPERATOR_PASSWORD;
 
@@ -49,8 +63,10 @@ export async function middleware(request: NextRequest) {
     !["GET", "HEAD", "OPTIONS"].includes(request.method)
   ) {
     const origin = request.headers.get("origin");
-    const expectedOrigin = process.env.WEB_ORIGIN || (disabled ? request.nextUrl.origin : "");
-    if (!origin || !expectedOrigin || origin !== expectedOrigin) {
+    const configuredOrigin = process.env.WEB_ORIGIN;
+    const sameOrigin = request.nextUrl.origin;
+    const isAllowed = origin && (origin === sameOrigin || (configuredOrigin && origin === configuredOrigin));
+    if (!isAllowed) {
       return new NextResponse("Invalid request origin.", { status: 403 });
     }
   }

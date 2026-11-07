@@ -69,7 +69,7 @@ type Service struct {
 // NewService applies defaults and returns a Service.
 func NewService(opts Options) *Service {
 	if opts.Timeout <= 0 {
-		opts.Timeout = 2 * time.Second
+		opts.Timeout = 8 * time.Second
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()

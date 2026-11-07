@@ -61,7 +61,10 @@ test("the overview flags failing and bouncing email, and an operator can dismiss
   await expect(badge).toContainText("2 failed to send");
   await expect(badge).toContainText("1 bounced");
   // The badge takes the operator straight to the log they must act on.
-  await expect(badge).toHaveAttribute("href", `/workspaces/${problem}#email-deliveries`);
+  await expect(badge).toHaveAttribute(
+    "href",
+    `/workspaces/${problem}/email#email-deliveries`,
+  );
   // A workspace with a clean log is not flagged.
   await expect(page.getByTestId(`delivery-attention-${clean}`)).toHaveCount(0);
 

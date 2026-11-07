@@ -1,0 +1,16 @@
+# Stable public entrypoint for the Marketing Ops platform.
+#
+# Cloudflare does not allow free *tunnel* hostnames (a tunnel public hostname
+# needs a verified domain zone). This Worker gives the platform a stable
+# https://marketing-ops-entry.<account-subdomain>.workers.dev address that
+# reverse-proxies to the (rotating) Cloudflare quick-tunnel URL.
+#
+# When the quick-tunnel URL changes (reboot etc.), update TARGET and re-run:
+#   ./update-target.sh https://<new-name>.trycloudflare.com
+name = "marketing-ops-entry"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# The current quick tunnel that serves Next.js (:3000) on this host.
+TARGET = "https://pan-mods-scientists-gig.trycloudflare.com"

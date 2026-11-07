@@ -71,6 +71,7 @@ type fakeWorkspaceStore struct {
 	updatedLeads      []leadUpdateCall
 	leadsList         []store.Lead
 	leadsByID         map[string]store.Lead
+	leadEngineCount   int
 	saveLeadReplyErr  error
 	savedLeadReplies  []leadReplyCall
 
@@ -1020,6 +1021,10 @@ func (f *fakeWorkspaceStore) ListLeads(ctx context.Context, workspaceID string) 
 	return f.leadsList, nil
 }
 
+func (f *fakeWorkspaceStore) CountLeadEngineLeads(ctx context.Context, workspaceID string) (int, error) {
+	return f.leadEngineCount, nil
+}
+
 func (f *fakeWorkspaceStore) GetLeadInWorkspace(ctx context.Context, workspaceID, id string) (store.Lead, error) {
 	l, ok := f.leadsByID[id]
 	if !ok || l.WorkspaceID != workspaceID {
@@ -1122,6 +1127,28 @@ func (f *fakeWorkspaceStore) IsBlacklisted(_ context.Context, workspaceID, phone
 }
 func (f *fakeWorkspaceStore) SaveOutreachLog(_ context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error) {
 	return l, nil
+}
+func (f *fakeWorkspaceStore) HasRecentOutboundAttempt(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (f *fakeWorkspaceStore) HasRecentOutboundAttemptByPhone(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
+	return false, nil
+}
+func (f *fakeWorkspaceStore) HasOutboundAttemptByPhone(_ context.Context, _ string, _ string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeWorkspaceStore) ListRecentOutreach(_ context.Context, _ string, _ int) ([]store.OutreachActivityRow, error) {
+	return []store.OutreachActivityRow{}, nil
+}
+func (f *fakeWorkspaceStore) ListMessagedLeads(_ context.Context, _ string) ([]store.MessagedLead, error) {
+	return []store.MessagedLead{}, nil
+}
+func (f *fakeWorkspaceStore) ResetStaleProcessingLeads(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeWorkspaceStore) CountOutboundSentToday(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 func (f *fakeWorkspaceStore) ListEnabledLeadConfigs(_ context.Context) ([]store.WorkspaceLeadConfig, error) {
 	return nil, nil

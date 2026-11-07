@@ -47,6 +47,9 @@ type Deps struct {
 	// nil makes the decision route answer 501 alongside the store check.
 	Operators OperatorProvider
 
+	// Analytics computes the dashboard aggregate in SQL. Nil answers 501.
+	Analytics AnalyticsStore
+
 	// SanityOpsBase overrides the Sanity API host in development/tests only;
 	// HTTPClient customizes publisher transport (and is used by safe tests).
 	SanityOpsBase string
@@ -166,19 +169,32 @@ func NewRouter(d Deps) http.Handler {
 		intakeLimiter.Middleware(http.HandlerFunc(sendLeadReplyHandler(d.Workspaces))))
 	// Reporting (Milestone 12, first increment); workspace-scoped.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/reports", getWorkspaceReportHandler(d.Workspaces))
+	// One aggregate for the dashboard, computed in SQL instead of downloading
+	// every lead row and counting in the browser.
+	mux.HandleFunc("GET /api/v1/analytics/summary", analyticsSummaryHandler(d.Analytics))
 	// Lead Generation & Outreach Engine; per-workspace, isolated by workspace_id.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/config", getLeadEngineConfigHandler(d.Workspaces, d.CredentialKey))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/lead-engine/config", putLeadEngineConfigHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/whatsapp/status", getWhatsAppStatusHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/connect", connectWhatsAppHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/pair", pairWhatsAppHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/disconnect", disconnectWhatsAppHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/whatsapp/inbound", inboundWhatsAppHandler(d.Workspaces, d.CredentialKey))
+	// Shared-number inbound webhook: matches the sender's phone across all
+	// workspaces (used when the dispatcher runs one shared WhatsApp session).
+	mux.HandleFunc("POST /api/v1/lead-engine/whatsapp/inbound", sharedInboundWhatsAppHandler(d.Workspaces, d.CredentialKey))
+	mux.HandleFunc("GET /api/v1/lead-engine/whatsapp/sessions", listWhatsAppSessionsHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/lead-engine/progress", listLeadEngineProgressHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads", listLeadEngineLeadsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads/{leadId}/logs", listLeadOutreachLogsHandler(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/outreach", listDailyOutreachHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/blacklist", listBlacklistHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/blacklist", addToBlacklistHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/discover", triggerDiscoveryHandler(d.Workspaces, d.CredentialKey))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/dispatch", triggerDispatchHandler(d.Workspaces, d.CredentialKey))
+	// Follow-up round: compose a message, pick previously messaged contacts, send.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/contacts", listMessagedContactsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/followup", triggerFollowUpHandler(d.Workspaces))
 	// Integrations handlers
 	mux.HandleFunc("GET /api/v1/integrations/adapters", listAdaptersHandler(d.Integrations))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/integrations", listWorkspaceIntegrationsHandler(d.Workspaces))

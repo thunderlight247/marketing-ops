@@ -56,6 +56,13 @@ func emailStoreOf(ws WorkspaceStore) (emailStore, bool) {
 	return s, ok && s != nil
 }
 
+// emailDeliveryTotalsStore is optional so the wider WorkspaceStore fakes stay
+// untouched. A store that implements it adds lifetime counts to the delivery
+// list; analytics must never mistake a 25-row page for the whole history.
+type emailDeliveryTotalsStore interface {
+	EmailDeliveryTotals(ctx context.Context, workspaceID string) (store.EmailDeliveryTotals, error)
+}
+
 type emailSettingsJSON struct {
 	Provider    string `json:"provider"`
 	FromName    string `json:"fromName"`
@@ -558,7 +565,20 @@ func listEmailDeliveriesHandler(ws WorkspaceStore) http.HandlerFunc {
 		for _, d := range rows {
 			out = append(out, toEmailDeliveryJSON(d))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"deliveries": out})
+		payload := map[string]any{"deliveries": out}
+		if counter, ok := st.(emailDeliveryTotalsStore); ok {
+			totals, err := counter.EmailDeliveryTotals(r.Context(), workspaceID)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "delivery summary failed")
+				return
+			}
+			payload["totals"] = map[string]int{
+				"total":     totals.Total,
+				"sent":      totals.Sent,
+				"delivered": totals.Delivered,
+			}
+		}
+		writeJSON(w, http.StatusOK, payload)
 	}
 }
 

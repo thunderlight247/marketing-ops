@@ -272,8 +272,9 @@ export function WorkspaceEmailSection({ workspaceId }: Readonly<{ workspaceId: s
 
   return (
     <section
+      id="email"
       aria-labelledby="email-heading"
-      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm scroll-mt-24"
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3 sm:px-5">
         <h2

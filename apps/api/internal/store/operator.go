@@ -56,10 +56,57 @@ func (s *Store) CreateOperator(ctx context.Context, name, email, role string) (O
 	return o, err
 }
 
-// UpdateOperator updates an operator's role or active status.
+// UpdateOperator updates an operator's role or active status. The final
+// active admin cannot be demoted or deactivated: a team with no active admin
+// would be unable to manage itself, so the transaction refuses that change.
 func (s *Store) UpdateOperator(ctx context.Context, id, role, status string) (Operator, error) {
+	if role != "" && role != "admin" && role != "editor" && role != "viewer" {
+		return Operator{}, ErrInvalidStatus
+	}
+	if status != "" && status != "active" && status != "inactive" {
+		return Operator{}, ErrInvalidStatus
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Operator{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful commit
+
+	var currentRole, currentStatus string
+	err = tx.QueryRow(ctx,
+		`SELECT role, status FROM operators WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&currentRole, &currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operator{}, ErrNotFound
+	}
+	if err != nil {
+		return Operator{}, err
+	}
+
+	nextRole, nextStatus := currentRole, currentStatus
+	if role != "" {
+		nextRole = role
+	}
+	if status != "" {
+		nextStatus = status
+	}
+	if currentRole == "admin" && currentStatus == "active" &&
+		(nextRole != "admin" || nextStatus != "active") {
+		var otherAdmins int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM operators
+			 WHERE id <> $1 AND role = 'admin' AND status = 'active'`, id,
+		).Scan(&otherAdmins); err != nil {
+			return Operator{}, err
+		}
+		if otherAdmins == 0 {
+			return Operator{}, ErrLastAdmin
+		}
+	}
+
 	var o Operator
-	err := s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`UPDATE operators
 		 SET role = CASE WHEN $2 != '' THEN $2 ELSE role END,
 		     status = CASE WHEN $3 != '' THEN $3 ELSE status END
@@ -70,7 +117,13 @@ func (s *Store) UpdateOperator(ctx context.Context, id, role, status string) (Op
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operator{}, ErrNotFound
 	}
-	return o, err
+	if err != nil {
+		return Operator{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Operator{}, err
+	}
+	return o, nil
 }
 
 // EnsureOperator resolves the acting operator in single-operator mode

@@ -202,7 +202,7 @@ export function OverviewWorkspaces() {
                 {workspace.deliveryAttention ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <Link
-                      href={`/workspaces/${encodeURIComponent(workspace.id)}#email-deliveries`}
+                      href={`/workspaces/${encodeURIComponent(workspace.id)}/email#email-deliveries`}
                       data-testid={`delivery-attention-${workspace.id}`}
                       className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500"
                     >

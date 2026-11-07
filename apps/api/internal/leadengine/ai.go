@@ -95,7 +95,13 @@ func getCategoryRule(category string) categoryRule {
 func getOpening(businessName, category, senderName string) string {
 	rule := getCategoryRule(category)
 	if rule.Recipient == "administration" {
+		if senderName == "" {
+			return fmt.Sprintf("Good day to the administration of %s.", businessName)
+		}
 		return fmt.Sprintf("Good day to the administration of %s; my name is %s.", businessName, senderName)
+	}
+	if senderName == "" {
+		return fmt.Sprintf("Good day, %s %s.", businessName, rule.Recipient)
 	}
 	return fmt.Sprintf("Good day, %s %s; my name is %s.", businessName, rule.Recipient, senderName)
 }
@@ -125,30 +131,42 @@ func getWebsiteObservation(ctx pitchContext, category string) string {
 		return fmt.Sprintf("I noticed that no dedicated website appears to be listed for your %s.", rule.Subject)
 	}
 	return "I believe a dedicated website could make it easier for people to learn about your business."
-}
+} // ─── template fallback ────────────────────────────────────────────────────────
 
-// ─── template fallback ────────────────────────────────────────────────────────
-
-func getTemplatePitch(businessName, category, city, senderName, portfolioURL string, ctx pitchContext) string {
-	rule := getCategoryRule(category)
+// getTemplatePitch builds a pitch from what the workspace configured: sender
+// name, business offering, target audience, and portfolio URL. Nothing about
+// the sending business is hardcoded here.
+func getTemplatePitch(ctx pitchContext, senderName, offering, audience, portfolioURL string) string {
 	sentences := []string{
-		getOpening(businessName, category, senderName),
+		getOpening(ctx.BusinessName, ctx.Category, senderName),
 		getRecognition(ctx),
-		getWebsiteObservation(ctx, category),
-		fmt.Sprintf("A professional, mobile-friendly website can help %s.", rule.Value),
-		fmt.Sprintf("At Great Light Group, we have experience building high-performance, modern websites and software solutions across Ghana; you can view recent web and software projects here: %s.", portfolioURL),
-		fmt.Sprintf("Would you be open to receiving a 1-minute video demo of a website designed specifically for %s?", businessName),
-		"Thank you.",
 	}
+	if offering != "" {
+		sentences = append(sentences, fmt.Sprintf("We support businesses across Ghana with %s.", offering))
+	} else {
+		rule := getCategoryRule(ctx.Category)
+		sentences = append(sentences, fmt.Sprintf("We help %ss in Ghana reach more customers and run more efficiently.", rule.Subject))
+	}
+	if audience != "" {
+		sentences = append(sentences, fmt.Sprintf("We work with %s.", audience))
+	}
+	if portfolioURL != "" {
+		sentences = append(sentences, fmt.Sprintf("You can learn more about us here: %s.", portfolioURL))
+	}
+	sentences = append(sentences,
+		fmt.Sprintf("Would you be open to a brief conversation about how we could assist %s?", ctx.BusinessName),
+		"Thank you.")
 	return strings.Join(sentences, " ")
 }
 
-// ─── validation (port of validatePitch from ai.js) ────────────────────────────
+// ─── validation ───────────────────────────────────────────────────────────────
 
 var sentenceSplitter = regexp.MustCompile(`[.!?]+`)
 
-func validatePitch(pitch, businessName, category, portfolioURL string) bool {
-	// Replace portfolio URL before counting sentences (it contains dots).
+// validatePitch checks a generated pitch is usable: a sane sentence range,
+// addressed to the right business, ending properly, no emojis, and short
+// enough for WhatsApp. When a portfolio URL is configured it must appear.
+func validatePitch(pitch, businessName, portfolioURL string) bool {
 	withoutURL := strings.ReplaceAll(pitch, portfolioURL, "PORTFOLIO_LINK")
 	parts := sentenceSplitter.Split(withoutURL, -1)
 	count := 0
@@ -157,14 +175,16 @@ func validatePitch(pitch, businessName, category, portfolioURL string) bool {
 			count++
 		}
 	}
-	rule := getCategoryRule(category)
-	return count == 7 &&
-		strings.Contains(pitch, businessName) &&
-		strings.Contains(strings.ToLower(pitch), strings.Split(rule.Value, " ")[0]) &&
-		strings.Contains(pitch, portfolioURL) &&
+	pitch = strings.TrimSpace(pitch)
+	ok := count >= 4 && count <= 9 &&
+		businessName != "" && strings.Contains(pitch, businessName) &&
 		strings.HasSuffix(pitch, "Thank you.") &&
 		!hasEmoji(pitch) &&
 		utf8.RuneCountInString(pitch) <= 900
+	if portfolioURL != "" {
+		ok = ok && strings.Contains(pitch, portfolioURL)
+	}
+	return ok
 }
 
 func hasEmoji(s string) bool {
@@ -199,27 +219,33 @@ type openRouterResponse struct {
 	} `json:"choices"`
 }
 
-func buildPrompt(businessName, category, city, senderName, portfolioURL string, ctx pitchContext) string {
-	rule := getCategoryRule(category)
-	opening := getOpening(businessName, category, senderName)
+func buildPrompt(ctx pitchContext, senderName, offering, audience, portfolioURL string) string {
+	rule := getCategoryRule(ctx.Category)
+	opening := getOpening(ctx.BusinessName, ctx.Category, senderName)
 	recognition := getRecognition(ctx)
-	websiteObs := getWebsiteObservation(ctx, category)
-	return fmt.Sprintf(`You are an expert local digital agency representative in Ghana.
-Write a professional, friendly WhatsApp introduction to %s of "%s", a %s in %s, Ghana.
-
-Use exactly 7 short sentences:
-1. Start exactly with: "%s"
-2. %s
-3. %s
-4. Explain that a professional, mobile-friendly website can help %s.
-5. In one short sentence, introduce Great Light Group and our experience building high-performance, modern websites and software solutions across Ghana, and invite them to view recent web and software projects here: %s.
-6. Ask whether they would be open to receiving a 1-minute video demo of a website designed specifically for %s.
-7. End the message with exactly: "Thank you."
-
-Use plain professional English and keep the portfolio reference conversational, not like a generic link drop. Do not use emojis, quotation marks, buzzwords, unsupported claims beyond the Great Light Group experience provided above, pricing, multiple questions, or mention AI. Output only the message body.`,
-		rule.Recipient, businessName, category, city,
-		opening, recognition, websiteObs, rule.Value,
-		portfolioURL, businessName)
+	promptLines := []string{
+		"You are the sender of this outreach, between representatives of the sending business and the prospect in Ghana.",
+		fmt.Sprintf("Write a professional, friendly WhatsApp introduction to the %s of the business named %q, a %s in %s, Ghana.", rule.Recipient, ctx.BusinessName, ctx.Category, ctx.City),
+		"",
+		"Use 5 to 7 short sentences:",
+		fmt.Sprintf("1. Start exactly with: %q", opening),
+		fmt.Sprintf("2. Follow with: %s", recognition),
+	}
+	if offering != "" {
+		promptLines = append(promptLines, fmt.Sprintf("3. Briefly present our services and how they can help this prospect. Our services: %s", offering))
+	}
+	if audience != "" {
+		promptLines = append(promptLines, fmt.Sprintf("4. Show we know who we serve. Who we work with: %s", audience))
+	}
+	i := len(promptLines) + 1
+	if portfolioURL != "" {
+		promptLines = append(promptLines, fmt.Sprintf("%d. In one short sentence, point to our recent work here: %s, keeping the reference conversational, not like a generic link drop.", i, portfolioURL))
+		i++
+	}
+	promptLines = append(promptLines,
+		fmt.Sprintf("%d. Ask whether they would be open to a brief conversation about how we could assist their %s.", i, rule.Subject),
+		fmt.Sprintf("%d. End the message with exactly: Thank you.", i+1))
+	return fmt.Sprintf("%s\n\nUse plain professional English. Do not use emojis, quotation marks, buzzwords, unsupported claims beyond the experience provided above, pricing, multiple questions, or mention AI. Output only the message body.", strings.Join(promptLines, "\n"))
 }
 
 // GeneratePitch generates a WhatsApp pitch for a lead using the OpenRouter API,
@@ -232,15 +258,13 @@ func GeneratePitch(goCtx context.Context, params PitchParams) (string, error) {
 		Rating:       params.Rating,
 		ReviewCount:  params.ReviewCount,
 	}
-	fallback := getTemplatePitch(params.BusinessName, params.Category, params.City,
-		params.SenderName, params.PortfolioURL, ctx)
+	fallback := getTemplatePitch(ctx, params.SenderName, params.BusinessOffering, params.TargetAudience, params.PortfolioURL)
 
 	if params.AIKey == "" {
 		return fallback, nil
 	}
 
-	prompt := buildPrompt(params.BusinessName, params.Category, params.City,
-		params.SenderName, params.PortfolioURL, ctx)
+	prompt := buildPrompt(ctx, params.SenderName, params.BusinessOffering, params.TargetAudience, params.PortfolioURL)
 
 	model := params.AIModel
 	if model == "" {
@@ -279,7 +303,7 @@ func GeneratePitch(goCtx context.Context, params PitchParams) (string, error) {
 		return fallback, nil
 	}
 	aiPitch := strings.TrimSpace(or.Choices[0].Message.Content)
-	if validatePitch(aiPitch, params.BusinessName, params.Category, params.PortfolioURL) {
+	if validatePitch(aiPitch, params.BusinessName, params.PortfolioURL) {
 		return aiPitch, nil
 	}
 	return fallback, nil
@@ -287,15 +311,17 @@ func GeneratePitch(goCtx context.Context, params PitchParams) (string, error) {
 
 // PitchParams is the input to GeneratePitch.
 type PitchParams struct {
-	BusinessName string
-	Category     string
-	City         string
-	SenderName   string
-	PortfolioURL string
-	Rating       float64
-	ReviewCount  int
-	AIKey        string
-	AIModel      string
+	BusinessName     string
+	Category         string
+	City             string
+	SenderName       string
+	BusinessOffering string
+	TargetAudience   string
+	PortfolioURL     string
+	Rating           float64
+	ReviewCount      int
+	AIKey            string
+	AIModel          string
 }
 
 // ReplyParams is the input to GenerateConversationalReply.
@@ -326,9 +352,8 @@ func GenerateConversationalReply(goCtx context.Context, params ReplyParams) (str
 		model = "meta-llama/llama-3.3-70b-instruct:free"
 	}
 
-	prompt := fmt.Sprintf(`You are %s representing Great Light Group in Ghana.
+	prompt := fmt.Sprintf(`You are %s, a representative of the business that sent the pitch below.
 Our offering: %s
-Portfolio URL: %s
 
 Earlier, we sent this WhatsApp pitch to "%s":
 "%s"
@@ -338,10 +363,10 @@ The prospect just replied with:
 
 Write a professional, warm, and concise WhatsApp reply (maximum 3 short sentences):
 1. Acknowledge their response directly and answer their question or interest politely.
-2. If relevant, mention that they can explore sample work at %s or arrange a quick call/demo.
+2. Do not invent services beyond our offering; if they ask for something outside it, say we can discuss it on a call.
 3. Keep it natural, human, and under 50 words. Do not use buzzwords, multiple exclamation points, or robotic phrases. Output only the reply message body.`,
-		params.SenderName, params.BusinessOffering, params.PortfolioURL,
-		params.BusinessName, params.InitialPitch, params.InboundMessage, params.PortfolioURL)
+		params.SenderName, params.BusinessOffering,
+		params.BusinessName, params.InitialPitch, params.InboundMessage)
 
 	body, err := json.Marshal(openRouterRequest{
 		Model:    model,

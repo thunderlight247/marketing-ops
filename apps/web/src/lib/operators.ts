@@ -9,13 +9,26 @@ export interface Operator {
   createdAt: string;
 }
 
-export async function fetchOperators(baseUrl = getApiBaseUrl()): Promise<Operator[]> {
+export type OperatorsState =
+  | { kind: "loaded"; operators: Operator[] }
+  | { kind: "error"; message: string };
+
+export async function fetchOperators(baseUrl = getApiBaseUrl()): Promise<OperatorsState> {
   try {
     const res = await fetch(`${baseUrl}/api/v1/operators`, { cache: "no-store" });
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
+    if (!res.ok) {
+      return { kind: "error", message: `The API answered with status ${res.status}.` };
+    }
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) {
+      return { kind: "error", message: "The team list had an unexpected shape." };
+    }
+    return { kind: "loaded", operators: data as Operator[] };
+  } catch (err) {
+    return {
+      kind: "error",
+      message: err instanceof Error ? err.message : "Could not reach the API.",
+    };
   }
 }
 

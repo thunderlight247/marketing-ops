@@ -79,6 +79,13 @@ type WorkspaceStore interface {
 	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
 	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
 	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
+	HasRecentOutboundAttempt(ctx context.Context, workspaceID, leadID string, within time.Duration) (bool, error)
+	HasRecentOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string, within time.Duration) (bool, error)
+	HasOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string) (bool, error)
+	ListRecentOutreach(ctx context.Context, workspaceID string, days int) ([]store.OutreachActivityRow, error)
+	ListMessagedLeads(ctx context.Context, workspaceID string) ([]store.MessagedLead, error)
+	ResetStaleProcessingLeads(ctx context.Context, workspaceID string) (int64, error)
+	CountOutboundSentToday(ctx context.Context, workspaceID string) (int, error)
 	ListEnabledLeadConfigs(ctx context.Context) ([]store.WorkspaceLeadConfig, error)
 	FindLeadByPhone(ctx context.Context, workspaceID, phone string) (store.Lead, error)
 }

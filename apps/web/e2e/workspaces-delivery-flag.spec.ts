@@ -48,7 +48,10 @@ test("the workspaces list flags failing and bouncing email, and links to the log
   await expect(flag).toContainText("Email needs attention");
   await expect(flag).toContainText("1 failed to send");
   await expect(flag).toContainText("3 bounced");
-  await expect(flag).toHaveAttribute("href", `/workspaces/${problem}#email-deliveries`);
+  await expect(flag).toHaveAttribute(
+    "href",
+    `/workspaces/${problem}/email#email-deliveries`,
+  );
   // The acknowledgement tells the operator what the flag covers.
   const acknowledged = page.getByTestId(`workspace-delivery-acknowledged-${problem}`);
   await expect(acknowledged).toContainText("Last acknowledged");
