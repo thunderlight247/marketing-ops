@@ -778,3 +778,155 @@ export async function sendLeadReply(
     return { kind: "unavailable", message: messageOf(err, "Network request failed.") };
   }
 }
+
+// ─── Email Sequence (drip) types & API ───────────────────────────────────────
+
+export interface EmailSequenceStep {
+  delayDays: number;
+  subject: string;
+  body: string;
+}
+
+export interface EmailSequence {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  steps: EmailSequenceStep[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SequencesState =
+  | { kind: "loading" }
+  | { kind: "loaded"; sequences: EmailSequence[] }
+  | { kind: "unavailable"; message: string };
+
+function parseStep(raw: unknown): EmailSequenceStep | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  return {
+    delayDays: typeof obj.delayDays === "number" ? obj.delayDays : 0,
+    subject: typeof obj.subject === "string" ? obj.subject : "",
+    body: typeof obj.body === "string" ? obj.body : "",
+  };
+}
+
+function parseSequence(raw: unknown): EmailSequence | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.id !== "string" || typeof obj.name !== "string") return null;
+  const rawSteps = Array.isArray(obj.steps) ? obj.steps : [];
+  const steps: EmailSequenceStep[] = rawSteps
+    .map((s) => parseStep(s))
+    .filter((s): s is EmailSequenceStep => s !== null);
+  return {
+    id: obj.id,
+    workspaceId: typeof obj.workspaceId === "string" ? obj.workspaceId : "",
+    name: obj.name,
+    description: typeof obj.description === "string" ? obj.description : "",
+    steps,
+    createdAt: typeof obj.createdAt === "string" ? obj.createdAt : "",
+    updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : "",
+  };
+}
+
+function seqUrl(apiBase: string, workspaceId: string, suffix = "") {
+  const base = apiBase.replace(/\/$/, "");
+  return `${base}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/email-sequences${suffix}`;
+}
+
+export async function fetchEmailSequences(
+  apiBase: string,
+  workspaceId: string,
+): Promise<SequencesState> {
+  try {
+    const res = await fetch(seqUrl(apiBase, workspaceId));
+    if (!res.ok) return { kind: "unavailable", message: `Server error ${res.status}` };
+    const data = (await res.json()) as unknown;
+    if (!Array.isArray(data)) return { kind: "unavailable", message: "Unexpected response" };
+    const sequences = data
+      .map((s) => parseSequence(s))
+      .filter((s): s is EmailSequence => s !== null);
+    return { kind: "loaded", sequences };
+  } catch (err) {
+    return { kind: "unavailable", message: messageOf(err, "Network error") };
+  }
+}
+
+export type SequenceSaveResult =
+  | { kind: "saved"; sequence: EmailSequence }
+  | { kind: "rejected"; problems: string[] }
+  | { kind: "unavailable"; message: string };
+
+export async function createEmailSequence(
+  apiBase: string,
+  workspaceId: string,
+  payload: { name: string; description: string; steps: EmailSequenceStep[] },
+): Promise<SequenceSaveResult> {
+  try {
+    const res = await fetch(seqUrl(apiBase, workspaceId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (res.status === 422) {
+      const problems = Array.isArray(body?.problems) ? (body.problems as string[]) : ["Validation error"];
+      return { kind: "rejected", problems };
+    }
+    if (!res.ok) {
+      return { kind: "unavailable", message: (body?.error as string) ?? `Server error ${res.status}` };
+    }
+    const seq = parseSequence(body);
+    if (!seq) return { kind: "unavailable", message: "Unexpected response from server" };
+    return { kind: "saved", sequence: seq };
+  } catch (err) {
+    return { kind: "unavailable", message: messageOf(err, "Network error") };
+  }
+}
+
+export async function updateEmailSequence(
+  apiBase: string,
+  workspaceId: string,
+  sequenceId: string,
+  payload: { name: string; description: string; steps: EmailSequenceStep[] },
+): Promise<SequenceSaveResult> {
+  try {
+    const res = await fetch(seqUrl(apiBase, workspaceId, `/${encodeURIComponent(sequenceId)}`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (res.status === 422) {
+      const problems = Array.isArray(body?.problems) ? (body.problems as string[]) : ["Validation error"];
+      return { kind: "rejected", problems };
+    }
+    if (!res.ok) {
+      return { kind: "unavailable", message: (body?.error as string) ?? `Server error ${res.status}` };
+    }
+    const seq = parseSequence(body);
+    if (!seq) return { kind: "unavailable", message: "Unexpected response from server" };
+    return { kind: "saved", sequence: seq };
+  } catch (err) {
+    return { kind: "unavailable", message: messageOf(err, "Network error") };
+  }
+}
+
+export async function deleteEmailSequence(
+  apiBase: string,
+  workspaceId: string,
+  sequenceId: string,
+): Promise<{ kind: "deleted" } | { kind: "unavailable"; message: string }> {
+  try {
+    const res = await fetch(seqUrl(apiBase, workspaceId, `/${encodeURIComponent(sequenceId)}`), {
+      method: "DELETE",
+    });
+    if (res.status === 204) return { kind: "deleted" };
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return { kind: "unavailable", message: (body?.error as string) ?? `Server error ${res.status}` };
+  } catch (err) {
+    return { kind: "unavailable", message: messageOf(err, "Network error") };
+  }
+}

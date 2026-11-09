@@ -12,6 +12,8 @@ export interface ContentItem {
   title: string;
   slug: string | null;
   plannedPublishAt: string | null;
+  targetPlatforms: string[];
+  mediaUrls: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -298,6 +300,10 @@ function parseContentItem(raw: unknown): ContentItem | null {
     title: c.title,
     slug: c.slug,
     plannedPublishAt: (c.plannedPublishAt as string | null | undefined) ?? null,
+    targetPlatforms: Array.isArray(c.targetPlatforms)
+      ? (c.targetPlatforms as string[])
+      : [],
+    mediaUrls: Array.isArray(c.mediaUrls) ? (c.mediaUrls as string[]) : [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -1173,5 +1179,56 @@ async function postJobAction<T>(
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
     return { kind: "unavailable", message: `Could not reach the operations API (${msg}).` };
+  }
+}
+
+// SUPPORTED_PLATFORMS is the definitive list of social channels the platform supports.
+export const SUPPORTED_PLATFORMS = [
+  "instagram",
+  "facebook",
+  "linkedin",
+  "twitter",
+  "tiktok",
+  "youtube",
+  "pinterest",
+  "threads",
+] as const;
+
+export type SocialPlatform = (typeof SUPPORTED_PLATFORMS)[number];
+
+export interface UpdatePlatformsResult {
+  kind: "saved";
+  item: ContentItem;
+}
+
+/**
+ * PATCH /api/v1/workspaces/{id}/content/{itemId}/platforms
+ * Sets the target_platforms and media_urls on a draft social post.
+ */
+export async function updateContentItemPlatforms(
+  apiBase: string,
+  workspaceId: string,
+  itemId: string,
+  targetPlatforms: string[],
+  mediaUrls: string[],
+  send: typeof fetch = fetch,
+): Promise<{ kind: "saved"; item: ContentItem } | { kind: "error"; message: string }> {
+  const url = `${apiBase.replace(/\/$/, "")}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/content/${encodeURIComponent(itemId)}/platforms`;
+  try {
+    const res = await send(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetPlatforms, mediaUrls }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { kind: "error", message: body?.error ?? `Server error ${res.status}` };
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    const item = parseContentItem(data);
+    if (!item) return { kind: "error", message: "Server returned unexpected data" };
+    return { kind: "saved", item };
+  } catch (err) {
+    return { kind: "error", message: err instanceof Error ? err.message : "Network error" };
   }
 }

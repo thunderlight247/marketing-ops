@@ -44,6 +44,11 @@ type leadEngineConfigJSON struct {
 	WhatsAppStatus     string   `json:"whatsappStatus"`
 	WhatsAppPhone      string   `json:"whatsappPhone"`
 	PitchTemplate      string   `json:"pitchTemplate"`
+	EnableAutoFollowup bool     `json:"enableAutoFollowup"`
+	Followup1Template  string   `json:"followup1Template"`
+	Followup1DelayDays int      `json:"followup1DelayDays"`
+	Followup2Template  string   `json:"followup2Template"`
+	Followup2DelayDays int      `json:"followup2DelayDays"`
 }
 
 func toLeadEngineConfigJSON(c store.WorkspaceLeadConfig) leadEngineConfigJSON {
@@ -73,6 +78,11 @@ func toLeadEngineConfigJSON(c store.WorkspaceLeadConfig) leadEngineConfigJSON {
 		WhatsAppStatus:     c.WhatsAppStatus,
 		WhatsAppPhone:      c.WhatsAppPhone,
 		PitchTemplate:      c.PitchTemplate,
+		EnableAutoFollowup: c.EnableAutoFollowup,
+		Followup1Template:  c.Followup1Template,
+		Followup1DelayDays: c.Followup1DelayDays,
+		Followup2Template:  c.Followup2Template,
+		Followup2DelayDays: c.Followup2DelayDays,
 	}
 }
 
@@ -129,6 +139,11 @@ func putLeadEngineConfigHandler(ws WorkspaceStore, credKey []byte, credKeyVersio
 			MinDelayMs         int      `json:"minDelayMs"`
 			MaxDelayMs         int      `json:"maxDelayMs"`
 			PitchTemplate      string   `json:"pitchTemplate"`
+			EnableAutoFollowup bool     `json:"enableAutoFollowup"`
+			Followup1Template  string   `json:"followup1Template"`
+			Followup1DelayDays int      `json:"followup1DelayDays"`
+			Followup2Template  string   `json:"followup2Template"`
+			Followup2DelayDays int      `json:"followup2DelayDays"`
 		}
 		if err := json.Unmarshal(body, &in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
@@ -178,6 +193,11 @@ func putLeadEngineConfigHandler(ws WorkspaceStore, credKey []byte, credKeyVersio
 			WhatsAppStatus:               existing.WhatsAppStatus,
 			WhatsAppPhone:                existing.WhatsAppPhone,
 			PitchTemplate:                in.PitchTemplate,
+			EnableAutoFollowup:           in.EnableAutoFollowup,
+			Followup1Template:            in.Followup1Template,
+			Followup1DelayDays:           in.Followup1DelayDays,
+			Followup2Template:            in.Followup2Template,
+			Followup2DelayDays:           in.Followup2DelayDays,
 		}
 
 		// Encrypt and store Google Places key if a new one was provided.
@@ -478,19 +498,21 @@ func listWhatsAppSessionsHandler(ws WorkspaceStore) http.HandlerFunc {
 // ─── leads ────────────────────────────────────────────────────────────────────
 
 type leadEngineLeadJSON struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Phone       string   `json:"phone"`
-	Category    string   `json:"category"`
-	City        string   `json:"city"`
-	Address     string   `json:"address"`
-	Rating      *float64 `json:"rating"`
-	ReviewCount int      `json:"reviewCount"`
-	WebsiteURL  string   `json:"websiteUrl"`
-	Pitch       string   `json:"pitch"`
-	Status      string   `json:"status"`
-	PlaceID     *string  `json:"placeId"`
-	CreatedAt   string   `json:"createdAt"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Phone          string   `json:"phone"`
+	Category       string   `json:"category"`
+	City           string   `json:"city"`
+	Address        string   `json:"address"`
+	Rating         *float64 `json:"rating"`
+	ReviewCount    int      `json:"reviewCount"`
+	WebsiteURL     string   `json:"websiteUrl"`
+	Pitch          string   `json:"pitch"`
+	Status         string   `json:"status"`
+	PlaceID        *string  `json:"placeId"`
+	SequenceStep   int      `json:"sequenceStep"`
+	NextFollowUpAt *string  `json:"nextFollowupAt,omitempty"`
+	CreatedAt      string   `json:"createdAt"`
 }
 
 func toLeadEngineLeadJSON(l store.Lead) leadEngineLeadJSON {
@@ -502,20 +524,27 @@ func toLeadEngineLeadJSON(l store.Lead) leadEngineLeadJSON {
 	if l.ContactPhone != nil {
 		phone = *l.ContactPhone
 	}
+	var nextFollowUp *string
+	if l.NextFollowUpAt != nil {
+		formatted := l.NextFollowUpAt.Format(time.RFC3339)
+		nextFollowUp = &formatted
+	}
 	return leadEngineLeadJSON{
-		ID:          l.ID,
-		Name:        name,
-		Phone:       phone,
-		Category:    l.Category,
-		City:        l.City,
-		Address:     l.Address,
-		Rating:      l.Rating,
-		ReviewCount: l.ReviewCount,
-		WebsiteURL:  l.WebsiteURL,
-		Pitch:       l.Pitch,
-		Status:      l.Status,
-		PlaceID:     l.PlaceID,
-		CreatedAt:   l.CreatedAt.Format(time.RFC3339),
+		ID:             l.ID,
+		Name:           name,
+		Phone:          phone,
+		Category:       l.Category,
+		City:           l.City,
+		Address:        l.Address,
+		Rating:         l.Rating,
+		ReviewCount:    l.ReviewCount,
+		WebsiteURL:     l.WebsiteURL,
+		Pitch:          l.Pitch,
+		Status:         l.Status,
+		PlaceID:        l.PlaceID,
+		SequenceStep:   l.SequenceStep,
+		NextFollowUpAt: nextFollowUp,
+		CreatedAt:      l.CreatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -536,6 +565,94 @@ func listLeadEngineLeadsHandler(ws WorkspaceStore) http.HandlerFunc {
 			out[i] = toLeadEngineLeadJSON(l)
 		}
 		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+type importLeadEngineItem struct {
+	Name       string  `json:"name"`
+	Phone      string  `json:"phone"`
+	Category   string  `json:"category"`
+	City       string  `json:"city"`
+	Address    string  `json:"address"`
+	Rating     float64 `json:"rating"`
+	WebsiteURL string  `json:"websiteUrl"`
+}
+
+type importLeadEngineRequest struct {
+	Leads []importLeadEngineItem `json:"leads"`
+}
+
+// POST /api/v1/workspaces/{id}/lead-engine/import
+func importLeadEngineLeadsHandler(ws WorkspaceStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID, ok := workspaceScope(w, r, ws)
+		if !ok {
+			return
+		}
+		var req importLeadEngineRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 5*1024*1024)).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
+			return
+		}
+		if len(req.Leads) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "no leads provided in import list")
+			return
+		}
+		if len(req.Leads) > 2000 {
+			writeJSONError(w, http.StatusBadRequest, "import batch size cannot exceed 2000 leads")
+			return
+		}
+
+		total := len(req.Leads)
+		imported := 0
+		duplicates := 0
+		failed := 0
+
+		for _, item := range req.Leads {
+			phone := strings.TrimSpace(item.Phone)
+			if phone == "" {
+				failed++
+				continue
+			}
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				name = "Prospective Business"
+			}
+			category := strings.TrimSpace(item.Category)
+			city := strings.TrimSpace(item.City)
+			address := strings.TrimSpace(item.Address)
+			websiteURL := strings.TrimSpace(item.WebsiteURL)
+
+			_, err := ws.SaveDiscoveredLead(
+				r.Context(),
+				workspaceID,
+				"", // no google place_id for manual CSV import
+				name,
+				phone,
+				category,
+				city,
+				address,
+				item.Rating,
+				0,
+				websiteURL,
+			)
+			if err != nil {
+				if errors.Is(err, store.ErrAlreadyContacted) {
+					duplicates++
+				} else {
+					failed++
+				}
+				continue
+			}
+			imported++
+		}
+
+		writeJSON(w, http.StatusOK, map[string]int{
+			"total":      total,
+			"imported":   imported,
+			"duplicates": duplicates,
+			"failed":     failed,
+		})
 	}
 }
 
@@ -900,15 +1017,17 @@ func triggerDispatchHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc 
 				WorkspaceID: workspaceID,
 				AIKey:       string(aiKey),
 				AIModel:     cfg.AIModel, SenderName: cfg.SenderName,
-				PitchTemplate:    cfg.PitchTemplate,
-				BusinessOffering: cfg.BusinessOffering,
-				TargetAudience:   cfg.TargetAudience,
-				PortfolioURL:     cfg.PortfolioURL,
-				MinDelayMs:       cfg.MinDelayMs,
-				MaxDelayMs:       cfg.MaxDelayMs,
-				DailyLimit:       cfg.DailyLimit,
-				DispatchURL:      dispatcherURL(),
-				DispatcherSecret: dispatcherSecret(),
+				PitchTemplate:      cfg.PitchTemplate,
+				BusinessOffering:   cfg.BusinessOffering,
+				TargetAudience:     cfg.TargetAudience,
+				PortfolioURL:       cfg.PortfolioURL,
+				MinDelayMs:         cfg.MinDelayMs,
+				MaxDelayMs:         cfg.MaxDelayMs,
+				DailyLimit:         cfg.DailyLimit,
+				DispatchURL:        dispatcherURL(),
+				DispatcherSecret:   dispatcherSecret(),
+				EnableAutoFollowup: cfg.EnableAutoFollowup,
+				Followup1DelayDays: cfg.Followup1DelayDays,
 			}, ws)
 			if err != nil {
 				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", "Dispatch run ended with error: "+err.Error())
@@ -1011,6 +1130,18 @@ func sharedInboundWhatsAppHandler(ws WorkspaceStore, credKey []byte) http.Handle
 	}
 }
 
+// isOptOutKeyword reports whether an inbound message is a bare opt-out keyword
+// (STOP, UNSUBSCRIBE, PARAR), ignoring case, surrounding spaces and punctuation.
+// Only the whole message counts, so "please stop by our shop" is not an opt-out.
+func isOptOutKeyword(body string) bool {
+	word := strings.ToUpper(strings.Trim(strings.TrimSpace(body), ".!?"))
+	switch word {
+	case "STOP", "UNSUBSCRIBE", "PARAR":
+		return true
+	}
+	return false
+}
+
 // handleInboundForWorkspace records an inbound message against a specific
 // workspace (marking the matching replied lead) and fires the AI auto-reply.
 func handleInboundForWorkspace(ctx context.Context, ws WorkspaceStore, credKey []byte, workspaceID string, in inboundWhatsAppPayload) {
@@ -1031,6 +1162,17 @@ func handleInboundForWorkspace(ctx context.Context, ws WorkspaceStore, credKey [
 		Status:      "replied",
 	})
 	events.DefaultHub.Publish(workspaceID, "whatsapp_inbound", "Inbound WhatsApp message from "+in.Phone)
+
+	// A STOP-style keyword is an opt-out: suppress the number for this
+	// workspace so no further outreach or AI reply is sent to it.
+	if isOptOutKeyword(in.Body) {
+		_ = ws.AddToBlacklist(ctx, workspaceID, in.Phone, "opt_out")
+		if leadID != "" {
+			_ = ws.UpdateLeadStatus(ctx, workspaceID, leadID, "blacklisted")
+		}
+		events.DefaultHub.Publish(workspaceID, "whatsapp_opt_out", "Opt-out received from "+in.Phone)
+		return
+	}
 
 	// 3. Autonomous AI Auto-Reply (runs asynchronously so webhook returns HTTP 200 immediately)
 	go func() {

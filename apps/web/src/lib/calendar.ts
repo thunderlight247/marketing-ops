@@ -9,6 +9,8 @@ export interface CalendarEvent {
   workspaceName: string;
   href: string;
   color: string;
+  /** For social_post content items — which platforms are targeted. */
+  platforms?: string[];
 }
 
 /** YYYY-MM-DD for the viewer's local calendar day (never UTC). */

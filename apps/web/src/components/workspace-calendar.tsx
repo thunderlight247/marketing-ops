@@ -13,6 +13,36 @@ import {
   type CalendarEvent,
 } from "@/lib/calendar";
 
+// ─── Platform icons ───────────────────────────────────────────────────────────
+
+const PLATFORM_EMOJI: Record<string, string> = {
+  instagram: "📸",
+  facebook: "📘",
+  linkedin: "💼",
+  twitter: "🐦",
+  tiktok: "🎵",
+  youtube: "▶️",
+  pinterest: "📌",
+  threads: "🧵",
+};
+
+function PlatformChips({ platforms }: { platforms: string[] }) {
+  if (!platforms.length) return null;
+  return (
+    <div className="flex flex-wrap gap-0.5 mt-0.5">
+      {platforms.slice(0, 4).map((p) => (
+        <span
+          key={p}
+          title={p.charAt(0).toUpperCase() + p.slice(1)}
+          className="text-[9px] leading-none"
+        >
+          {PLATFORM_EMOJI[p] ?? "🔗"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ─── Calendar helpers ─────────────────────────────────────────────────────────
 
 function daysInMonth(year: number, month: number): number {
@@ -95,7 +125,11 @@ async function loadAllEvents(apiBaseUrl: string, workspaces: Workspace[]): Promi
               workspaceId: ws.id,
               workspaceName: ws.name,
               href: `/content/${encodeURIComponent(ws.id)}/${encodeURIComponent(item.id)}`,
-              color: "bg-indigo-100 text-indigo-800",
+              color:
+                item.kind === "social_post"
+                  ? "bg-purple-100 text-purple-800"
+                  : "bg-indigo-100 text-indigo-800",
+              platforms: item.targetPlatforms ?? [],
             });
           }
         }
@@ -181,6 +215,9 @@ function CalendarGrid({
                           isOverdueFollowUp(ev, today) ? "bg-red-100 text-red-800" : ev.color
                         }`}
                       >
+                        {ev.kind === "content" && ev.platforms && ev.platforms.length > 0 && (
+                          <PlatformChips platforms={ev.platforms} />
+                        )}
                         {ev.label}
                       </span>
                     ))}
@@ -383,8 +420,16 @@ export function WorkspaceCalendar({ workspaceId }: Readonly<{ workspaceId: strin
               <span className="text-slate-600">Follow-up reminder</span>
             </span>
             <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded bg-purple-100 ring-1 ring-purple-200" />
+              <span className="text-slate-600">Social post</span>
+            </span>
+            <span className="flex items-center gap-1.5">
               <span className="h-3 w-3 rounded bg-indigo-100 ring-1 ring-indigo-200" />
-              <span className="text-slate-600">Scheduled content</span>
+              <span className="text-slate-600">Blog / snippet</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded bg-red-100 ring-1 ring-red-200" />
+              <span className="text-slate-600">Overdue</span>
             </span>
           </div>
 
@@ -441,8 +486,13 @@ export function WorkspaceCalendar({ workspaceId }: Readonly<{ workspaceId: strin
                           ? isOverdueFollowUp(ev, today)
                             ? "Overdue"
                             : "Follow-up"
-                          : "Content"}
+                          : ev.color.includes("purple")
+                          ? "Social post"
+                          : "Blog / snippet"}
                       </span>
+                      {ev.kind === "content" && ev.platforms && ev.platforms.length > 0 && (
+                        <PlatformChips platforms={ev.platforms} />
+                      )}
                       <a
                         href={ev.href}
                         className="flex-1 min-w-0 text-sm text-slate-800 break-words hover:text-indigo-700 hover:underline"

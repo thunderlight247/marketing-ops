@@ -2,9 +2,103 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import { fetchWorkspaces, type Workspace } from "@/lib/workspaces";
+import { useWorkspaceEvents } from "@/lib/events";
+
+// ─── Overdue toast ────────────────────────────────────────────────────────────
+
+interface OverdueToast {
+  id: string; // unique per notification burst
+  count: number;
+  expiresAt: number; // Date.now() ms
+}
+
+const TOAST_TTL_MS = 12_000; // dismiss after 12 s
+const TOAST_DEBOUNCE_MS = 30_000; // suppress repeat within 30 s
+
+function OverdueNotificationBanner({
+  toast,
+  onDismiss,
+  workspaceId,
+}: {
+  toast: OverdueToast;
+  onDismiss: () => void;
+  workspaceId: string;
+}) {
+  return (
+    <div
+      role="alert"
+      aria-live="polite"
+      className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-md"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-lg leading-none" aria-hidden="true">
+          ⏰
+        </span>
+        <span>
+          <strong className="font-semibold">
+            {toast.count === 1
+              ? "1 lead follow-up is overdue"
+              : `${toast.count} lead follow-ups are overdue`}
+          </strong>
+          {" — "}
+          <Link
+            href={`/workspaces/${encodeURIComponent(workspaceId)}/calendar`}
+            className="underline underline-offset-2 hover:text-amber-700"
+            onClick={onDismiss}
+          >
+            View in calendar
+          </Link>
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss overdue notification"
+        className="shrink-0 rounded-md p-0.5 text-amber-700 hover:bg-amber-100 hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function useOverdueToast(workspaceId: string) {
+  const [toast, setToast] = useState<OverdueToast | null>(null);
+  const lastShownAt = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismiss = useCallback(() => {
+    setToast(null);
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+
+  useWorkspaceEvents(workspaceId, (ev) => {
+    if (ev.type !== "lead_followup_overdue") return;
+    const now = Date.now();
+    if (now - lastShownAt.current < TOAST_DEBOUNCE_MS) return;
+    lastShownAt.current = now;
+
+    let count = 1;
+    try {
+      const payload = JSON.parse(ev.message ?? "{}") as { count?: number };
+      if (typeof payload.count === "number") count = payload.count;
+    } catch {
+      /* keep count=1 */
+    }
+
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setToast({ id: `${now}`, count, expiresAt: now + TOAST_TTL_MS });
+    timerRef.current = setTimeout(() => setToast(null), TOAST_TTL_MS);
+  });
+
+  // Cleanup on unmount
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return { toast, dismiss };
+}
 
 const TABS = [
   { key: "overview", label: "Overview", segment: "" },
@@ -12,6 +106,7 @@ const TABS = [
   { key: "calendar", label: "Calendar", segment: "/calendar" },
   { key: "lead-engine", label: "Lead engine", segment: "/lead-engine" },
   { key: "email", label: "Email", segment: "/email" },
+  { key: "newsletter", label: "Newsletter", segment: "/newsletter" },
   { key: "integrations", label: "Integrations", segment: "/integrations" },
   { key: "analytics", label: "Analytics", segment: "/analytics" },
   { key: "settings", label: "Settings", segment: "/settings" },
@@ -36,6 +131,7 @@ export function WorkspaceShell({
   const router = useRouter();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [current, setCurrent] = useState<Workspace | null>(null);
+  const { toast, dismiss } = useOverdueToast(workspaceId);
 
   const base = `/workspaces/${encodeURIComponent(workspaceId)}`;
 
@@ -58,6 +154,13 @@ export function WorkspaceShell({
 
   return (
     <div className="grid gap-6">
+      {toast ? (
+        <OverdueNotificationBanner
+          toast={toast}
+          onDismiss={dismiss}
+          workspaceId={workspaceId}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="Breadcrumb" className="text-xs text-slate-500">
           <Link href="/workspaces" className="font-medium hover:text-indigo-700">

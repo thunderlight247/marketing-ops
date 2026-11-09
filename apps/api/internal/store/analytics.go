@@ -98,7 +98,7 @@ func (s *Store) AnalyticsSummary(ctx context.Context, workspaceID string) (Analy
 		     GROUP BY workspace_id
 		 ) d ON d.workspace_id = w.id
 		 WHERE w.status = 'active'
-		   AND ($1 = '' OR w.id = $1)
+		   AND ($1 = '' OR w.id::text = $1)
 		 ORDER BY w.name`, workspaceID)
 	if err != nil {
 		return AnalyticsSummary{}, err
@@ -134,7 +134,7 @@ func (s *Store) AnalyticsSummary(ctx context.Context, workspaceID string) (Analy
 	crmRows, err := s.pool.Query(ctx,
 		`SELECT status, count(*) FROM leads
 		 WHERE source_kind <> 'lead_engine'
-		   AND ($1 = '' OR workspace_id = $1)
+		   AND ($1 = '' OR workspace_id::text = $1)
 		 GROUP BY status`, workspaceID)
 	if err != nil {
 		return AnalyticsSummary{}, err
@@ -146,7 +146,7 @@ func (s *Store) AnalyticsSummary(ctx context.Context, workspaceID string) (Analy
 	engineRows, err := s.pool.Query(ctx,
 		`SELECT status, count(*) FROM leads
 		 WHERE source_kind = 'lead_engine'
-		   AND ($1 = '' OR workspace_id = $1)
+		   AND ($1 = '' OR workspace_id::text = $1)
 		 GROUP BY status`, workspaceID)
 	if err != nil {
 		return AnalyticsSummary{}, err

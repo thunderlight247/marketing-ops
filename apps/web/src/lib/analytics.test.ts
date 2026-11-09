@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAnalyticsSummary } from "./analytics";
+import { parseAnalyticsBreakdown, parseAnalyticsSummary } from "./analytics";
 
 const valid = {
   generatedAt: "2026-11-07T12:00:00Z",
@@ -36,6 +36,32 @@ const valid = {
   crmLeadsByStatus: { new: 2, contacted: 1, won: 1 },
   engineLeadsByStatus: { sent: 47, blacklisted: 32, failed: 6 },
 };
+
+describe("parseAnalyticsBreakdown", () => {
+  const breakdown = {
+    from: "2026-10-09T00:00:00Z",
+    to: "2026-11-09T00:00:00Z",
+    trend: [{ day: "2026-11-07", crm: 2, engine: 5 }],
+    utm: {
+      source: { google: 3, "(none)": 4 },
+      medium: { cpc: 3, "(none)": 4 },
+      campaign: { spring: 3, "(none)": 4 },
+    },
+  };
+
+  it("accepts a well-formed breakdown", () => {
+    const parsed = parseAnalyticsBreakdown(breakdown);
+    expect(parsed?.trend).toEqual([{ day: "2026-11-07", crm: 2, engine: 5 }]);
+    expect(parsed?.utm.source).toEqual({ google: 3, "(none)": 4 });
+  });
+
+  it("rejects a missing UTM map or a negative count", () => {
+    expect(parseAnalyticsBreakdown({ ...breakdown, utm: { source: {}, medium: {} } })).toBeNull();
+    expect(
+      parseAnalyticsBreakdown({ ...breakdown, trend: [{ day: "2026-11-07", crm: -1, engine: 0 }] }),
+    ).toBeNull();
+  });
+});
 
 describe("parseAnalyticsSummary", () => {
   it("accepts the API payload", () => {

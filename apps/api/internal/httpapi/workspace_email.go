@@ -416,7 +416,7 @@ func testEmailSettingsHandler(ws WorkspaceStore, key []byte, apiBase string, cli
 // POST /api/v1/workspaces/{id}/leads/{leadId}/reply-send sends the reply the
 // operator approved. The request only queues it; the worker performs the send
 // and records what the provider answered.
-func sendLeadReplyHandler(ws WorkspaceStore) http.HandlerFunc {
+func sendLeadReplyHandler(ws WorkspaceStore, key []byte, publicAPIURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		workspaceID, ok := workspaceScope(w, r, ws)
 		if !ok {
@@ -508,6 +508,13 @@ func sendLeadReplyHandler(ws WorkspaceStore) http.HandlerFunc {
 		if _, err := st.SaveLeadReplyDraft(r.Context(), workspaceID, lead.ID, subject, text); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "storing the reply failed")
 			return
+		}
+
+		// Outbound lead email carries an unsubscribe link when this API has a
+		// public URL configured. The footer is added to the stored body so the
+		// delivery log shows exactly what was sent.
+		if link := unsubscribeURL(publicAPIURL, key, workspaceID, to); link != "" {
+			text += "\n\n---\nTo stop receiving these emails, unsubscribe: " + link
 		}
 
 		delivery, created, err := st.EnqueueEmailDelivery(r.Context(), store.EmailDelivery{

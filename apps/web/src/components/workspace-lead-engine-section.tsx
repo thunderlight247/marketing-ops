@@ -10,6 +10,7 @@ import {
   disconnectWhatsApp,
   getLeadEngineConfig,
   getWhatsAppStatus,
+  importLeadEngineLeads,
   listBlacklist,
   listDailyOutreach,
   listLeadEngineLeads,
@@ -29,6 +30,7 @@ import {
   type OutreachLog,
   type WhatsAppSession,
 } from "@/lib/leadEngine";
+import { exportLeadEngineLeadsToCsv, parseLeadEngineCsv } from "@/lib/csv";
 import { useWorkspaceEvents } from "@/lib/events";
 
 // ─── Design tokens / shared classes ──────────────────────────────────────────
@@ -252,6 +254,21 @@ function SetupTab({
   const [minDelay, setMinDelay] = useState(config.minDelayMs || 120000);
   const [maxDelay, setMaxDelay] = useState(config.maxDelayMs || 300000);
   const [pitchTemplate, setPitchTemplate] = useState(config.pitchTemplate || "");
+  const [enableAutoFollowup, setEnableAutoFollowup] = useState(
+    Boolean(config.enableAutoFollowup),
+  );
+  const [followup1Template, setFollowup1Template] = useState(
+    config.followup1Template || "",
+  );
+  const [followup1DelayDays, setFollowup1DelayDays] = useState(
+    config.followup1DelayDays || 3,
+  );
+  const [followup2Template, setFollowup2Template] = useState(
+    config.followup2Template || "",
+  );
+  const [followup2DelayDays, setFollowup2DelayDays] = useState(
+    config.followup2DelayDays || 5,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -287,6 +304,11 @@ function SetupTab({
         minDelayMs: minDelay,
         maxDelayMs: maxDelay,
         pitchTemplate,
+        enableAutoFollowup,
+        followup1Template,
+        followup1DelayDays,
+        followup2Template,
+        followup2DelayDays,
       });
       setGoogleKey("");
       setAiKey("");
@@ -460,11 +482,105 @@ function SetupTab({
             "{{business_name}} {{category}} {{city}} {{sender_name}} {{portfolio_url}} {{rating}}"
           }
         />
+        <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-slate-700">
+          <p className="font-semibold text-indigo-900">
+            🛡️ Anti-Ban Spintax Protection:
+          </p>
+          <p className="mt-0.5 text-slate-600">
+            Wrap alternatives in curly braces like <code>{"{Hi|Hello|Hey}"}</code> or <code>{"{quick question|checking in}"}</code>.
+            The engine automatically randomizes outgoing text for each recipient to prevent spam filters from flagging identical message patterns.
+          </p>
+        </div>
         <p className="mt-1 text-xs text-slate-500">
           Placeholders: <code>{"{{business_name}}"}</code>, <code>{"{{category}}"}</code>,{" "}
           <code>{"{{city}}"}</code>, <code>{"{{sender_name}}"}</code>,{" "}
           <code>{"{{portfolio_url}}"}</code>, <code>{"{{rating}}"}</code>
         </p>
+      </div>
+
+      {/* Multi-step cadence follow-up */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">
+              Multi-Step Automated Follow-Up Cadence
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Automatically re-engage leads who haven&apos;t replied. As soon as a lead replies or is marked won/lost/blacklisted, all scheduled follow-ups are immediately canceled.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enableAutoFollowup}
+            onClick={() => setEnableAutoFollowup((v) => !v)}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${enableAutoFollowup ? "bg-indigo-600" : "bg-slate-200"}`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${enableAutoFollowup ? "translate-x-5" : "translate-x-0"}`}
+            />
+          </button>
+        </div>
+
+        {enableAutoFollowup && (
+          <div className="space-y-4 pt-3 border-t border-slate-100">
+            {/* Step 2: Follow-up #1 */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Step 2: Follow-up #1
+                </label>
+                <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <span>Send</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    className="w-14 rounded border border-slate-300 bg-white px-2 py-0.5 text-center text-xs font-semibold text-slate-800"
+                    value={followup1DelayDays}
+                    onChange={(e) => setFollowup1DelayDays(Math.max(1, Number(e.target.value)))}
+                  />
+                  <span>days after initial pitch</span>
+                </div>
+              </div>
+              <textarea
+                rows={3}
+                className={INPUT}
+                value={followup1Template}
+                onChange={(e) => setFollowup1Template(e.target.value)}
+                placeholder="{Hi|Hey} {{business_name}}, just following up on our note regarding {{category}} services. Did you get a chance to take a look?"
+              />
+            </div>
+
+            {/* Step 3: Follow-up #2 */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Step 3: Follow-up #2 (Break-up / Final)
+                </label>
+                <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <span>Send</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    className="w-14 rounded border border-slate-300 bg-white px-2 py-0.5 text-center text-xs font-semibold text-slate-800"
+                    value={followup2DelayDays}
+                    onChange={(e) => setFollowup2DelayDays(Math.max(1, Number(e.target.value)))}
+                  />
+                  <span>days after Follow-up #1</span>
+                </div>
+              </div>
+              <textarea
+                rows={3}
+                className={INPUT}
+                value={followup2Template}
+                onChange={(e) => setFollowup2Template(e.target.value)}
+                placeholder="{Hi|Hello} {{business_name}}, I assume you are busy or not in the market right now. I will leave our link at {{portfolio_url}} if you ever need us. Best wishes!"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* rate limits */}
@@ -1112,6 +1228,80 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
   const [showPrevious, setShowPrevious] = useState(false);
   const [dayStart, setDayStart] = useState(() => startOfLocalDay(new Date()));
 
+  // CSV Import state
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{
+    total: number;
+    imported: number;
+    duplicates: number;
+    failed: number;
+  } | null>(null);
+  const [parsedLeads, setParsedLeads] = useState<
+    Array<{
+      name: string;
+      phone: string;
+      category?: string;
+      city?: string;
+      address?: string;
+      websiteUrl?: string;
+    }>
+  >([]);
+
+  const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError(null);
+    setImportResult(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = String(event.target?.result ?? "");
+        const rows = parseLeadEngineCsv(text);
+        if (rows.length === 0) {
+          setImportError(
+            "No valid rows found in CSV. Ensure columns include headers like 'Name' and 'Phone'.",
+          );
+          setParsedLeads([]);
+          return;
+        }
+        setParsedLeads(rows);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : "Failed to parse CSV file");
+        setParsedLeads([]);
+      }
+    };
+    reader.onerror = () => {
+      setImportError("Could not read file");
+      setParsedLeads([]);
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const executeImport = async () => {
+    if (parsedLeads.length === 0) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const res = await importLeadEngineLeads(base, config.workspaceId, parsedLeads);
+      setImportResult(res);
+      setParsedLeads([]);
+      void loadLeads();
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (leads.length === 0) return;
+    exportLeadEngineLeadsToCsv(leads, config.workspaceId);
+  };
+
   const loadLeads = useCallback(async () => {
     setLoading(true);
     try {
@@ -1273,10 +1463,140 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
             `📤 Send Pending (${pending})`
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setShowImport((v) => !v);
+            setImportError(null);
+            setImportResult(null);
+          }}
+          className={BTN_GHOST}
+        >
+          {showImport ? "✕ Close Import" : "📥 Import CSV"}
+        </button>
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={leads.length === 0}
+          title={leads.length === 0 ? "No leads to export" : "Export leads to CSV"}
+          className={BTN_GHOST}
+        >
+          📤 Export CSV ({leads.length})
+        </button>
         <button onClick={() => void loadLeads()} disabled={loading} className={BTN_GHOST}>
           {loading ? <Spinner size={14} /> : "↻ Refresh"}
         </button>
       </div>
+
+      {/* CSV Import Dropdown Panel */}
+      {showImport && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-semibold text-slate-900">
+                Bulk Import Leads via CSV
+              </h4>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Upload a CSV with columns such as <code>Name</code>, <code>Phone</code>, <code>Category</code>, <code>City</code>, <code>Address</code>, and <code>Website</code>.
+                Duplicates by phone number will be automatically skipped.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowImport(false)}
+              className="text-xs text-slate-400 hover:text-slate-600 font-semibold"
+            >
+              ✕ Close
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 transition-colors">
+              Select CSV File
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleCsvFileChange}
+                disabled={importing}
+                className="sr-only"
+              />
+            </label>
+            <span className="text-xs text-slate-500">
+              {parsedLeads.length > 0
+                ? `${parsedLeads.length} leads parsed and ready to import`
+                : "Supports UTF-8 CSV with Name and Phone headers"}
+            </span>
+          </div>
+
+          {importError && <Alert kind="error">{importError}</Alert>}
+          {importResult && (
+            <Alert kind="success">
+              Import complete: {importResult.imported} leads added, {importResult.duplicates} duplicates skipped, {importResult.failed} failed.
+            </Alert>
+          )}
+
+          {parsedLeads.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                <table className="min-w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500 font-semibold">
+                      <th className="px-3 py-2">Name</th>
+                      <th className="px-3 py-2">Phone</th>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2">City</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {parsedLeads.slice(0, 10).map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50">
+                        <td className="px-3 py-1.5 font-medium text-slate-800">{row.name}</td>
+                        <td className="px-3 py-1.5 font-mono text-slate-600">{row.phone}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{row.category || "—"}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{row.city || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {parsedLeads.length > 10 && (
+                <p className="text-[11px] text-slate-400">
+                  Showing first 10 of {parsedLeads.length} rows preview.
+                </p>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void executeImport()}
+                  disabled={importing}
+                  className={BTN_PRIMARY}
+                >
+                  {importing ? (
+                    <>
+                      <Spinner size={14} />
+                      <span className="ml-2">Importing…</span>
+                    </>
+                  ) : (
+                    `Confirm & Import ${parsedLeads.length} Leads`
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setParsedLeads([]);
+                    setImportError(null);
+                  }}
+                  disabled={importing}
+                  className={BTN_GHOST}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* stats */}
       {visibleLeads.length > 0 && (
@@ -1362,6 +1682,18 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                   {lead.rating ? (
                     <span className="text-amber-600 font-medium">⭐ {lead.rating.toFixed(1)}</span>
                   ) : null}
+                  <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                    {lead.sequenceStep === 2
+                      ? "Step 2: Follow-up 1"
+                      : lead.sequenceStep && lead.sequenceStep >= 3
+                        ? "Step 3: Follow-up 2"
+                        : "Step 1: Pitch"}
+                  </span>
+                  {lead.nextFollowupAt && ["sent", "delivered"].includes(lead.status) && (
+                    <span className="text-[11px] text-indigo-600 font-medium">
+                      Next: {new Date(lead.nextFollowupAt).toLocaleDateString()}
+                    </span>
+                  )}
                 </div>
 
                 <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">
@@ -1439,6 +1771,9 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                     Rating
                   </th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Cadence
+                  </th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Status
                   </th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1464,6 +1799,20 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                         )}
                       </td>
                       <td className="px-4 py-3">
+                        <span className="inline-flex items-center rounded bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                          {lead.sequenceStep === 2
+                            ? "Step 2: Follow-up 1"
+                            : lead.sequenceStep && lead.sequenceStep >= 3
+                              ? "Step 3: Follow-up 2"
+                              : "Step 1: Pitch"}
+                        </span>
+                        {lead.nextFollowupAt && ["sent", "delivered"].includes(lead.status) && (
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            Due: {new Date(lead.nextFollowupAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
                         <StatusBadge status={lead.status} />
                       </td>
                       <td className="px-4 py-3">
@@ -1477,7 +1826,7 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                     </tr>
                     {selectedLead === lead.id && (
                       <tr key={`${lead.id}-logs`}>
-                        <td colSpan={6} className="bg-slate-50 px-4 py-3">
+                        <td colSpan={7} className="bg-slate-50 px-4 py-3">
                           {lead.pitch && (
                             <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3">
                               <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">

@@ -11,6 +11,7 @@ export interface WorkspaceEvent {
     | "whatsapp_status"
     | "whatsapp_inbound"
     | "whatsapp_replied"
+    | "lead_followup_overdue"
     | string;
   message?: string;
   timestamp: string;

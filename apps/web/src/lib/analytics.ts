@@ -152,6 +152,83 @@ export function parseAnalyticsSummary(raw: unknown): AnalyticsSummary | null {
   };
 }
 
+export interface DailyLeadPoint {
+  day: string;
+  crm: number;
+  engine: number;
+}
+
+export interface UTMCounts {
+  source: Record<string, number>;
+  medium: Record<string, number>;
+  campaign: Record<string, number>;
+}
+
+export interface AnalyticsBreakdown {
+  trend: DailyLeadPoint[];
+  utm: UTMCounts;
+}
+
+export type AnalyticsBreakdownState =
+  | { kind: "loading" }
+  | { kind: "loaded"; breakdown: AnalyticsBreakdown }
+  | { kind: "unavailable"; message: string };
+
+/** Validates the breakdown payload. Returns null when any count is malformed. */
+export function parseAnalyticsBreakdown(raw: unknown): AnalyticsBreakdown | null {
+  if (!isRecord(raw) || !Array.isArray(raw.trend) || !isRecord(raw.utm)) return null;
+  const trend: DailyLeadPoint[] = [];
+  for (const item of raw.trend) {
+    if (!isRecord(item) || typeof item.day !== "string") return null;
+    const crm = count(item.crm);
+    const engine = count(item.engine);
+    if (crm === null || engine === null) return null;
+    trend.push({ day: item.day, crm, engine });
+  }
+  const source = parseCounts(raw.utm.source);
+  const medium = parseCounts(raw.utm.medium);
+  const campaign = parseCounts(raw.utm.campaign);
+  if (!source || !medium || !campaign) return null;
+  return { trend, utm: { source, medium, campaign } };
+}
+
+/**
+ * Fetches the daily trend and UTM breakdown for leads created between two
+ * YYYY-MM-DD dates (inclusive). The API caps the range at 366 days.
+ */
+export async function fetchAnalyticsBreakdown(
+  baseUrl: string,
+  range: { from: string; to: string; workspaceId?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<AnalyticsBreakdownState> {
+  const root = baseUrl.replace(/\/+$/, "");
+  const params = new URLSearchParams({ from: range.from, to: range.to });
+  if (range.workspaceId) params.set("workspaceId", range.workspaceId);
+  try {
+    const res = await fetchImpl(`${root}/api/v1/analytics/breakdown?${params.toString()}`, {
+      headers: withAuth({ Accept: "application/json" }),
+    });
+    const body = (await res.json().catch(() => null)) as unknown;
+    if (!res.ok) {
+      const message = isRecord(body) && typeof body.error === "string" ? body.error : null;
+      return {
+        kind: "unavailable",
+        message: message ?? `The API answered with status ${res.status}.`,
+      };
+    }
+    const breakdown = parseAnalyticsBreakdown(body);
+    if (!breakdown) {
+      return { kind: "unavailable", message: "The breakdown response had an unexpected shape." };
+    }
+    return { kind: "loaded", breakdown };
+  } catch (err) {
+    return {
+      kind: "unavailable",
+      message: err instanceof Error ? err.message : "Could not reach the API.",
+    };
+  }
+}
+
 /**
  * Fetches the summary in one request. Pass a workspace id to scope every count
  * to that workspace; omit it for the platform-wide view.

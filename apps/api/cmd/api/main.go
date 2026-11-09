@@ -15,9 +15,11 @@ import (
 
 	"marketingops/api/internal/agents"
 	"marketingops/api/internal/aiprovider"
+	"marketingops/api/internal/cadenceworker"
 	"marketingops/api/internal/config"
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/emailworker"
+	"marketingops/api/internal/events"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
 	"marketingops/api/internal/integration"
@@ -110,6 +112,20 @@ func run() error {
 		go worker.Run(ctx)
 	}
 
+	// Background cadence worker: scans for overdue CRM follow-ups every 5
+	// minutes and publishes a "lead_followup_overdue" SSE event to the Hub so
+	// any connected dashboard client is notified without polling.
+	if workspaceStore != nil {
+		if cs, ok := workspaceStore.(cadenceworker.OverdueStore); ok {
+			cw := cadenceworker.New(cadenceworker.Options{
+				Store:  cs,
+				Hub:    events.DefaultHub,
+				Logger: logger,
+			})
+			go cw.Run(ctx)
+		}
+	}
+
 	// Background automated lead engine scheduler: automatically discovers
 	// and dispatches leads on a recurring interval for enabled workspaces.
 	// LEAD_ENGINE_AUTOMATION=off|false|0 disables it so discovery and dispatch
@@ -178,6 +194,7 @@ func run() error {
 			AgentTimeout:         cfg.GenerateTimeout,
 			SanityOpsBase:        cfg.SanityOpsBase,
 			EmailAPIBase:         cfg.EmailBase,
+			PublicAPIURL:         cfg.PublicAPIURL,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

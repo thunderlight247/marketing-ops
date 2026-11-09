@@ -14,6 +14,8 @@ import (
 type SchedulerStore interface {
 	LeadEngineStore
 	ListEnabledLeadConfigs(ctx context.Context) ([]store.WorkspaceLeadConfig, error)
+	// TryAcquireSchedulerLock returns ok=false when another instance is running a pass.
+	TryAcquireSchedulerLock(ctx context.Context) (release func(), ok bool, err error)
 }
 
 // StartScheduler starts the automated background loop for discovery and outreach dispatch.
@@ -50,6 +52,19 @@ func StartScheduler(ctx context.Context, s SchedulerStore, credKey []byte, dispa
 }
 
 func runSchedulerPass(ctx context.Context, s SchedulerStore, credKey []byte, dispatchURL, dispatcherSecret string) {
+	// Only one instance runs a pass at a time. With several API replicas, the
+	// others skip this tick instead of duplicating discovery and dispatch.
+	release, ok, err := s.TryAcquireSchedulerLock(ctx)
+	if err != nil {
+		log.Printf("[leadengine:scheduler] could not take scheduler lock: %v", err)
+		return
+	}
+	if !ok {
+		log.Println("[leadengine:scheduler] another instance holds the scheduler lock; skipping")
+		return
+	}
+	defer release()
+
 	log.Println("[leadengine:scheduler] checking enabled workspaces for automated outreach...")
 
 	configs, err := s.ListEnabledLeadConfigs(ctx)

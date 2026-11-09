@@ -441,6 +441,45 @@ func TestSendLeadReplyQueuesExactlyOnce(t *testing.T) {
 	}
 }
 
+// With a public API URL configured, the queued reply carries an unsubscribe
+// link that verifies against the credential key.
+func TestSendLeadReplyAddsUnsubscribeFooter(t *testing.T) {
+	const leadID = "66666666-6666-6666-6666-666666666677"
+	f := newEmailFake()
+	emailLead(f.fakeWorkspaceStore, leadID, "new", "jane@example.com", true)
+	f.settings = &store.EmailSettings{
+		WorkspaceID: emailTestWsID, Provider: "resend", FromName: "Rosewood Heating",
+		FromEmail: "hello@rosewood.example", APIKeyCiphertext: []byte("x"), APIKeyVersion: 1, Status: "connected",
+	}
+	h := NewRouter(Deps{
+		Logger:               testLogger,
+		Workspaces:           f,
+		CredentialKey:        emailTestKey(),
+		CredentialKeyVersion: 1,
+		EmailAPIBase:         "http://127.0.0.1:1",
+		PublicAPIURL:         "https://api.example.test",
+	})
+
+	rec := doJSON(t, h, http.MethodPost, "/api/v1/workspaces/"+emailTestWsID+"/leads/"+leadID+"/reply-send", "{}")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("send: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(f.deliveries) != 1 {
+		t.Fatalf("expected one queued delivery, got %d", len(f.deliveries))
+	}
+	body := f.deliveries[0].Body
+	const prefix = "https://api.example.test/api/v1/email/unsubscribe?token="
+	i := strings.Index(body, prefix)
+	if i < 0 {
+		t.Fatalf("body has no unsubscribe link: %q", body)
+	}
+	token := strings.TrimSpace(body[i+len(prefix):])
+	ws, email, ok := parseUnsubscribeToken(emailTestKey(), token)
+	if !ok || ws != emailTestWsID || email != "jane@example.com" {
+		t.Errorf("footer token = %q %q %v", ws, email, ok)
+	}
+}
+
 func TestSendLeadReplyRefusesUnsendableLeads(t *testing.T) {
 	f := newEmailFake()
 	f.settings = &store.EmailSettings{

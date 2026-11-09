@@ -27,6 +27,7 @@ type WorkspaceStore interface {
 	InsertContentItem(ctx context.Context, item store.ContentItem) (store.ContentItem, error)
 	GetContentItemDetail(ctx context.Context, workspaceID, itemID string) (store.ContentItem, *store.ContentVersion, error)
 	SaveContentDraft(ctx context.Context, workspaceID, itemID string, in store.ContentDraftInput) (store.ContentItem, store.ContentVersion, error)
+	SetContentItemPlatforms(ctx context.Context, workspaceID, itemID string, platforms, mediaURLs []string) (store.ContentItem, error)
 	DecideApproval(ctx context.Context, workspaceID, itemID string, in store.ApprovalDecisionInput) (store.ContentItem, store.Approval, error)
 	ListApprovalsByItem(ctx context.Context, workspaceID, itemID string) ([]store.Approval, error)
 	ListContentVersionsInWorkspace(ctx context.Context, workspaceID, itemID string) ([]store.ContentVersion, error)
@@ -77,6 +78,7 @@ type WorkspaceStore interface {
 	SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error)
 	UpdateLeadPitch(ctx context.Context, workspaceID, leadID, pitch string) error
 	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
+	AdvanceLeadCadence(ctx context.Context, workspaceID, leadID string, step int, nextFollowUp *time.Time) error
 	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
 	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
 	HasRecentOutboundAttempt(ctx context.Context, workspaceID, leadID string, within time.Duration) (bool, error)

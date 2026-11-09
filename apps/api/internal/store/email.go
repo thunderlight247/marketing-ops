@@ -251,9 +251,16 @@ func (s *Store) EnqueueEmailDelivery(ctx context.Context, in EmailDelivery) (Ema
 	if strings.TrimSpace(in.ToEmail) == "" || strings.TrimSpace(in.Subject) == "" {
 		return EmailDelivery{}, false, ErrNameRequired
 	}
+	// A suppressed address (opted out, or unsubscribed) is never queued. The
+	// NOT EXISTS check runs in the same statement as the insert, so a message
+	// cannot slip in between the check and the write.
 	row := s.pool.QueryRow(ctx,
 		`INSERT INTO email_deliveries (workspace_id, kind, lead_id, to_email, subject, body)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		 SELECT $1, $2, $3, $4, $5, $6
+		 WHERE NOT EXISTS (
+		     SELECT 1 FROM email_suppressions
+		      WHERE workspace_id = $1 AND email = lower($4)
+		 )
 		 ON CONFLICT DO NOTHING
 		 RETURNING `+emailDeliveryColumns,
 		in.WorkspaceID, in.Kind, in.LeadID, in.ToEmail, in.Subject, in.Body)
@@ -265,6 +272,21 @@ func (s *Store) EnqueueEmailDelivery(ctx context.Context, in EmailDelivery) (Ema
 		return EmailDelivery{}, false, err
 	}
 	return out, true, nil
+}
+
+// SuppressEmail records that a workspace must not email an address again. The
+// address is stored lowercased so the match ignores case. Re-suppressing an
+// address is a no-op.
+func (s *Store) SuppressEmail(ctx context.Context, workspaceID, email, reason string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return ErrNameRequired
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO email_suppressions (workspace_id, email, reason)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (workspace_id, email) DO NOTHING`, workspaceID, email, reason)
+	return err
 }
 
 // GetEmailDeliveryInWorkspace reads one delivery, scoped to its workspace so a

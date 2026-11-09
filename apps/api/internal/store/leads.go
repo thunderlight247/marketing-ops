@@ -38,23 +38,26 @@ type Lead struct {
 	// accepted the reply; an attempted send leaves it empty.
 	ReplySentAt *time.Time
 	// Lead engine fields — populated only for source_kind = 'lead_engine'.
-	PlaceID     *string
-	Category    string
-	City        string
-	Address     string
-	Rating      *float64
-	ReviewCount int
-	WebsiteURL  string
-	Pitch       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	PlaceID        *string
+	Category       string
+	City           string
+	Address        string
+	Rating         *float64
+	ReviewCount    int
+	WebsiteURL     string
+	Pitch          string
+	SequenceStep   int
+	NextFollowUpAt *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 const leadColumns = `id, workspace_id, campaign_id, source_kind, source_detail, status,
 	contact_name, contact_email, contact_phone, message, notes,
 	utm_source, utm_medium, utm_campaign, follow_up_at, created_at, updated_at,
 	reply_draft_subject, reply_draft_body, reply_drafted_at, reply_sent_at,
-	place_id, category, city, address, rating, review_count, website_url, pitch`
+	place_id, category, city, address, rating, review_count, website_url, pitch,
+	sequence_step, next_followup_at`
 
 func leadValidSource(kind string) bool {
 	switch kind {
@@ -230,7 +233,8 @@ func scanLead(row interface{ Scan(dest ...any) error }) (Lead, error) {
 		&l.Status, &l.ContactName, &l.ContactEmail, &l.ContactPhone, &l.Message, &l.Notes,
 		&l.UtmSource, &l.UtmMedium, &l.UtmCampaign, &l.FollowUpAt, &l.CreatedAt, &l.UpdatedAt,
 		&l.ReplyDraftSubject, &l.ReplyDraftBody, &l.ReplyDraftedAt, &l.ReplySentAt,
-		&l.PlaceID, &l.Category, &l.City, &l.Address, &l.Rating, &l.ReviewCount, &l.WebsiteURL, &l.Pitch); err != nil {
+		&l.PlaceID, &l.Category, &l.City, &l.Address, &l.Rating, &l.ReviewCount, &l.WebsiteURL, &l.Pitch,
+		&l.SequenceStep, &l.NextFollowUpAt); err != nil {
 		return Lead{}, err
 	}
 	return l, nil
@@ -244,7 +248,46 @@ func leadScanFields(l *Lead) []any {
 		&l.UtmSource, &l.UtmMedium, &l.UtmCampaign, &l.FollowUpAt, &l.CreatedAt, &l.UpdatedAt,
 		&l.ReplyDraftSubject, &l.ReplyDraftBody, &l.ReplyDraftedAt, &l.ReplySentAt,
 		&l.PlaceID, &l.Category, &l.City, &l.Address, &l.Rating, &l.ReviewCount, &l.WebsiteURL, &l.Pitch,
+		&l.SequenceStep, &l.NextFollowUpAt,
 	}
+}
+
+// OverdueLead is a compact projection used by the cadence worker. It carries
+// only what the SSE payload needs so the query stays narrow.
+type OverdueLead struct {
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspaceId"`
+	ContactName *string   `json:"contactName,omitempty"`
+	Status      string    `json:"status"`
+	FollowUpAt  time.Time `json:"followUpAt"`
+}
+
+// ListOverdueFollowUpLeads returns CRM leads (non-lead-engine) where follow_up_at
+// is in the past and the lead is not yet won or lost. At most limit rows are
+// returned, ordered by follow_up_at ascending (most overdue first).
+func (s *Store) ListOverdueFollowUpLeads(ctx context.Context, now time.Time, limit int) ([]OverdueLead, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, workspace_id, contact_name, status, follow_up_at
+		   FROM leads
+		  WHERE source_kind <> 'lead_engine'
+		    AND follow_up_at IS NOT NULL
+		    AND follow_up_at < $1
+		    AND status NOT IN ('won', 'lost')
+		  ORDER BY follow_up_at ASC
+		  LIMIT $2`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OverdueLead
+	for rows.Next() {
+		var l OverdueLead
+		if err := rows.Scan(&l.ID, &l.WorkspaceID, &l.ContactName, &l.Status, &l.FollowUpAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // SaveLeadReplyDraft stores a drafted first reply on one lead, replacing any

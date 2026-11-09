@@ -17,7 +17,9 @@ import {
   retryContentJob,
   saveWorkspaceDraft,
   transitionContentStatus,
+  updateContentItemPlatforms,
   uploadIntegrationImage,
+  SUPPORTED_PLATFORMS,
   type ApprovalDecision,
   type ContentHistoryState,
   type ContentJobsState,
@@ -213,6 +215,12 @@ export function DraftEditor({
   const [callToAction, setCallToAction] = useState("");
   const [channels, setChannels] = useState<Array<{ name: string; copy: string }>>([]);
 
+  // Platform targeting for social posts
+  const [targetPlatforms, setTargetPlatforms] = useState<string[]>([]);
+  const [platformsSaving, setPlatformsSaving] = useState(false);
+  const [platformsError, setPlatformsError] = useState<string | null>(null);
+  const [platformsSaved, setPlatformsSaved] = useState(false);
+
   // Media state. The main image rides in the version metadata (its asset
   // reference is what a publisher needs); body media is inserted as single
   // [media-...] marker lines in the body text itself.
@@ -327,6 +335,7 @@ export function DraftEditor({
       setChannels(
         Object.entries(version?.channelCopy ?? {}).map(([name, copy]) => ({ name, copy })),
       );
+      setTargetPlatforms(item.targetPlatforms ?? []);
       const metadata = version?.metadata ?? {};
       setLoadedMetadata(metadata);
       const rawMain = metadata.mainImage;
@@ -511,6 +520,33 @@ export function DraftEditor({
     }
     setScheduleInput("");
     await handleSanity("publish", iso);
+  }
+
+  function togglePlatform(platform: string) {
+    setTargetPlatforms((prev) =>
+      prev.includes(platform) ? prev.filter((p) => p !== platform) : [...prev, platform],
+    );
+    setPlatformsSaved(false);
+  }
+
+  async function handleSavePlatforms() {
+    setPlatformsError(null);
+    setPlatformsSaved(false);
+    setPlatformsSaving(true);
+    const result = await updateContentItemPlatforms(
+      apiBaseUrl,
+      workspaceId,
+      itemId,
+      targetPlatforms,
+      [],
+    );
+    setPlatformsSaving(false);
+    if (result.kind === "saved") {
+      setPlatformsSaved(true);
+      setTimeout(() => setPlatformsSaved(false), 3000);
+    } else {
+      setPlatformsError(result.message);
+    }
   }
 
   async function handleRetryJob(jobId: string) {
@@ -1355,6 +1391,70 @@ export function DraftEditor({
                 A planning hint for the calendar and scheduler, not a commitment to publish.
               </p>
             </div>
+
+            {/* Target platforms — only shown for social posts */}
+            {item.kind === "social_post" && (
+              <div className="rounded-lg border border-purple-100 bg-purple-50/40 p-4">
+                <span className={labelClasses}>Target platforms</span>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Select the social channels this post is intended for. Saved separately from draft
+                  content.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {SUPPORTED_PLATFORMS.map((platform) => {
+                    const selected = targetPlatforms.includes(platform);
+                    return (
+                      <button
+                        key={platform}
+                        type="button"
+                        onClick={() => togglePlatform(platform)}
+                        aria-pressed={selected}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+                          selected
+                            ? "border-purple-400 bg-purple-100 text-purple-900"
+                            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span>
+                          {platform === "instagram"
+                            ? "📸"
+                            : platform === "facebook"
+                            ? "📘"
+                            : platform === "linkedin"
+                            ? "💼"
+                            : platform === "twitter"
+                            ? "🐦"
+                            : platform === "tiktok"
+                            ? "🎵"
+                            : platform === "youtube"
+                            ? "▶️"
+                            : platform === "pinterest"
+                            ? "📌"
+                            : "🧵"}
+                        </span>
+                        {platform.charAt(0).toUpperCase() + platform.slice(1)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={platformsSaving}
+                    onClick={() => void handleSavePlatforms()}
+                    className="rounded-md bg-purple-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {platformsSaving ? "Saving…" : "Save platforms"}
+                  </button>
+                  {platformsSaved && (
+                    <span className="text-xs font-medium text-emerald-700">✓ Saved</span>
+                  )}
+                  {platformsError && (
+                    <span className="text-xs text-red-700">{platformsError}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div>
               <label htmlFor="draft-excerpt" className={labelClasses}>

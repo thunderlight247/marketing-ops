@@ -37,6 +37,8 @@ type Deps struct {
 	Integrations         *integration.Registry
 	CredentialKey        []byte
 	CredentialKeyVersion int
+	// PublicAPIURL is the externally reachable API base for unsubscribe links.
+	PublicAPIURL string
 
 	// APIKey is the operator's Bearer token. When non-empty every request
 	// except /health and /ready must supply it. Empty means development mode
@@ -114,6 +116,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content", createWorkspaceContentHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}", getWorkspaceContentItemHandler(d.Workspaces))
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}", updateWorkspaceContentItemHandler(d.Workspaces))
+	mux.HandleFunc("PATCH /api/v1/workspaces/{id}/content/{itemId}/platforms", updateContentItemPlatformsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/history", getWorkspaceContentHistoryHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/content/{itemId}/jobs", listContentJobsHandler(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/content/{itemId}/jobs/{jobId}/cancel", cancelContentJobHandler(d.Workspaces))
@@ -144,6 +147,9 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-connections", manageLeadIntake(d.Workspaces))
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-connections", manageLeadIntake(d.Workspaces))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/lead-connections/{connectionId}", manageLeadIntake(d.Workspaces))
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/newsletter/subscribers", newsletterSubscribersHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/newsletter/subscribers", newsletterSubscribersHandler(d.Workspaces))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/newsletter/subscribers", newsletterSubscribersHandler(d.Workspaces))
 	intakeLimiter := NewRateLimiter(60, time.Minute)
 	mux.Handle("POST /api/v1/workspaces/{id}/lead-connections/{connectionId}/submissions", intakeLimiter.Middleware(receiveLeadIntake(d.Workspaces)))
 	mux.Handle("POST /api/v1/workspaces/{id}/lead-connections/{connectionId}/verify", intakeLimiter.Middleware(verifyLeadIntake(d.Workspaces)))
@@ -159,6 +165,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/delivery-attention/acknowledge", acknowledgeDeliveryAttentionHandler(d.Workspaces))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/email-settings/webhook", putEmailWebhookSecretHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/email-settings/webhook", deleteEmailWebhookSecretHandler(d.Workspaces))
+	// Email drip sequences
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/email-sequences", listEmailSequencesHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/email-sequences", createEmailSequenceHandler(d.Workspaces))
+	mux.HandleFunc("PUT /api/v1/workspaces/{id}/email-sequences/{seqId}", updateEmailSequenceHandler(d.Workspaces))
+	mux.HandleFunc("DELETE /api/v1/workspaces/{id}/email-sequences/{seqId}", deleteEmailSequenceHandler(d.Workspaces))
 	// Provider delivery callbacks. This route bypasses operator auth (the
 	// provider has no operator key) and verifies the provider's signature with
 	// the workspace's own secret instead; see isEmailWebhookRequest.
@@ -166,12 +177,14 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/workspaces/{id}/email-settings/test",
 		intakeLimiter.Middleware(http.HandlerFunc(testEmailSettingsHandler(d.Workspaces, d.CredentialKey, d.EmailAPIBase, d.HTTPClient))))
 	mux.Handle("POST /api/v1/workspaces/{id}/leads/{leadId}/reply-send",
-		intakeLimiter.Middleware(http.HandlerFunc(sendLeadReplyHandler(d.Workspaces))))
+		intakeLimiter.Middleware(http.HandlerFunc(sendLeadReplyHandler(d.Workspaces, d.CredentialKey, d.PublicAPIURL))))
 	// Reporting (Milestone 12, first increment); workspace-scoped.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/reports", getWorkspaceReportHandler(d.Workspaces))
 	// One aggregate for the dashboard, computed in SQL instead of downloading
 	// every lead row and counting in the browser.
 	mux.HandleFunc("GET /api/v1/analytics/summary", analyticsSummaryHandler(d.Analytics))
+	mux.HandleFunc("GET /api/v1/analytics/breakdown", analyticsBreakdownHandler(d.Analytics))
+	mux.HandleFunc("GET /api/v1/email/unsubscribe", unsubscribeHandler(unsubscribeStore(d.Workspaces), d.CredentialKey))
 	// Lead Generation & Outreach Engine; per-workspace, isolated by workspace_id.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/config", getLeadEngineConfigHandler(d.Workspaces, d.CredentialKey))
 	mux.HandleFunc("PUT /api/v1/workspaces/{id}/lead-engine/config", putLeadEngineConfigHandler(d.Workspaces, d.CredentialKey, d.CredentialKeyVersion))
@@ -186,6 +199,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/lead-engine/whatsapp/sessions", listWhatsAppSessionsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/lead-engine/progress", listLeadEngineProgressHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads", listLeadEngineLeadsHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/lead-engine/import", importLeadEngineLeadsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/leads/{leadId}/logs", listLeadOutreachLogsHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/outreach", listDailyOutreachHandler(d.Workspaces))
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/lead-engine/blacklist", listBlacklistHandler(d.Workspaces))

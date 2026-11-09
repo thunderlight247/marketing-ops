@@ -1,4 +1,5 @@
 import type { Lead, Campaign } from "@/lib/campaigns";
+import type { LeadEngineLead } from "@/lib/leadEngine";
 
 /**
  * Escapes a single CSV value according to RFC 4180.
@@ -10,6 +11,59 @@ function escapeCsv(value: unknown): string {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return `"${str}"`;
+}
+
+/**
+ * Exports an array of Lead Engine leads to a downloadable CSV file.
+ */
+export function exportLeadEngineLeadsToCsv(leads: LeadEngineLead[], workspaceSlug = "workspace") {
+  const headers = [
+    "ID",
+    "Business Name",
+    "Phone",
+    "Category",
+    "City",
+    "Address",
+    "Rating",
+    "Review Count",
+    "Website",
+    "Status",
+    "Pitch",
+    "Place ID",
+    "Created At",
+  ];
+
+  const rows = leads.map((lead) => [
+    lead.id,
+    lead.name,
+    lead.phone,
+    lead.category,
+    lead.city,
+    lead.address,
+    lead.rating ?? "",
+    lead.reviewCount,
+    lead.websiteUrl,
+    lead.status,
+    lead.pitch,
+    lead.placeId ?? "",
+    lead.createdAt,
+  ]);
+
+  const csvContent = [
+    headers.map(escapeCsv).join(","),
+    ...rows.map((row) => row.map(escapeCsv).join(",")),
+  ].join("\r\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const dateStr = new Date().toISOString().slice(0, 10);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `${workspaceSlug}-lead-engine-${dateStr}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 /**
@@ -174,4 +228,73 @@ function parseCsvLines(text: string): string[][] {
   }
 
   return rows;
+}
+
+export interface ParsedLeadEngineCsvItem {
+  name: string;
+  phone: string;
+  category?: string;
+  city?: string;
+  address?: string;
+  websiteUrl?: string;
+}
+
+/**
+ * Parses CSV specifically for Lead Engine outreach import.
+ * Detects Name, Phone, Category, City, Address, and Website columns.
+ */
+export function parseLeadEngineCsv(text: string): ParsedLeadEngineCsvItem[] {
+  const lines = parseCsvLines(text);
+  if (lines.length < 2) return [];
+
+  const rawHeaders = lines[0].map((h) => h.toLowerCase().trim().replace(/[\s_-]+/g, ""));
+  const headerIdx: Record<string, number> = {};
+
+  rawHeaders.forEach((h, idx) => {
+    if (["name", "businessname", "business", "company", "companyname", "contactname"].includes(h)) {
+      headerIdx.name = idx;
+    }
+    if (["phone", "phonenumber", "mobile", "whatsapp", "telephone", "contactphone"].includes(h)) {
+      headerIdx.phone = idx;
+    }
+    if (["category", "industry", "type", "sector"].includes(h)) {
+      headerIdx.category = idx;
+    }
+    if (["city", "location", "town", "region"].includes(h)) {
+      headerIdx.city = idx;
+    }
+    if (["address", "street", "streetaddress"].includes(h)) {
+      headerIdx.address = idx;
+    }
+    if (["website", "websiteurl", "url", "link", "web"].includes(h)) {
+      headerIdx.website = idx;
+    }
+  });
+
+  const parsed: ParsedLeadEngineCsvItem[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    if (row.length === 0 || (row.length === 1 && !row[0].trim())) continue;
+
+    const phone = headerIdx.phone !== undefined ? row[headerIdx.phone]?.trim() : "";
+    if (!phone) continue; // Phone is mandatory for WhatsApp outreach
+
+    const name = headerIdx.name !== undefined ? row[headerIdx.name]?.trim() : "Prospective Business";
+    const category = headerIdx.category !== undefined ? row[headerIdx.category]?.trim() : "";
+    const city = headerIdx.city !== undefined ? row[headerIdx.city]?.trim() : "";
+    const address = headerIdx.address !== undefined ? row[headerIdx.address]?.trim() : "";
+    const websiteUrl = headerIdx.website !== undefined ? row[headerIdx.website]?.trim() : "";
+
+    parsed.push({
+      name: name || "Prospective Business",
+      phone,
+      category: category || undefined,
+      city: city || undefined,
+      address: address || undefined,
+      websiteUrl: websiteUrl || undefined,
+    });
+  }
+
+  return parsed;
 }

@@ -3,10 +3,46 @@
 import { useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/config";
 import {
+  fetchAnalyticsBreakdown,
   fetchAnalyticsSummary,
+  type AnalyticsBreakdown,
   type AnalyticsSummary,
   type WorkspaceAnalytics,
 } from "@/lib/analytics";
+
+// The breakdown defaults to the last 30 days, matching the API default.
+function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function defaultRange(): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to.getTime() - 29 * 24 * 60 * 60 * 1000);
+  return { from: isoDay(from), to: isoDay(to) };
+}
+
+function UTMTable({ title, counts }: { title: string; counts: Record<string, number> }) {
+  const rows = Object.entries(counts).sort(([, a], [, b]) => b - a);
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <SectionHeader title={title} />
+      {rows.length === 0 ? (
+        <p className="px-5 py-4 text-sm text-slate-500">No leads in this range.</p>
+      ) : (
+        <table className="min-w-full text-sm">
+          <tbody>
+            {rows.map(([value, n]) => (
+              <tr key={value} className="border-b border-slate-100 last:border-0">
+                <td className="px-5 py-2 text-slate-700 break-all">{value}</td>
+                <td className="px-5 py-2 text-right tabular-nums font-semibold text-slate-800">{n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 // ─── Shared mini-components ───────────────────────────────────────────────────
 
@@ -124,6 +160,10 @@ export function WorkspaceAnalytics({ workspaceId }: Readonly<{ workspaceId: stri
   const [error, setError] = useState<string | null>(null);
   const [loadedAt, setLoadedAt] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [range, setRange] = useState(defaultRange);
+  const [breakdown, setBreakdown] = useState<AnalyticsBreakdown | null>(null);
+  const [breakdownError, setBreakdownError] = useState<string | null>(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,6 +184,30 @@ export function WorkspaceAnalytics({ workspaceId }: Readonly<{ workspaceId: stri
       cancelled = true;
     };
   }, [apiBaseUrl, reloadKey, workspaceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setBreakdownLoading(true);
+      setBreakdownError(null);
+      const state = await fetchAnalyticsBreakdown(apiBaseUrl, {
+        from: range.from,
+        to: range.to,
+        workspaceId: workspaceId ?? "",
+      });
+      if (cancelled) return;
+      if (state.kind === "loaded") {
+        setBreakdown(state.breakdown);
+      } else if (state.kind === "unavailable") {
+        setBreakdown(null);
+        setBreakdownError(state.message);
+      }
+      setBreakdownLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, range, workspaceId]);
 
   const totals = summary?.totals;
   const workspaces = summary?.byWorkspace ?? [];
@@ -208,7 +272,16 @@ export function WorkspaceAnalytics({ workspaceId }: Readonly<{ workspaceId: stri
               sub={`${totals.crmWon} won`}
               color="text-indigo-700"
             />
-            <StatCard label="Campaigns" value={totals.campaigns} color="text-slate-700" />
+            <StatCard
+              label="Win Rate"
+              value={
+                totals.crmLeads > 0
+                  ? `${Math.round((totals.crmWon / totals.crmLeads) * 100)}%`
+                  : "—"
+              }
+              sub={`${totals.campaigns} campaigns`}
+              color="text-emerald-700"
+            />
             <StatCard
               label="Engine Leads"
               value={totals.engineLeads}
@@ -219,7 +292,7 @@ export function WorkspaceAnalytics({ workspaceId }: Readonly<{ workspaceId: stri
               label="Emails Sent"
               value={totals.emailsSent}
               sub={`${totals.emailsDelivered} delivered · ${totals.emailsTotal} logged`}
-              color="text-emerald-700"
+              color="text-sky-700"
             />
           </div>
 
@@ -267,6 +340,77 @@ export function WorkspaceAnalytics({ workspaceId }: Readonly<{ workspaceId: stri
                 )}
               </div>
             </div>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="grid gap-1 text-xs font-medium text-slate-600">
+                From
+                <input
+                  type="date"
+                  value={range.from}
+                  max={range.to}
+                  onChange={(e) => e.target.value && setRange((r) => ({ ...r, from: e.target.value }))}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-slate-600">
+                To
+                <input
+                  type="date"
+                  value={range.to}
+                  min={range.from}
+                  onChange={(e) => e.target.value && setRange((r) => ({ ...r, to: e.target.value }))}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
+                />
+              </label>
+            </div>
+
+            {breakdownError && (
+              <div role="alert" className="rounded-xl bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-800">
+                {breakdownError}
+              </div>
+            )}
+
+            {breakdownLoading && <p className="text-sm text-slate-500">Loading trend…</p>}
+
+            {!breakdownLoading && breakdown && (
+              <>
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <SectionHeader title="Daily New Leads" />
+                  {breakdown.trend.length === 0 ? (
+                    <p className="px-5 py-4 text-sm text-slate-500">No new leads in this range.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                            <th className="px-5 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Day</th>
+                            <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">CRM</th>
+                            <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 text-right">Engine</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {breakdown.trend.map((point) => (
+                            <tr key={point.day} className="border-b border-slate-100 last:border-0">
+                              <td className="px-5 py-2 text-slate-700">{point.day}</td>
+                              <td className="px-4 py-2 text-right tabular-nums">{point.crm}</td>
+                              <td className="px-4 py-2 text-right tabular-nums">{point.engine}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <UTMTable title="UTM Source" counts={breakdown.utm.source} />
+                  <UTMTable title="UTM Medium" counts={breakdown.utm.medium} />
+                  <UTMTable title="UTM Campaign" counts={breakdown.utm.campaign} />
+                </div>
+              </>
+            )}
           </div>
 
           {workspaces.length > 0 && (

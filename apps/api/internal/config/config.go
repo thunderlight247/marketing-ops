@@ -71,6 +71,11 @@ type Config struct {
 	// production, so a real deployment always talks to the real provider.
 	EmailBase string
 
+	// PublicAPIURL is this API's externally reachable base URL (for example
+	// https://api.example.com). Lead email footers link here for unsubscribe;
+	// when empty the footer is left out.
+	PublicAPIURL string
+
 	// Email worker: cadence for due messages, bounded retries, exponential
 	// backoff between them. Each workspace brings its own provider key, so
 	// there is no platform-wide email credential here.
@@ -319,6 +324,15 @@ func Load(getenv func(string) string) (Config, error) {
 		// email provider.
 		cfg.SanityOpsBase = strings.TrimRight(strings.TrimSpace(getenv("SANITY_OPS_BASE")), "/")
 		cfg.EmailBase = strings.TrimRight(strings.TrimSpace(getenv("EMAIL_API_BASE")), "/")
+	}
+
+	if raw := strings.TrimSpace(getenv("APP_PUBLIC_API_URL")); raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			add("APP_PUBLIC_API_URL must be an absolute http or https URL")
+		} else {
+			cfg.PublicAPIURL = strings.TrimRight(raw, "/")
+		}
 	}
 
 	if err := errors.Join(problems...); err != nil {

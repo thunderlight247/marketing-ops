@@ -16,11 +16,13 @@ type ContentItem struct {
 	Title            string
 	Slug             *string
 	PlannedPublishAt *time.Time
+	TargetPlatforms  []string
+	MediaURLs        []string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
 
-const contentItemColumns = `id, workspace_id, kind, status, title, slug, planned_publish_at, created_at, updated_at`
+const contentItemColumns = `id, workspace_id, kind, status, title, slug, planned_publish_at, target_platforms, media_urls, created_at, updated_at`
 
 // InsertContentItem creates a content item inside one workspace. The item is
 // always a draft; only the approval workflow can change its status.
@@ -35,6 +37,28 @@ func (s *Store) InsertContentItem(ctx context.Context, item ContentItem) (Conten
 	if err == pgx.ErrNoRows {
 		return ContentItem{}, ErrSlugTaken
 	}
+	return out, mapNotFound(err)
+}
+
+// SetContentItemPlatforms updates target_platforms and media_urls on a draft
+// content item. Only drafts (and approved/rejected) are writable.
+func (s *Store) SetContentItemPlatforms(ctx context.Context, workspaceID, itemID string, platforms, mediaURLs []string) (ContentItem, error) {
+	if platforms == nil {
+		platforms = []string{}
+	}
+	if mediaURLs == nil {
+		mediaURLs = []string{}
+	}
+	row := s.pool.QueryRow(ctx,
+		`UPDATE content_items
+		 SET target_platforms = $3,
+		     media_urls       = $4,
+		     updated_at       = now()
+		 WHERE id = $1 AND workspace_id = $2
+		   AND status IN ('draft', 'approved', 'rejected')
+		 RETURNING `+contentItemColumns,
+		itemID, workspaceID, platforms, mediaURLs)
+	out, err := scanContentItem(row)
 	return out, mapNotFound(err)
 }
 
@@ -70,7 +94,7 @@ func (s *Store) GetContentItemInWorkspace(ctx context.Context, workspaceID, item
 func scanContentItem(row pgx.Row) (ContentItem, error) {
 	var c ContentItem
 	if err := row.Scan(&c.ID, &c.WorkspaceID, &c.Kind, &c.Status, &c.Title,
-		&c.Slug, &c.PlannedPublishAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.Slug, &c.PlannedPublishAt, &c.TargetPlatforms, &c.MediaURLs, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return ContentItem{}, err
 	}
 	return c, nil

@@ -26,6 +26,38 @@ func (f *fakeAnalyticsStore) AnalyticsSummary(_ context.Context, workspaceID str
 	return f.summary, f.err
 }
 
+func (f *fakeAnalyticsStore) AnalyticsBreakdown(_ context.Context, workspaceID string, from, to time.Time) (store.AnalyticsBreakdown, error) {
+	f.calls++
+	f.lastWorkspace = workspaceID
+	return store.AnalyticsBreakdown{From: from, To: to}, f.err
+}
+
+func TestAnalyticsBreakdownRejectsBadRange(t *testing.T) {
+	h := NewRouter(Deps{Logger: testLogger, Analytics: &fakeAnalyticsStore{}})
+	for _, path := range []string{
+		"/api/v1/analytics/breakdown?from=2026-13-01",
+		"/api/v1/analytics/breakdown?from=2026-06-10&to=2026-06-01",
+		"/api/v1/analytics/breakdown?from=2020-01-01&to=2026-06-01",
+	} {
+		rec := doJSON(t, h, "GET", path, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", path, rec.Code)
+		}
+	}
+}
+
+func TestAnalyticsBreakdownPassesRange(t *testing.T) {
+	fake := &fakeAnalyticsStore{}
+	h := NewRouter(Deps{Logger: testLogger, Analytics: fake})
+	rec := doJSON(t, h, "GET", "/api/v1/analytics/breakdown?workspaceId=w-2&from=2026-06-01&to=2026-06-07", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if fake.lastWorkspace != "w-2" {
+		t.Errorf("workspace = %q, want w-2", fake.lastWorkspace)
+	}
+}
+
 func TestAnalyticsSummaryEndpoint(t *testing.T) {
 	fake := &fakeAnalyticsStore{summary: store.AnalyticsSummary{
 		GeneratedAt: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),

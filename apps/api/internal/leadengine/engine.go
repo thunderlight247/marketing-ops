@@ -37,6 +37,7 @@ type LeadEngineStore interface {
 	CountOutboundSentToday(ctx context.Context, workspaceID string) (int, error)
 	AddToBlacklist(ctx context.Context, workspaceID, phone, reason string) error
 	ResetStaleProcessingLeads(ctx context.Context, workspaceID string) (int64, error)
+	AdvanceLeadCadence(ctx context.Context, workspaceID, leadID string, step int, nextFollowUp *time.Time) error
 }
 
 // dispatcherClient bounds every dispatcher HTTP call. Without a timeout a
@@ -132,19 +133,21 @@ func RunDiscovery(ctx context.Context, p DiscoveryParams, s LeadEngineStore) (in
 
 // DispatchParams holds everything RunDispatch needs.
 type DispatchParams struct {
-	WorkspaceID      string
-	AIKey            string
-	AIModel          string
-	SenderName       string
-	PitchTemplate    string // workspace-authored message; when set, sent verbatim per lead
-	BusinessOffering string // from workspace config; drives pitch content
-	TargetAudience   string // from workspace config; drives pitch content
-	PortfolioURL     string
-	MinDelayMs       int
-	MaxDelayMs       int
-	DailyLimit       int
-	DispatchURL      string // WhatsApp dispatcher base URL e.g. http://localhost:8083
-	DispatcherSecret string // X-Internal-Secret header value; empty means no auth
+	WorkspaceID        string
+	AIKey              string
+	AIModel            string
+	SenderName         string
+	PitchTemplate      string // workspace-authored message; when set, sent verbatim per lead
+	BusinessOffering   string // from workspace config; drives pitch content
+	TargetAudience     string // from workspace config; drives pitch content
+	PortfolioURL       string
+	MinDelayMs         int
+	MaxDelayMs         int
+	DailyLimit         int
+	DispatchURL        string // WhatsApp dispatcher base URL e.g. http://localhost:8083
+	DispatcherSecret   string // X-Internal-Secret header value; empty means no auth
+	EnableAutoFollowup bool
+	Followup1DelayDays int
 }
 
 // RunDispatch generates pitches for discovered leads and sends them via WhatsApp.
@@ -494,6 +497,12 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 		}
 		resp.Body.Close()
 		_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "sent")
+		var nextFollowUp *time.Time
+		if p.EnableAutoFollowup && p.Followup1DelayDays > 0 {
+			t := time.Now().Add(time.Duration(p.Followup1DelayDays) * 24 * time.Hour)
+			nextFollowUp = &t
+		}
+		_ = s.AdvanceLeadCadence(ctx, p.WorkspaceID, lead.ID, 1, nextFollowUp)
 		_, _ = s.SaveOutreachLog(ctx, store.LeadOutreachLog{
 			WorkspaceID: p.WorkspaceID, LeadID: lead.ID, Direction: "outbound",
 			Body: pitch, Status: "sent",
@@ -704,7 +713,27 @@ func applyPitchTemplate(tpl string, lead store.Lead, senderName, portfolioURL st
 	out := strings.TrimSpace(replacer.Replace(tpl))
 	// Remove any leftover unknown placeholders.
 	out = strings.TrimSpace(unknownPlaceholder.ReplaceAllString(out, ""))
+	// Evaluate Spintax for anti-ban text variation across sends.
+	out = strings.TrimSpace(ParseSpintax(out))
 	return out
+}
+
+var spintaxRegex = regexp.MustCompile(`\{([^{}]+)\}`)
+
+// ParseSpintax resolves {choice1|choice2|choice3} syntax recursively by picking a random choice.
+// It supports nested spintax like {{Hi|Hello} there|Hey} and multiple variations.
+func ParseSpintax(s string) string {
+	for spintaxRegex.MatchString(s) {
+		s = spintaxRegex.ReplaceAllStringFunc(s, func(m string) string {
+			content := m[1 : len(m)-1]
+			parts := strings.Split(content, "|")
+			if len(parts) == 0 {
+				return ""
+			}
+			return parts[rand.Intn(len(parts))]
+		})
+	}
+	return s
 }
 
 var unknownPlaceholder = regexp.MustCompile(`(?i)\{\{\s*[a-z0-9_]+\s*\}\}`)

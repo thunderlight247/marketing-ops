@@ -67,6 +67,11 @@ type WorkspaceLeadConfig struct {
 	WhatsAppStatus               string // disconnected | qr_ready | connected
 	WhatsAppPhone                string
 	PitchTemplate                string // optional authored message; empty = AI-generated pitch
+	EnableAutoFollowup           bool
+	Followup1Template            string
+	Followup1DelayDays           int
+	Followup2Template            string
+	Followup2DelayDays           int
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
 }
@@ -118,6 +123,8 @@ const leadConfigColumns = `workspace_id, enabled,
 	target_categories, target_cities,
 	daily_limit, min_delay_ms, max_delay_ms,
 	whatsapp_status, whatsapp_phone, pitch_template,
+	enable_auto_followup, followup_1_template, followup_1_delay_days,
+	followup_2_template, followup_2_delay_days,
 	created_at, updated_at`
 
 func scanLeadConfig(row pgx.Row) (WorkspaceLeadConfig, error) {
@@ -130,6 +137,8 @@ func scanLeadConfig(row pgx.Row) (WorkspaceLeadConfig, error) {
 		&c.TargetCategories, &c.TargetCities,
 		&c.DailyLimit, &c.MinDelayMs, &c.MaxDelayMs,
 		&c.WhatsAppStatus, &c.WhatsAppPhone, &c.PitchTemplate,
+		&c.EnableAutoFollowup, &c.Followup1Template, &c.Followup1DelayDays,
+		&c.Followup2Template, &c.Followup2DelayDays,
 		&c.CreatedAt, &c.UpdatedAt,
 	)
 	return c, err
@@ -164,6 +173,12 @@ func (s *Store) UpsertLeadConfig(ctx context.Context, c WorkspaceLeadConfig) (Wo
 	if c.MaxDelayMs <= 0 {
 		c.MaxDelayMs = 300000
 	}
+	if c.Followup1DelayDays <= 0 {
+		c.Followup1DelayDays = 3
+	}
+	if c.Followup2DelayDays <= 0 {
+		c.Followup2DelayDays = 4
+	}
 	return scanLeadConfig(s.pool.QueryRow(ctx,
 		`INSERT INTO workspace_lead_configs
 			(workspace_id, enabled,
@@ -172,8 +187,10 @@ func (s *Store) UpsertLeadConfig(ctx context.Context, c WorkspaceLeadConfig) (Wo
 			 sender_name, business_offering, target_audience, portfolio_url,
 			 target_categories, target_cities,
 			 daily_limit, min_delay_ms, max_delay_ms,
-			 whatsapp_status, whatsapp_phone, pitch_template)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			 whatsapp_status, whatsapp_phone, pitch_template,
+			 enable_auto_followup, followup_1_template, followup_1_delay_days,
+			 followup_2_template, followup_2_delay_days)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		 ON CONFLICT (workspace_id) DO UPDATE SET
 			enabled                              = EXCLUDED.enabled,
 			google_places_api_key_ciphertext     = CASE WHEN EXCLUDED.google_places_api_key_ciphertext IS NOT NULL THEN EXCLUDED.google_places_api_key_ciphertext ELSE workspace_lead_configs.google_places_api_key_ciphertext END,
@@ -191,6 +208,11 @@ func (s *Store) UpsertLeadConfig(ctx context.Context, c WorkspaceLeadConfig) (Wo
 			min_delay_ms                         = EXCLUDED.min_delay_ms,
 			max_delay_ms                         = EXCLUDED.max_delay_ms,
 			pitch_template                       = EXCLUDED.pitch_template,
+			enable_auto_followup                 = EXCLUDED.enable_auto_followup,
+			followup_1_template                  = EXCLUDED.followup_1_template,
+			followup_1_delay_days                = EXCLUDED.followup_1_delay_days,
+			followup_2_template                  = EXCLUDED.followup_2_template,
+			followup_2_delay_days                = EXCLUDED.followup_2_delay_days,
 			updated_at                           = now()
 		 RETURNING `+leadConfigColumns,
 		c.WorkspaceID, c.Enabled,
@@ -199,7 +221,9 @@ func (s *Store) UpsertLeadConfig(ctx context.Context, c WorkspaceLeadConfig) (Wo
 		c.SenderName, c.BusinessOffering, c.TargetAudience, c.PortfolioURL,
 		c.TargetCategories, c.TargetCities,
 		c.DailyLimit, c.MinDelayMs, c.MaxDelayMs,
-		c.WhatsAppStatus, c.WhatsAppPhone, c.PitchTemplate))
+		c.WhatsAppStatus, c.WhatsAppPhone, c.PitchTemplate,
+		c.EnableAutoFollowup, c.Followup1Template, c.Followup1DelayDays,
+		c.Followup2Template, c.Followup2DelayDays))
 }
 
 // SetWhatsAppStatus updates only the WhatsApp session status and phone for a workspace.
@@ -591,10 +615,27 @@ func (s *Store) UpdateLeadPitch(ctx context.Context, workspaceID, leadID, pitch 
 
 // UpdateLeadStatus transitions a lead to any valid lead-engine status.
 func (s *Store) UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error {
+	var err error
+	if status == "replied" || status == "won" || status == "lost" || status == "blacklisted" {
+		_, err = s.pool.Exec(ctx,
+			`UPDATE leads SET status = $1, next_followup_at = NULL, updated_at = now()
+			 WHERE id = $2 AND workspace_id = $3`,
+			status, leadID, workspaceID)
+	} else {
+		_, err = s.pool.Exec(ctx,
+			`UPDATE leads SET status = $1, updated_at = now()
+			 WHERE id = $2 AND workspace_id = $3`,
+			status, leadID, workspaceID)
+	}
+	return err
+}
+
+// AdvanceLeadCadence updates the sequence step and sets the next follow-up timestamp.
+func (s *Store) AdvanceLeadCadence(ctx context.Context, workspaceID, leadID string, step int, nextFollowUp *time.Time) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE leads SET status = $1, updated_at = now()
-		 WHERE id = $2 AND workspace_id = $3`,
-		status, leadID, workspaceID)
+		`UPDATE leads SET sequence_step = $1, next_followup_at = $2, updated_at = now()
+		 WHERE id = $3 AND workspace_id = $4`,
+		step, nextFollowUp, leadID, workspaceID)
 	return err
 }
 

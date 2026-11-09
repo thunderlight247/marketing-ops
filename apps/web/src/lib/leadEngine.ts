@@ -21,6 +21,11 @@ export interface LeadEngineConfig {
     "disconnected" | "qr_ready" | "connected" | "initializing" | "authenticated" | string;
   whatsappPhone: string;
   pitchTemplate: string;
+  enableAutoFollowup?: boolean;
+  followup1Template?: string;
+  followup1DelayDays?: number;
+  followup2Template?: string;
+  followup2DelayDays?: number;
 }
 
 export interface LeadEngineConfigInput {
@@ -38,6 +43,11 @@ export interface LeadEngineConfigInput {
   minDelayMs?: number;
   maxDelayMs?: number;
   pitchTemplate?: string;
+  enableAutoFollowup?: boolean;
+  followup1Template?: string;
+  followup1DelayDays?: number;
+  followup2Template?: string;
+  followup2DelayDays?: number;
 }
 
 export interface LeadEngineLead {
@@ -53,6 +63,8 @@ export interface LeadEngineLead {
   pitch: string;
   status: string;
   placeId: string | null;
+  sequenceStep?: number;
+  nextFollowupAt?: string | null;
   createdAt: string;
 }
 
@@ -331,5 +343,29 @@ export function addToBlacklist(
   return jsonPost(base, `/api/v1/workspaces/${workspaceId}/lead-engine/blacklist`, {
     phone,
     reason,
+  });
+}
+
+export interface ImportLeadsResult {
+  total: number;
+  imported: number;
+  duplicates: number;
+  failed: number;
+}
+
+export function importLeadEngineLeads(
+  base: string,
+  workspaceId: string,
+  leads: Array<{
+    name: string;
+    phone: string;
+    category?: string;
+    city?: string;
+    address?: string;
+    websiteUrl?: string;
+  }>,
+): Promise<ImportLeadsResult> {
+  return jsonPost<ImportLeadsResult>(base, `/api/v1/workspaces/${workspaceId}/lead-engine/import`, {
+    leads,
   });
 }

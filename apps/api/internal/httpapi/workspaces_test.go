@@ -1122,6 +1122,9 @@ func (f *fakeWorkspaceStore) UpdateLeadPitch(_ context.Context, workspaceID, lea
 func (f *fakeWorkspaceStore) UpdateLeadStatus(_ context.Context, workspaceID, leadID, status string) error {
 	return nil
 }
+func (f *fakeWorkspaceStore) AdvanceLeadCadence(_ context.Context, _ string, _ string, _ int, _ *time.Time) error {
+	return nil
+}
 func (f *fakeWorkspaceStore) IsBlacklisted(_ context.Context, workspaceID, phone string) (bool, error) {
 	return false, nil
 }
@@ -1155,4 +1158,19 @@ func (f *fakeWorkspaceStore) ListEnabledLeadConfigs(_ context.Context) ([]store.
 }
 func (f *fakeWorkspaceStore) FindLeadByPhone(_ context.Context, workspaceID, phone string) (store.Lead, error) {
 	return store.Lead{}, store.ErrNotFound
+}
+func (f *fakeWorkspaceStore) SetContentItemPlatforms(_ context.Context, _, _ string, _, _ []string) (store.ContentItem, error) {
+	return store.ContentItem{}, nil
+}
+func (f *fakeWorkspaceStore) ListEmailSequences(_ context.Context, _ string) ([]store.EmailSequence, error) {
+	return []store.EmailSequence{}, nil
+}
+func (f *fakeWorkspaceStore) CreateEmailSequence(_ context.Context, in store.EmailSequence) (store.EmailSequence, error) {
+	return in, nil
+}
+func (f *fakeWorkspaceStore) UpdateEmailSequence(_ context.Context, in store.EmailSequence) (store.EmailSequence, error) {
+	return in, nil
+}
+func (f *fakeWorkspaceStore) DeleteEmailSequence(_ context.Context, _, _ string) error {
+	return nil
 }
