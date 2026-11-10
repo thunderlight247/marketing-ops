@@ -74,6 +74,10 @@ type Deps struct {
 	AgentLoaders map[string]AgentSnapshotLoader
 	AgentTimeout time.Duration
 
+	// BrandScanner reads a workspace's own website for owner review; nil
+	// makes the brand-scan route answer 501.
+	BrandScanner BrandScanner
+
 	// AIRateLimit / AIRateWindow set the per-IP cap on AI/agent endpoints.
 	// Zero values use the package defaults (20 req/min).
 	AIRateLimit  int
@@ -180,6 +184,9 @@ func NewRouter(d Deps) http.Handler {
 		intakeLimiter.Middleware(http.HandlerFunc(sendLeadReplyHandler(d.Workspaces, d.CredentialKey, d.PublicAPIURL))))
 	// Reporting (Milestone 12, first increment); workspace-scoped.
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/reports", getWorkspaceReportHandler(d.Workspaces))
+	// Business assessment: prioritized gaps from stored brand and report data.
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/assessment", getWorkspaceAssessmentHandler(d.Workspaces))
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/brand-scan", postBrandScanHandler(d.Workspaces, d.BrandScanner))
 	// One aggregate for the dashboard, computed in SQL instead of downloading
 	// every lead row and counting in the browser.
 	mux.HandleFunc("GET /api/v1/analytics/summary", analyticsSummaryHandler(d.Analytics))

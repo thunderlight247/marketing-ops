@@ -26,11 +26,12 @@ type LeadEngineStore interface {
 	WasSearchedToday(ctx context.Context, workspaceID, dayKey, category, city string) (bool, error)
 	RecordDiscoverySearch(ctx context.Context, s store.LeadDiscoverySearch) error
 	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
-	SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error)
+	SaveDiscoveredLead(ctx context.Context, in store.DiscoveredLead) (store.Lead, error)
 	ListLeadEngineLeads(ctx context.Context, workspaceID string) ([]store.Lead, error)
 	UpdateLeadPitch(ctx context.Context, workspaceID, leadID, pitch string) error
 	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
 	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
+	UpdateOutreachLog(ctx context.Context, workspaceID, logID, status, errorText string) error
 	HasRecentOutboundAttempt(ctx context.Context, workspaceID, leadID string, within time.Duration) (bool, error)
 	HasRecentOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string, within time.Duration) (bool, error)
 	HasOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string) (bool, error)
@@ -58,9 +59,10 @@ type DiscoveryParams struct {
 	DailyLimit      int
 }
 
-// RunDiscovery scrapes Google Places for each category+city pair, filters,
-// checks blacklist, and persists new leads. It is safe to run in a goroutine.
-// Returns the count of newly saved leads and any non-fatal errors.
+// RunDiscovery searches each category+city pair in OpenStreetMap and Google
+// Places, filters, checks the blacklist, and persists new leads. It is safe to
+// run in a goroutine. Returns the count of newly saved leads and any non-fatal
+// errors.
 func RunDiscovery(ctx context.Context, p DiscoveryParams, s LeadEngineStore) (int, []error) {
 	dayKey := time.Now().UTC().Format("2006-01-02")
 	var errs []error
@@ -80,6 +82,31 @@ func RunDiscovery(ctx context.Context, p DiscoveryParams, s LeadEngineStore) (in
 			if total >= p.DailyLimit && p.DailyLimit > 0 {
 				break
 			}
+
+			// OpenStreetMap runs first and unconditionally: it is free and
+			// keyless, so it is gated neither by the Google daily search quota
+			// nor by whether a Places key exists. A workspace that never added
+			// billing still finds leads this way, and the shared daily limit is
+			// still respected by passing it the remaining budget.
+			remaining := 0
+			if p.DailyLimit > 0 {
+				remaining = p.DailyLimit - total
+			}
+			if n, osmErr := discoverFromOpenStreetMap(ctx, p.WorkspaceID, cat, city, remaining, s); osmErr != nil {
+				errs = append(errs, fmt.Errorf("openstreetmap %s/%s: %w", cat, city, osmErr))
+			} else {
+				total += n
+			}
+			if total >= p.DailyLimit && p.DailyLimit > 0 {
+				break
+			}
+
+			// Without a Places key every request would 401 and fill the run's
+			// error list with noise the operator cannot act on.
+			if strings.TrimSpace(p.GooglePlacesKey) == "" {
+				continue
+			}
+
 			already, err := s.WasSearchedToday(ctx, p.WorkspaceID, dayKey, cat, city)
 			if err != nil || already {
 				continue
@@ -106,9 +133,24 @@ func RunDiscovery(ctx context.Context, p DiscoveryParams, s LeadEngineStore) (in
 				if bl {
 					continue
 				}
-				_, err := s.SaveDiscoveredLead(ctx, p.WorkspaceID,
-					pl.PlaceID, pl.Name, phone, cat, city, pl.Address,
-					pl.Rating, pl.ReviewCount, pl.WebsiteURL)
+				var rating *float64
+				if pl.HasRating {
+					r := pl.Rating
+					rating = &r
+				}
+				_, err := s.SaveDiscoveredLead(ctx, store.DiscoveredLead{
+					WorkspaceID: p.WorkspaceID,
+					PlaceID:     pl.PlaceID,
+					Source:      pl.Source,
+					Name:        pl.Name,
+					Phone:       phone,
+					Category:    cat,
+					City:        city,
+					Address:     pl.Address,
+					Rating:      rating,
+					ReviewCount: pl.ReviewCount,
+					WebsiteURL:  pl.WebsiteURL,
+				})
 				if err == nil {
 					saved++
 					total++
@@ -261,6 +303,22 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 	}
 	defer mu.Unlock()
 
+	// The report explains, per lead, why this run did not send. It is replaced
+	// by every run, so the dashboard always shows the latest dispatch's reasons.
+	report := DispatchReport{
+		WorkspaceID: p.WorkspaceID,
+		StartedAt:   time.Now(),
+		Skips:       map[string]string{},
+	}
+	sentThisRun, failedThisRun, unconfirmedThisRun := 0, 0, 0
+	defer func() {
+		report.FinishedAt = time.Now()
+		report.Sent = sentThisRun
+		report.Failed = failedThisRun
+		report.Unconfirmed = unconfirmedThisRun
+		recordDispatchReport(report)
+	}()
+
 	// Self-heal: an API restart mid-send leaves leads in 'processing' forever
 	// (nothing ever moves them). Recover them so the queue cannot freeze.
 	if n, err := s.ResetStaleProcessingLeads(ctx, p.WorkspaceID); err != nil {
@@ -292,6 +350,7 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 		if sentToday >= p.DailyLimit {
 			slog.Default().Info("daily dispatch limit already reached; skipping run",
 				"workspace_id", p.WorkspaceID, "sent_today", sentToday, "daily_limit", p.DailyLimit)
+			report.Halted = fmt.Sprintf("daily limit already reached (%d of %d sent today)", sentToday, p.DailyLimit)
 			return nil
 		}
 	}
@@ -312,6 +371,7 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 	if err := ensureDispatcherConnected(ctx, p); err != nil {
 		slog.Default().Warn("dispatch aborted: WhatsApp session not usable",
 			"workspace_id", p.WorkspaceID, "reason", err)
+		report.Halted = err.Error()
 		return err
 	}
 
@@ -344,13 +404,25 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 		return nil
 	}
 
-	for _, lead := range leads {
+	limitHitAt := -1
+	for i, lead := range leads {
 		if p.DailyLimit > 0 && sent >= p.DailyLimit {
+			limitHitAt = i
 			break
 		}
 		// "failed" is retried because a failed send was never delivered —
 		// e.g. the WhatsApp session was down at the time.
 		if lead.Status != "discovered" && lead.Status != "pending" && lead.Status != "failed" {
+			switch lead.Status {
+			case "sent", "delivered", "demo_sent":
+				report.Skips[lead.ID] = "already contacted"
+			case "replied", "won":
+				report.Skips[lead.ID] = "conversation already open"
+			case "lost":
+				report.Skips[lead.ID] = "marked lost"
+			case "blacklisted":
+				report.Skips[lead.ID] = "blacklisted / opted out"
+			}
 			continue
 		}
 		phone := ""
@@ -358,14 +430,26 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 			phone = *lead.ContactPhone
 		}
 		if phone == "" {
+			report.Skips[lead.ID] = "no phone number"
 			continue
 		}
 
 		// The blacklist is per workspace and applies forever: a suppressed
 		// number must never be contacted again, even if its lead row has
 		// drifted back into a retryable status.
-		if suppressed, _ := s.IsBlacklisted(ctx, p.WorkspaceID, phone); suppressed {
+		// Both safety checks fail closed: if the store cannot tell us whether
+		// this number was already contacted or opted out, the only safe answer
+		// is to send nothing.
+		suppressed, blacklistErr := s.IsBlacklisted(ctx, p.WorkspaceID, phone)
+		if blacklistErr != nil {
+			slog.Default().Warn("could not check blacklist; skipping lead",
+				"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "phone", phone, "error", blacklistErr)
+			report.Skips[lead.ID] = "could not check the opt-out list — skipped for safety"
+			continue
+		}
+		if suppressed {
 			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "blacklisted")
+			report.Skips[lead.ID] = "blacklisted / opted out"
 			continue
 		}
 		// Permanent duplicate suppression, exactly as the legacy engine did it:
@@ -376,10 +460,19 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 		// stays retryable.
 		phoneKey := store.PhoneKey(phone)
 		if _, taken := claimedPhones[phoneKey]; taken {
+			report.Skips[lead.ID] = "same number already queued in this run"
 			continue
 		}
-		if attemptedBefore, _ := s.HasOutboundAttemptByPhone(ctx, p.WorkspaceID, phone); attemptedBefore {
+		attemptedBefore, dedupeErr := s.HasOutboundAttemptByPhone(ctx, p.WorkspaceID, phone)
+		if dedupeErr != nil {
+			slog.Default().Warn("could not verify previous outreach; skipping lead to avoid a duplicate",
+				"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "phone", phone, "error", dedupeErr)
+			report.Skips[lead.ID] = "could not check previous sends — skipped to avoid a duplicate"
+			continue
+		}
+		if attemptedBefore {
 			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "sent")
+			report.Skips[lead.ID] = "already contacted"
 			continue
 		}
 		claimedPhones[phoneKey] = struct{}{}
@@ -417,6 +510,7 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 				// Failed pitch generation must not let the loop spin freely —
 				// space failed attempts with the same anti-burst delay as sends.
 				attempted = true
+				report.Skips[lead.ID] = "pitch generation failed — will retry"
 				if paceErr := sleepBetweenAttempts(); paceErr != nil {
 					return paceErr
 				}
@@ -432,6 +526,25 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 			return paceErr
 		}
 
+		// Claim the contact BEFORE handing the message to WhatsApp. The log row
+		// is the only duplicate-suppression record, so it must never lag the
+		// send: a crash, a restart, or a failed write after the HTTP call would
+		// otherwise let the next run message the same number again. A 'sending'
+		// row with no error already counts as an attempt for
+		// HasOutboundAttemptByPhone, so an interrupted send is never retried —
+		// its outcome is unknown, and an unknown send must never be repeated.
+		attemptLog, logErr := s.SaveOutreachLog(ctx, store.LeadOutreachLog{
+			WorkspaceID: p.WorkspaceID, LeadID: lead.ID, Direction: "outbound",
+			Body: pitch, Status: "sending",
+		})
+		if logErr != nil {
+			slog.Default().Error("could not record outreach attempt; refusing to send",
+				"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "phone", phone, "error", logErr)
+			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "failed")
+			report.Skips[lead.ID] = "could not record the send attempt — not sent"
+			continue
+		}
+
 		_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "processing")
 
 		// Send via WhatsApp dispatcher.
@@ -442,7 +555,11 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 		})
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(payload))
 		if reqErr != nil {
+			// Nothing reached the dispatcher, so this attempt stays retryable.
+			_ = s.UpdateOutreachLog(ctx, p.WorkspaceID, attemptLog.ID, "failed",
+				"not_sent: could not build dispatcher request: "+reqErr.Error())
 			_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "failed")
+			report.Skips[lead.ID] = "could not build the send request — not sent"
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -470,22 +587,31 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 			// must never be repeated (the dispatcher's own rule).
 			// notOnWhatsApp is a permanent condition, not a retryable refusal: it
 			// is handled (and blacklisted) below, never re-queued.
-			if resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 &&
-				!strings.Contains(string(body), "notOnWhatsApp") {
+			notOnWhatsApp := strings.Contains(string(body), "notOnWhatsApp")
+			refused := resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 && !notOnWhatsApp
+			if refused {
 				reason = "not_sent: " + reason
+			}
+			// A provable refusal means the message never left; a dead number is
+			// also not "unknown". Everything else may have been delivered.
+			if !refused && !notOnWhatsApp {
+				unconfirmedThisRun++
 			}
 			slog.Default().Warn("WhatsApp send failed",
 				"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "phone", phone, "reason", reason)
-			_, _ = s.SaveOutreachLog(ctx, store.LeadOutreachLog{
-				WorkspaceID: p.WorkspaceID, LeadID: lead.ID, Direction: "outbound",
-				Body: pitch, Status: "failed", Error: reason,
-			})
+			failedThisRun++
+			if updateErr := s.UpdateOutreachLog(ctx, p.WorkspaceID, attemptLog.ID, "failed", reason); updateErr != nil {
+				// The row stays 'sending' with no error, so the number is still
+				// suppressed; report the lost outcome label instead of ignoring it.
+				slog.Default().Warn("could not record send outcome",
+					"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "log_id", attemptLog.ID, "error", updateErr)
+			}
 			// "not on WhatsApp" is a PERMANENT condition — the number has no
 			// WhatsApp account at all, so retrying it every run only clogs the
 			// daily queue and wastes pacing slots. Park the lead as blacklisted
 			// (a valid lead-engine status) and suppress the phone so future
 			// discovery runs never re-queue it.
-			if strings.Contains(string(body), "notOnWhatsApp") {
+			if notOnWhatsApp {
 				_ = s.UpdateLeadStatus(ctx, p.WorkspaceID, lead.ID, "blacklisted")
 				_ = s.AddToBlacklist(ctx, p.WorkspaceID, phone, "not_on_whatsapp")
 				slog.Default().Info("lead parked: number not registered on WhatsApp",
@@ -503,11 +629,32 @@ func RunDispatch(ctx context.Context, p DispatchParams, s LeadEngineStore) error
 			nextFollowUp = &t
 		}
 		_ = s.AdvanceLeadCadence(ctx, p.WorkspaceID, lead.ID, 1, nextFollowUp)
-		_, _ = s.SaveOutreachLog(ctx, store.LeadOutreachLog{
-			WorkspaceID: p.WorkspaceID, LeadID: lead.ID, Direction: "outbound",
-			Body: pitch, Status: "sent",
-		})
+		if updateErr := s.UpdateOutreachLog(ctx, p.WorkspaceID, attemptLog.ID, "sent", ""); updateErr != nil {
+			// Suppression does not depend on this update, but the activity feed
+			// would otherwise keep showing the send as in progress.
+			slog.Default().Warn("could not record successful send outcome",
+				"workspace_id", p.WorkspaceID, "lead_id", lead.ID, "log_id", attemptLog.ID, "error", updateErr)
+		}
 		sent++
+		sentThisRun++
+	}
+
+	// Leads the run never reached because the day's cap was hit would otherwise
+	// look silently stuck at "pending". Say so on each of them.
+	if limitHitAt >= 0 {
+		report.Halted = fmt.Sprintf("daily limit reached (%d sent today)", sent)
+		for _, lead := range leads[limitHitAt:] {
+			if lead.Status != "discovered" && lead.Status != "pending" && lead.Status != "failed" {
+				continue
+			}
+			if lead.ContactPhone == nil || *lead.ContactPhone == "" {
+				continue
+			}
+			if _, seen := report.Skips[lead.ID]; seen {
+				continue
+			}
+			report.Skips[lead.ID] = "daily limit reached — will send on the next run"
+		}
 	}
 	return nil
 }

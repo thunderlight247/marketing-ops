@@ -13,16 +13,25 @@ import (
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
-// DiscoveredPlace is a single raw result from the Places API before filtering.
+// DiscoveredPlace is a single raw result from a discovery source before
+// filtering.
 type DiscoveredPlace struct {
-	PlaceID     string
-	Name        string
+	PlaceID string
+	Name    string
+	// Source records where the business was found, so the lead keeps its
+	// provenance: "google_places" or "openstreetmap".
+	Source string
+	// HasRating distinguishes "rated 0" from "source has no ratings at all".
+	// OpenStreetMap has no ratings, so its leads are stored with a NULL rating
+	// instead of a zero that would read as a real score.
+	HasRating   bool
 	Rating      float64
 	ReviewCount int
 	WebsiteURL  string
 	PhoneIntl   string // international format e.g. +233 24 123 4567
 	PhoneLocal  string
 	Address     string
+	Category    string // source tag, e.g. OSM shop=electronics; empty for Places
 }
 
 // ─── filter criteria (matches gh-lead-engine/src/filter.js) ──────────────────
@@ -130,6 +139,8 @@ func ScrapeCategoryInCity(ctx context.Context, googleKey, category, city string)
 		dp := DiscoveredPlace{
 			PlaceID:     p.ID,
 			Name:        p.DisplayName.Text,
+			Source:      "google_places",
+			HasRating:   true,
 			Rating:      p.Rating,
 			ReviewCount: p.UserRatingCount,
 			WebsiteURL:  p.WebsiteURI,

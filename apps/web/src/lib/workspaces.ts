@@ -96,6 +96,20 @@ export type SaveBrandResult =
   | { kind: "rejected"; message: string }
   | { kind: "unavailable"; reason: string };
 
+/** Read-only website scan result. Scraped text is evidence to review, not a fact. */
+export type BrandScanResult = {
+  url: string;
+  title: string;
+  description: string;
+  excerpt: string;
+  truncated: boolean;
+};
+
+export type ScanBrandWebsiteResult =
+  | { kind: "scanned"; scan: BrandScanResult }
+  | { kind: "rejected"; message: string }
+  | { kind: "unavailable"; reason: string };
+
 export type WorkspaceFactsInput = {
   name: string;
   websiteUrl: string | null;
@@ -366,6 +380,56 @@ export async function deleteWorkspace(
       return { kind: "deleted" };
     }
     return { kind: "rejected", message: await readErrorResponse(response) };
+  } catch {
+    return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** POSTs a read-only scan of the workspace's stored website. Saves nothing. */
+export async function scanBrandWebsite(
+  baseUrl: string,
+  id: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 60000,
+): Promise<ScanBrandWebsiteResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(
+      `${baseUrl}/api/v1/workspaces/${encodeURIComponent(id)}/brand-scan`,
+      {
+        method: "POST",
+        headers: withAuth({}),
+        signal: controller.signal,
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) {
+      return { kind: "rejected", message: await readErrorResponse(response) };
+    }
+    const data = (await response.json()) as Record<string, unknown>;
+    if (
+      typeof data.url !== "string" ||
+      typeof data.excerpt !== "string" ||
+      typeof data.truncated !== "boolean"
+    ) {
+      return {
+        kind: "unavailable",
+        reason: "The API answered, but the body was not a scan result.",
+      };
+    }
+    return {
+      kind: "scanned",
+      scan: {
+        url: data.url,
+        title: typeof data.title === "string" ? data.title : "",
+        description: typeof data.description === "string" ? data.description : "",
+        excerpt: data.excerpt,
+        truncated: data.truncated,
+      },
+    };
   } catch {
     return { kind: "unavailable", reason: `Could not reach the API at ${baseUrl}.` };
   } finally {

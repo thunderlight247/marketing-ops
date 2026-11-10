@@ -70,17 +70,19 @@ type WorkspaceStore interface {
 	SetWhatsAppStatus(ctx context.Context, workspaceID, status, phone string) error
 	ListLeadEngineLeads(ctx context.Context, workspaceID string) ([]store.Lead, error)
 	ListOutreachLogs(ctx context.Context, workspaceID, leadID string) ([]store.LeadOutreachLog, error)
+	ListLatestOutboundByLead(ctx context.Context, workspaceID string) (map[string]store.LeadOutreachLog, error)
 	AddToBlacklist(ctx context.Context, workspaceID, phone, reason string) error
 	ListBlacklist(ctx context.Context, workspaceID string) ([]store.LeadBlacklistEntry, error)
 	CountDiscoverySearchesToday(ctx context.Context, workspaceID, dayKey string) (int, error)
 	RecordDiscoverySearch(ctx context.Context, s store.LeadDiscoverySearch) error
 	WasSearchedToday(ctx context.Context, workspaceID, dayKey, category, city string) (bool, error)
-	SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error)
+	SaveDiscoveredLead(ctx context.Context, in store.DiscoveredLead) (store.Lead, error)
 	UpdateLeadPitch(ctx context.Context, workspaceID, leadID, pitch string) error
 	UpdateLeadStatus(ctx context.Context, workspaceID, leadID, status string) error
 	AdvanceLeadCadence(ctx context.Context, workspaceID, leadID string, step int, nextFollowUp *time.Time) error
 	IsBlacklisted(ctx context.Context, workspaceID, phone string) (bool, error)
 	SaveOutreachLog(ctx context.Context, l store.LeadOutreachLog) (store.LeadOutreachLog, error)
+	UpdateOutreachLog(ctx context.Context, workspaceID, logID, status, errorText string) error
 	HasRecentOutboundAttempt(ctx context.Context, workspaceID, leadID string, within time.Duration) (bool, error)
 	HasRecentOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string, within time.Duration) (bool, error)
 	HasOutboundAttemptByPhone(ctx context.Context, workspaceID, phone string) (bool, error)

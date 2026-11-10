@@ -20,6 +20,7 @@ import (
 	"marketingops/api/internal/database"
 	"marketingops/api/internal/emailworker"
 	"marketingops/api/internal/events"
+	"marketingops/api/internal/firecrawl"
 	"marketingops/api/internal/health"
 	"marketingops/api/internal/httpapi"
 	"marketingops/api/internal/integration"
@@ -156,6 +157,12 @@ func run() error {
 		agentRunner = aiprovider.StubProvider{}
 	}
 
+	// Brand website scan: enabled only when a Firecrawl key is configured.
+	var brandScanner httpapi.BrandScanner
+	if cfg.FirecrawlAPIKey != "" {
+		brandScanner = firecrawl.Client{APIKey: cfg.FirecrawlAPIKey}
+	}
+
 	healthService := health.NewService(health.Options{
 		Service:     "marketing-ops-api",
 		Version:     version,
@@ -195,6 +202,7 @@ func run() error {
 			SanityOpsBase:        cfg.SanityOpsBase,
 			EmailAPIBase:         cfg.EmailBase,
 			PublicAPIURL:         cfg.PublicAPIURL,
+			BrandScanner:         brandScanner,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

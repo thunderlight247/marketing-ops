@@ -9,6 +9,7 @@ import {
   parseWorkspace,
   parseWorkspaces,
   saveBrandProfile,
+  scanBrandWebsite,
   updateWorkspaceFacts,
   validateWorkspaceFacts,
   validateWorkspaceInput,
@@ -276,6 +277,60 @@ describe("saveBrandProfile", () => {
     expect(rejected).toEqual({ kind: "rejected", message: "businessDescription is too long" });
 
     const offline = await saveBrandProfile("http://api.test", "abc", input, async () => {
+      throw new TypeError("offline");
+    });
+    expect(offline).toEqual({
+      kind: "unavailable",
+      reason: "Could not reach the API at http://api.test.",
+    });
+  });
+});
+
+describe("scanBrandWebsite", () => {
+  it("POSTs the scan and returns the scraped text for review", async () => {
+    let captured: { url: unknown; init?: RequestInit } | undefined;
+    const fetchImpl = async (url: unknown, init?: RequestInit) => {
+      captured = { url, init };
+      return jsonResponse(200, {
+        workspaceId: "abc",
+        source: "scraped",
+        url: "https://example.com/",
+        title: "Example",
+        description: "A page",
+        excerpt: "# Hello",
+        truncated: false,
+      });
+    };
+    const result = await scanBrandWebsite("http://api.test", "abc", fetchImpl);
+    expect(result).toEqual({
+      kind: "scanned",
+      scan: {
+        url: "https://example.com/",
+        title: "Example",
+        description: "A page",
+        excerpt: "# Hello",
+        truncated: false,
+      },
+    });
+    expect(String(captured?.url)).toBe("http://api.test/api/v1/workspaces/abc/brand-scan");
+    expect(captured?.init?.method).toBe("POST");
+  });
+
+  it("maps the unconfigured and failed-scan responses, and network failures", async () => {
+    const unconfigured = await scanBrandWebsite("http://api.test", "abc", async () =>
+      jsonResponse(501, { error: "brand website scan is not configured (set FIRECRAWL_API_KEY)" }),
+    );
+    expect(unconfigured).toEqual({
+      kind: "rejected",
+      message: "brand website scan is not configured (set FIRECRAWL_API_KEY)",
+    });
+
+    const failed = await scanBrandWebsite("http://api.test", "abc", async () =>
+      jsonResponse(502, { error: "the website could not be read" }),
+    );
+    expect(failed).toEqual({ kind: "rejected", message: "the website could not be read" });
+
+    const offline = await scanBrandWebsite("http://api.test", "abc", async () => {
       throw new TypeError("offline");
     });
     expect(offline).toEqual({

@@ -28,10 +28,20 @@ import {
   type MessagedContact,
   type OutreachActivity,
   type OutreachLog,
+  type WhatsAppRetry,
   type WhatsAppSession,
 } from "@/lib/leadEngine";
 import { exportLeadEngineLeadsToCsv, parseLeadEngineCsv } from "@/lib/csv";
 import { useWorkspaceEvents } from "@/lib/events";
+
+// Where a lead came from. Google Maps is a curated commercial directory;
+// OpenStreetMap is community-mapped and usually has no rating, so a row's
+// provenance is worth showing next to its data.
+const DISCOVERY_SOURCE_LABELS: Record<string, string> = {
+  google_places: "Google Maps",
+  openstreetmap: "OpenStreetMap",
+  csv_import: "CSV import",
+};
 
 // ─── Design tokens / shared classes ──────────────────────────────────────────
 
@@ -89,6 +99,51 @@ function StatusBadge({ status }: { status: string }) {
       {status.replace("_", " ")}
     </span>
   );
+}
+
+// A lead's status says where it sits in the pipeline; this line says what
+// actually happened to its latest message. "Sent" is only shown once the
+// dispatcher accepted it, and a failed attempt carries the reason it did not
+// leave, so the operator never has to guess whether a message went out.
+// Pull the human-readable part out of a stored dispatcher error, which is
+// often a JSON body ({"success":false,"error":"..."}).
+function sendFailureText(raw: string): string {
+  const json = raw.match(/"error"\s*:\s*"([^"]+)"/);
+  if (json) return json[1];
+  return raw.replace(/^not_sent:\s*/, "").replace(/^dispatcher HTTP \d+:\s*/, "");
+}
+
+function SendConfirmation({ lead }: { lead: LeadEngineLead }) {
+  if (lead.lastSendStatus === "sent") {
+    return (
+      <p className="mt-1 text-[11px] font-medium text-emerald-700">
+        ✓ Sent
+        {lead.lastSendAt ? ` ${new Date(lead.lastSendAt).toLocaleString()}` : ""}
+      </p>
+    );
+  }
+  if (lead.lastSendStatus === "failed") {
+    const raw = lead.lastSendError || "";
+    const refused =
+      raw.startsWith("not_sent:") || /notOnWhatsApp|not registered on WhatsApp/i.test(raw);
+    const detail = sendFailureText(raw) || "the dispatcher refused it";
+    return (
+      <p
+        className={`mt-1 max-w-[240px] text-[11px] leading-snug ${
+          refused ? "text-red-600" : "text-amber-700"
+        }`}
+        title={raw || detail}
+      >
+        {refused ? `Not sent — ${detail}` : `Not confirmed — ${detail}`}
+      </p>
+    );
+  }
+  if (lead.lastSendStatus === "sending") {
+    return (
+      <p className="mt-1 text-[11px] leading-snug text-blue-700">Sending… no confirmation yet</p>
+    );
+  }
+  return null;
 }
 
 function ModeChip({
@@ -254,21 +309,11 @@ function SetupTab({
   const [minDelay, setMinDelay] = useState(config.minDelayMs || 120000);
   const [maxDelay, setMaxDelay] = useState(config.maxDelayMs || 300000);
   const [pitchTemplate, setPitchTemplate] = useState(config.pitchTemplate || "");
-  const [enableAutoFollowup, setEnableAutoFollowup] = useState(
-    Boolean(config.enableAutoFollowup),
-  );
-  const [followup1Template, setFollowup1Template] = useState(
-    config.followup1Template || "",
-  );
-  const [followup1DelayDays, setFollowup1DelayDays] = useState(
-    config.followup1DelayDays || 3,
-  );
-  const [followup2Template, setFollowup2Template] = useState(
-    config.followup2Template || "",
-  );
-  const [followup2DelayDays, setFollowup2DelayDays] = useState(
-    config.followup2DelayDays || 5,
-  );
+  const [enableAutoFollowup, setEnableAutoFollowup] = useState(Boolean(config.enableAutoFollowup));
+  const [followup1Template, setFollowup1Template] = useState(config.followup1Template || "");
+  const [followup1DelayDays, setFollowup1DelayDays] = useState(config.followup1DelayDays || 3);
+  const [followup2Template, setFollowup2Template] = useState(config.followup2Template || "");
+  const [followup2DelayDays, setFollowup2DelayDays] = useState(config.followup2DelayDays || 5);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -483,12 +528,12 @@ function SetupTab({
           }
         />
         <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-slate-700">
-          <p className="font-semibold text-indigo-900">
-            🛡️ Anti-Ban Spintax Protection:
-          </p>
+          <p className="font-semibold text-indigo-900">🛡️ Anti-Ban Spintax Protection:</p>
           <p className="mt-0.5 text-slate-600">
-            Wrap alternatives in curly braces like <code>{"{Hi|Hello|Hey}"}</code> or <code>{"{quick question|checking in}"}</code>.
-            The engine automatically randomizes outgoing text for each recipient to prevent spam filters from flagging identical message patterns.
+            Wrap alternatives in curly braces like <code>{"{Hi|Hello|Hey}"}</code> or{" "}
+            <code>{"{quick question|checking in}"}</code>. The engine automatically randomizes
+            outgoing text for each recipient to prevent spam filters from flagging identical message
+            patterns.
           </p>
         </div>
         <p className="mt-1 text-xs text-slate-500">
@@ -506,7 +551,8 @@ function SetupTab({
               Multi-Step Automated Follow-Up Cadence
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Automatically re-engage leads who haven&apos;t replied. As soon as a lead replies or is marked won/lost/blacklisted, all scheduled follow-ups are immediately canceled.
+              Automatically re-engage leads who haven&apos;t replied. As soon as a lead replies or
+              is marked won/lost/blacklisted, all scheduled follow-ups are immediately canceled.
             </p>
           </div>
           <button
@@ -663,11 +709,51 @@ function WhatsAppTab({
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [source, setSource] = useState<string>("");
+  // A background reconnect the dispatcher has already queued, plus the local
+  // deadline so the tab can count down between polls.
+  const [retry, setRetry] = useState<WhatsAppRetry | null>(null);
+  const [retryDueAt, setRetryDueAt] = useState<number | null>(null);
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const [sessions, setSessions] = useState<WhatsAppSession[]>([]);
   const [sessionsError, setSessionsError] = useState(false);
   // Which option the operator just started, so only that button shows a spinner.
   const [pendingMode, setPendingMode] = useState<"own" | "shared" | null>(null);
   const mode: "own" | "shared" | "" = source === "own" || source === "shared" ? source : "";
+  const retrying = retry !== null;
+
+  // Keep the countdown honest between status polls. Repeated polls for the
+  // same attempt must not push the deadline back up; a new attempt (backoff
+  // grew) legitimately replaces it.
+  const retryDueRef = useRef<number | null>(null);
+  const retryAttemptRef = useRef<number | null>(null);
+  const trackRetry = useCallback((next?: WhatsAppRetry) => {
+    if (!next?.scheduled) {
+      retryDueRef.current = null;
+      retryAttemptRef.current = null;
+      setRetry(null);
+      setRetryDueAt(null);
+      return;
+    }
+    const incoming = Date.now() + next.retryInMs;
+    const sameAttempt = retryAttemptRef.current === next.attempt;
+    const deadline =
+      sameAttempt && retryDueRef.current !== null
+        ? Math.min(retryDueRef.current, incoming)
+        : incoming;
+    retryDueRef.current = deadline;
+    retryAttemptRef.current = next.attempt;
+    setRetry(next);
+    setRetryDueAt(deadline);
+    setRetrySeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+  }, []);
+
+  useEffect(() => {
+    if (retryDueAt === null) return;
+    const update = () => setRetrySeconds(Math.max(0, Math.ceil((retryDueAt - Date.now()) / 1000)));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [retryDueAt]);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -688,6 +774,10 @@ function WhatsAppTab({
       try {
         const res = await getWhatsAppStatus(base, config.workspaceId);
         setStatus(res.status);
+        trackRetry(res.retry);
+        // Show a QR that is already waiting, instead of making the operator
+        // wait for the first poll tick (or miss it entirely).
+        setQr("qr" in res && res.qr ? res.qr : null);
         if ("phone" in res && res.phone) setPhone(res.phone);
         if (res.source) setSource(res.source);
         setPairingCode(res.pairingCode ?? null);
@@ -700,39 +790,49 @@ function WhatsAppTab({
       } catch {}
       await loadSessions();
     })();
-  }, [base, config.workspaceId, loadSessions, onStatusChange]);
+  }, [base, config.workspaceId, loadSessions, onStatusChange, trackRetry]);
 
-  // Poll status when in a transitional state.
+  // Poll status while the session is changing — including a queued retry, which
+  // is otherwise an "error" status the tab would stop watching.
   useEffect(() => {
-    if (status === "qr_ready" || status === "initializing" || status === "authenticated") {
-      pollRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const res = await getWhatsAppStatus(base, config.workspaceId);
-            setStatus(res.status);
-            if ("phone" in res && res.phone) setPhone(res.phone);
-            if ("qr" in res && res.qr) setQr(res.qr);
-            if (res.pairingCode) setPairingCode(res.pairingCode);
-            if (res.pairingError) setPairingError(res.pairingError);
-            if (res.pairingPhone) {
-              setPairingPhone(res.pairingPhone);
-              setPairPhone((current) => current || res.pairingPhone || "");
-            }
-            onStatusChange(res.status, "phone" in res ? (res.phone ?? "") : "");
-            if (res.status === "connected") {
-              setPendingMode(null);
-              setPairingCode(null);
-              setPairingError(null);
-              if (pollRef.current) clearInterval(pollRef.current);
-            }
-          } catch {}
-        })();
-      }, 4000);
+    if (
+      status === "qr_ready" ||
+      status === "initializing" ||
+      status === "authenticated" ||
+      retrying
+    ) {
+      pollRef.current = setInterval(
+        () => {
+          void (async () => {
+            try {
+              const res = await getWhatsAppStatus(base, config.workspaceId);
+              setStatus(res.status);
+              trackRetry(res.retry);
+              if ("phone" in res && res.phone) setPhone(res.phone);
+              if ("qr" in res && res.qr) setQr(res.qr);
+              if (res.pairingCode) setPairingCode(res.pairingCode);
+              if (res.pairingError) setPairingError(res.pairingError);
+              if (res.pairingPhone) {
+                setPairingPhone(res.pairingPhone);
+                setPairPhone((current) => current || res.pairingPhone || "");
+              }
+              onStatusChange(res.status, "phone" in res ? (res.phone ?? "") : "");
+              if (res.status === "connected") {
+                setPendingMode(null);
+                setPairingCode(null);
+                setPairingError(null);
+                if (pollRef.current) clearInterval(pollRef.current);
+              }
+            } catch {}
+          })();
+        },
+        retrying ? 2000 : 4000,
+      );
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [status, base, config.workspaceId, onStatusChange]);
+  }, [status, retrying, base, config.workspaceId, onStatusChange, trackRetry]);
 
   // Pair this workspace's own business number, so it stops sending from the
   // account another workspace may also be using.
@@ -740,11 +840,14 @@ function WhatsAppTab({
     setError(null);
     setBusy(true);
     setPendingMode("own");
+    // Drop any previous QR so the panel cannot show a code from an old attempt.
+    setQr(null);
     setPairingCode(null);
     setPairingError(null);
     try {
       const res = await connectOwnWhatsApp(base, config.workspaceId);
       setStatus(res.status);
+      trackRetry(res.retry);
       if (res.status === "connected") setPendingMode(null);
       if ("qr" in res && res.qr) setQr(res.qr);
       if ("phone" in res && res.phone) setPhone(res.phone ?? "");
@@ -770,6 +873,7 @@ function WhatsAppTab({
     try {
       await disconnectWhatsApp(base, config.workspaceId);
       setStatus("disconnected");
+      trackRetry(undefined);
       setPhone("");
       setQr(null);
       setSource("");
@@ -808,6 +912,7 @@ function WhatsAppTab({
       }
       const res = await connectWhatsApp(base, config.workspaceId);
       setStatus(res.status);
+      trackRetry(res.retry);
       if ("phone" in res && res.phone) setPhone(res.phone ?? "");
       if (res.source) setSource(res.source);
       setPairingCode(null);
@@ -840,6 +945,7 @@ function WhatsAppTab({
     try {
       const res = await pairOwnWhatsApp(base, config.workspaceId, digits);
       setStatus(res.status);
+      trackRetry(res.retry);
       if (res.status === "connected") {
         setPendingMode(null);
         setPairingCode(null);
@@ -868,15 +974,19 @@ function WhatsAppTab({
             className={`h-2.5 w-2.5 rounded-full ${
               status === "connected"
                 ? "bg-emerald-500"
-                : status === "qr_ready"
+                : retrying || status === "qr_ready"
                   ? "bg-amber-500"
                   : "bg-slate-300"
-            }`}
+            } ${retrying ? "animate-pulse motion-reduce:animate-none" : ""}`}
             aria-hidden="true"
           />
           <div>
-            <p className="text-sm font-semibold text-slate-900">
-              {status === "connected" ? "Connected and ready to send" : whatsAppStatusLabel(status)}
+            <p className="text-sm font-semibold text-slate-900" role="status" aria-live="polite">
+              {retrying
+                ? "Reconnecting to WhatsApp"
+                : status === "connected"
+                  ? "Connected and ready to send"
+                  : whatsAppStatusLabel(status)}
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
               {phone ? <span className="font-mono">{phone}</span> : "No number paired"}
@@ -887,6 +997,11 @@ function WhatsAppTab({
                   ? "shared team account"
                   : "connection mode not set"}
             </p>
+            {retrying ? (
+              <p className="mt-1 text-xs font-semibold text-amber-800">
+                Retry in {retrySeconds}s · attempt {retry?.attempt} of ∞ · saved pairing reused
+              </p>
+            ) : null}
           </div>
         </div>
         <StatusBadge status={status} />
@@ -1006,6 +1121,28 @@ function WhatsAppTab({
       {status === "qr_ready" ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid content-start gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                {mode === "own"
+                  ? "This workspace's own number — scan to pair"
+                  : mode === "shared"
+                    ? "Shared team number — scan to pair"
+                    : "Pair a WhatsApp number"}
+              </h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                {phone ? (
+                  <>
+                    Open WhatsApp on <span className="font-mono">{phone}</span> → Linked devices →
+                    Link a device, then scan this code.
+                  </>
+                ) : (
+                  <>
+                    Open the phone that owns this number → WhatsApp → Linked devices → Link a
+                    device, then scan this code.
+                  </>
+                )}
+              </p>
+            </div>
             <Alert kind="warn">
               Scan the QR code, or ask WhatsApp to send a code to the phone number. Either method
               pairs this same saved session.
@@ -1109,6 +1246,19 @@ function WhatsAppTab({
           <Spinner />
           <span>Connecting to WhatsApp…</span>
         </div>
+      ) : retrying ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <Spinner />
+          <span>
+            Reconnecting in <span className="font-semibold">{retrySeconds}s</span> (attempt{" "}
+            {retry?.attempt}). The saved pairing is reused — no scan needed unless WhatsApp revoked
+            it.
+          </span>
+        </div>
       ) : status !== "connected" ? (
         <Alert kind="info">
           Choose a number above to enable automated outreach. Pair once by scanning a QR code or
@@ -1210,6 +1360,47 @@ function startOfLocalDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
+// ─── Persisted list preferences ───────────────────────────────────────────────
+
+// Which outcome filter and day range the operator last chose, kept per
+// workspace so one workspace's review view never leaks into another's.
+type LeadFilter = "all" | "sent" | "not_sent" | "skipped";
+
+const leadFilterKey = (workspaceId: string) => `leadEngine.sendFilter:${workspaceId}`;
+const showPreviousKey = (workspaceId: string) => `leadEngine.showPrevious:${workspaceId}`;
+
+// These are read after mount, never during render: reading localStorage in a
+// useState initializer yields different markup on the server and the client —
+// exactly the hydration mismatch this page has to avoid.
+function readLeadFilter(workspaceId: string): LeadFilter {
+  try {
+    const stored = window.localStorage.getItem(leadFilterKey(workspaceId));
+    if (stored === "all" || stored === "sent" || stored === "not_sent" || stored === "skipped") {
+      return stored;
+    }
+  } catch {
+    // Storage disabled or private mode: fall back to the default view.
+  }
+  return "all";
+}
+
+function readShowPrevious(workspaceId: string): boolean {
+  try {
+    return window.localStorage.getItem(showPreviousKey(workspaceId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storePreference(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // A saved preference is a convenience; full or disabled storage must not
+    // break the page.
+  }
+}
+
 function LeadsTab({ config }: { config: LeadEngineConfig }) {
   const base = getApiBaseUrl();
 
@@ -1226,6 +1417,9 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
   // anything still waiting to be sent. Earlier failed/blacklisted rows stay in
   // the database (the send-side dedupe needs them) but are hidden by default.
   const [showPrevious, setShowPrevious] = useState(false);
+  // Outcome filter: review only what the send run did — delivered, failed, or
+  // skipped — instead of scrolling the whole day's list.
+  const [sendFilter, setSendFilter] = useState<LeadFilter>("all");
   const [dayStart, setDayStart] = useState(() => startOfLocalDay(new Date()));
 
   // CSV Import state
@@ -1318,6 +1512,24 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
     void loadLeads();
   }, [loadLeads]);
 
+  // Restore the saved view once hydrated, so a refresh lands on the same filter
+  // and day range instead of resetting to "today, all".
+  useEffect(() => {
+    setSendFilter(readLeadFilter(config.workspaceId));
+    setShowPrevious(readShowPrevious(config.workspaceId));
+  }, [config.workspaceId]);
+
+  const chooseSendFilter = (value: LeadFilter) => {
+    setSendFilter(value);
+    storePreference(leadFilterKey(config.workspaceId), value);
+  };
+
+  const toggleShowPrevious = () => {
+    const next = !showPrevious;
+    setShowPrevious(next);
+    storePreference(showPreviousKey(config.workspaceId), next ? "1" : "0");
+  };
+
   // Roll the view over at local midnight and refetch, so a tab left open
   // overnight starts the new day empty on its own. This only reads — it does
   // not touch the sender, the dispatcher, or an in-flight batch.
@@ -1330,6 +1542,7 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
         () => {
           setDayStart(startOfLocalDay(new Date()));
           setShowPrevious(false);
+          storePreference(showPreviousKey(config.workspaceId), "0");
           void loadLeads();
           schedule();
         },
@@ -1338,9 +1551,17 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
     };
     schedule();
     return () => clearTimeout(timer);
-  }, [loadLeads]);
+  }, [loadLeads, config.workspaceId]);
 
   useWorkspaceEvents(config.workspaceId, (ev) => {
+    // The run summary replaces "Dispatch started…" once the background batch
+    // finishes, and explains anything the per-lead reasons cannot (daily cap).
+    if (ev.type === "pitch_dispatched" && ev.message?.startsWith("Dispatch run ended with error")) {
+      setError(ev.message);
+    }
+    if (ev.type === "pitch_dispatched" && ev.message?.startsWith("Outreach dispatch completed")) {
+      setNotice(ev.message);
+    }
     if (
       ev.type === "lead_discovered" ||
       ev.type === "pitch_dispatched" ||
@@ -1416,10 +1637,34 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
   const pending = visibleLeads.filter(
     (l) => l.status === "discovered" || l.status === "pending",
   ).length;
-  const sent = visibleLeads.filter((l) =>
-    ["sent", "delivered", "replied", "demo_sent"].includes(l.status),
+  // Count from the send log where it exists: a lead whose status update did
+  // not stick is still counted as sent once the dispatcher accepted it.
+  const wasSent = (l: LeadEngineLead) =>
+    ["sent", "delivered", "replied", "demo_sent"].includes(l.status) || l.lastSendStatus === "sent";
+  const sent = visibleLeads.filter(wasSent).length;
+  const failed = visibleLeads.filter(
+    (l) => !wasSent(l) && (l.status === "failed" || l.lastSendStatus === "failed"),
   ).length;
-  const failed = visibleLeads.filter((l) => l.status === "failed").length;
+  const isSkipped = (l: LeadEngineLead) => Boolean(l.skipReason);
+  // "Not sent" = an attempt was made but nothing went out (failed or never
+  // confirmed), excluding leads the dispatcher skipped before trying.
+  const notSent = (l: LeadEngineLead) =>
+    !wasSent(l) &&
+    !isSkipped(l) &&
+    (l.status === "failed" || l.lastSendStatus === "failed" || l.lastSendStatus === "sending");
+  const skippedCount = visibleLeads.filter(isSkipped).length;
+  const notSentCount = visibleLeads.filter(notSent).length;
+  const filteredLeads =
+    sendFilter === "all"
+      ? visibleLeads
+      : sendFilter === "sent"
+        ? visibleLeads.filter(wasSent)
+        : sendFilter === "not_sent"
+          ? visibleLeads.filter(notSent)
+          : visibleLeads.filter(isSkipped);
+  const filterLabel = { all: "All", sent: "Sent", not_sent: "Not sent", skipped: "Skipped" }[
+    sendFilter
+  ];
 
   return (
     <div className="grid gap-5">
@@ -1493,12 +1738,11 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h4 className="text-sm font-semibold text-slate-900">
-                Bulk Import Leads via CSV
-              </h4>
+              <h4 className="text-sm font-semibold text-slate-900">Bulk Import Leads via CSV</h4>
               <p className="mt-0.5 text-xs text-slate-600">
-                Upload a CSV with columns such as <code>Name</code>, <code>Phone</code>, <code>Category</code>, <code>City</code>, <code>Address</code>, and <code>Website</code>.
-                Duplicates by phone number will be automatically skipped.
+                Upload a CSV with columns such as <code>Name</code>, <code>Phone</code>,{" "}
+                <code>Category</code>, <code>City</code>, <code>Address</code>, and{" "}
+                <code>Website</code>. Duplicates by phone number will be automatically skipped.
               </p>
             </div>
             <button
@@ -1531,7 +1775,8 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
           {importError && <Alert kind="error">{importError}</Alert>}
           {importResult && (
             <Alert kind="success">
-              Import complete: {importResult.imported} leads added, {importResult.duplicates} duplicates skipped, {importResult.failed} failed.
+              Import complete: {importResult.imported} leads added, {importResult.duplicates}{" "}
+              duplicates skipped, {importResult.failed} failed.
             </Alert>
           )}
 
@@ -1618,6 +1863,35 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
         </div>
       )}
 
+      {/* outcome filter */}
+      {visibleLeads.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show</span>
+          {(
+            [
+              { id: "all", label: "All", count: visibleLeads.length },
+              { id: "sent", label: "Sent", count: sent },
+              { id: "not_sent", label: "Not sent", count: notSentCount },
+              { id: "skipped", label: "Skipped", count: skippedCount },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => chooseSendFilter(option.id)}
+              aria-pressed={sendFilter === option.id}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                sendFilter === option.id
+                  ? "bg-indigo-600 text-white"
+                  : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {option.label} ({option.count})
+            </button>
+          ))}
+        </div>
+      )}
+
       {leads.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
           <p className="text-xs text-slate-500">
@@ -1627,11 +1901,7 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                 ? `Today's leads. ${hiddenCount} earlier failed/blacklisted row${hiddenCount === 1 ? " is" : "s are"} hidden.`
                 : "Today's leads — this list clears itself each day."}
           </p>
-          <button
-            type="button"
-            onClick={() => setShowPrevious((value) => !value)}
-            className={BTN_GHOST}
-          >
+          <button type="button" onClick={toggleShowPrevious} className={BTN_GHOST}>
             {showPrevious ? "Show today only" : `Show previous days (${leads.length})`}
           </button>
         </div>
@@ -1644,17 +1914,19 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
         <div className="flex items-center gap-2 text-sm text-slate-500 py-6">
           <Spinner /> Loading leads…
         </div>
-      ) : visibleLeads.length === 0 ? (
+      ) : filteredLeads.length === 0 ? (
         <Alert kind="info">
-          {hiddenCount > 0
-            ? `Nothing new today. ${hiddenCount} row${hiddenCount === 1 ? "" : "s"} from previous days (sent, failed, blacklisted) ${hiddenCount === 1 ? "is" : "are"} hidden — use “Show previous days” to review them.`
-            : 'No leads discovered yet. Click "Run Discovery" to scan your target categories and cities. If a run returns nothing, double-check your Google Places API key in Setup.'}
+          {visibleLeads.length > 0
+            ? `No leads match the “${filterLabel}” filter. Choose “All” to see every lead.`
+            : hiddenCount > 0
+              ? `Nothing new today. ${hiddenCount} row${hiddenCount === 1 ? "" : "s"} from previous days (sent, failed, blacklisted) ${hiddenCount === 1 ? "is" : "are"} hidden — use “Show previous days” to review them.`
+              : 'No leads discovered yet. Click "Run Discovery" to scan your target categories and cities. If a run returns nothing, double-check your Google Places API key in Setup.'}
         </Alert>
       ) : (
         <>
           {/* Mobile card view */}
           <div className="grid gap-3 md:hidden">
-            {visibleLeads.map((lead) => (
+            {filteredLeads.map((lead) => (
               <div
                 key={`mobile-${lead.id}`}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -1671,7 +1943,10 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                       </a>
                     )}
                   </div>
-                  <StatusBadge status={lead.status} />
+                  <div className="shrink-0 text-right">
+                    <StatusBadge status={lead.status} />
+                    <SendConfirmation lead={lead} />
+                  </div>
                 </div>
 
                 <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -1682,16 +1957,29 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                   {lead.rating ? (
                     <span className="text-amber-600 font-medium">⭐ {lead.rating.toFixed(1)}</span>
                   ) : null}
+                  {lead.sourceDetail && (
+                    <span
+                      className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500"
+                      title="Where this lead was discovered"
+                    >
+                      {DISCOVERY_SOURCE_LABELS[lead.sourceDetail] ?? lead.sourceDetail}
+                    </span>
+                  )}
                   <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
                     {lead.sequenceStep === 2
                       ? "Step 2: Follow-up 1"
                       : lead.sequenceStep && lead.sequenceStep >= 3
                         ? "Step 3: Follow-up 2"
                         : "Step 1: Pitch"}
-                  </span>
+                  </span>{" "}
                   {lead.nextFollowupAt && ["sent", "delivered"].includes(lead.status) && (
                     <span className="text-[11px] text-indigo-600 font-medium">
                       Next: {new Date(lead.nextFollowupAt).toLocaleDateString()}
+                    </span>
+                  )}
+                  {lead.skipReason && (
+                    <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                      Skipped: {lead.skipReason}
                     </span>
                   )}
                 </div>
@@ -1782,12 +2070,17 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                 </tr>
               </thead>
               <tbody>
-                {visibleLeads.map((lead) => (
+                {filteredLeads.map((lead) => (
                   <Fragment key={lead.id}>
                     <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-medium text-slate-900">{lead.name}</p>
                         <p className="text-xs text-slate-400">{lead.phone}</p>
+                        {lead.sourceDetail && (
+                          <p className="text-[10px] text-slate-400">
+                            {DISCOVERY_SOURCE_LABELS[lead.sourceDetail] ?? lead.sourceDetail}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-600">{lead.category}</td>
                       <td className="px-4 py-3 text-slate-600 hidden sm:table-cell">{lead.city}</td>
@@ -1814,6 +2107,15 @@ function LeadsTab({ config }: { config: LeadEngineConfig }) {
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={lead.status} />
+                        <SendConfirmation lead={lead} />
+                        {lead.skipReason && (
+                          <p
+                            className="mt-1 max-w-[200px] text-[11px] leading-snug text-amber-700"
+                            title={`Skipped: ${lead.skipReason}`}
+                          >
+                            Skipped: {lead.skipReason}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -2264,6 +2566,17 @@ function FollowUpTab({ workspaceId }: { workspaceId: string }) {
 
 // ─── Daily activity tab ────────────────────────────────────────────────────
 
+// A send whose outcome was never confirmed. A provable refusal (recorded as
+// `not_sent:` or a number WhatsApp says does not exist) is not unknown;
+// anything else left failed/sending may have reached WhatsApp and is never
+// retried automatically, so a human has to check it.
+function isUnconfirmedOutcome(row: { status: string; error?: string }): boolean {
+  if (row.status === "sending") return true;
+  if (row.status !== "failed") return false;
+  const error = row.error ?? "";
+  return !error.startsWith("not_sent:") && !/notOnWhatsApp|not registered on WhatsApp/i.test(error);
+}
+
 // Shows what was SENT and what FAILED for the CURRENT day by default — a new
 // day starts empty. Previous days only load when the user asks for them.
 function DailyTab({ workspaceId }: { workspaceId: string }) {
@@ -2272,6 +2585,7 @@ function DailyTab({ workspaceId }: { workspaceId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPrevious, setShowPrevious] = useState(false);
+  const [needsReview, setNeedsReview] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2294,6 +2608,8 @@ function DailyTab({ workspaceId }: { workspaceId: string }) {
     (r) => r.direction === "outbound" && r.status === "failed",
   ).length;
   const inboundToday = rows.filter((r) => r.direction === "inbound").length;
+  const unconfirmed = rows.filter((r) => r.direction === "outbound" && isUnconfirmedOutcome(r));
+  const shownRows = needsReview ? unconfirmed : rows;
 
   const statusTone = (r: OutreachActivity) =>
     r.direction === "inbound"
@@ -2317,6 +2633,22 @@ function DailyTab({ workspaceId }: { workspaceId: string }) {
           <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700">
             {inboundToday} inbound
           </span>
+          <button
+            type="button"
+            onClick={() => setNeedsReview((value) => !value)}
+            disabled={unconfirmed.length === 0}
+            aria-pressed={needsReview}
+            title="Sends with no confirmed outcome — they are never retried automatically"
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+              needsReview
+                ? "bg-amber-600 text-white"
+                : unconfirmed.length > 0
+                  ? "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                  : "bg-slate-100 text-slate-400"
+            }`}
+          >
+            ⚠ {unconfirmed.length} unconfirmed
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -2349,55 +2681,72 @@ function DailyTab({ workspaceId }: { workspaceId: string }) {
             ? "No outreach activity in the last 7 days."
             : "No activity yet today — sends will appear here as they go out."}
         </p>
+      ) : shownRows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">
+          No unconfirmed sends in this range — every attempt was confirmed or provably refused.
+        </p>
       ) : (
-        <div className="mt-4 max-h-[420px] overflow-y-auto rounded-lg border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left">
-              <tr>
-                <th className="px-3 py-2 text-xs font-semibold text-slate-500">Time</th>
-                <th className="px-3 py-2 text-xs font-semibold text-slate-500">Contact</th>
-                <th className="px-3 py-2 text-xs font-semibold text-slate-500">Direction</th>
-                <th className="px-3 py-2 text-xs font-semibold text-slate-500">Status</th>
-                <th className="px-3 py-2 text-xs font-semibold text-slate-500">Message</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">
-                    {new Date(r.createdAt).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="text-xs font-medium text-slate-800">
-                      {r.leadName || "Unknown"}
-                    </div>
-                    <div className="text-xs text-slate-400">{r.leadPhone || "—"}</div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-600">
-                    {r.direction === "inbound" ? "← inbound" : "→ outbound"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-block rounded px-2 py-0.5 text-[11px] font-semibold ${statusTone(r)}`}
-                    >
-                      {r.status}
-                      {r.error ? " ⚠" : ""}
-                    </span>
-                    {r.error && (
-                      <div className="mt-1 max-w-xs text-[11px] text-red-600" title={r.error}>
-                        {r.error}
-                      </div>
-                    )}
-                  </td>
-                  <td className="max-w-sm px-3 py-2 text-xs text-slate-600">
-                    <div className="line-clamp-2" title={r.body}>
-                      {r.body}
-                    </div>
-                  </td>
+        <div>
+          {needsReview && (
+            <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              These sends were attempted but never confirmed. They are not retried automatically — a
+              retry could duplicate a message — so check the contact on WhatsApp before resending.
+            </p>
+          )}
+          <div className="mt-4 max-h-[420px] overflow-y-auto rounded-lg border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left">
+                <tr>
+                  <th className="px-3 py-2 text-xs font-semibold text-slate-500">Time</th>
+                  <th className="px-3 py-2 text-xs font-semibold text-slate-500">Contact</th>
+                  <th className="px-3 py-2 text-xs font-semibold text-slate-500">Direction</th>
+                  <th className="px-3 py-2 text-xs font-semibold text-slate-500">Status</th>
+                  <th className="px-3 py-2 text-xs font-semibold text-slate-500">Message</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {shownRows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-xs font-medium text-slate-800">
+                        {r.leadName || "Unknown"}
+                      </div>
+                      <div className="text-xs text-slate-400">{r.leadPhone || "—"}</div>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {r.direction === "inbound" ? "← inbound" : "→ outbound"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-block rounded px-2 py-0.5 text-[11px] font-semibold ${statusTone(r)}`}
+                      >
+                        {r.status}
+                        {r.error ? " ⚠" : ""}
+                      </span>
+                      {isUnconfirmedOutcome(r) && (
+                        <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                          outcome unknown
+                        </div>
+                      )}
+                      {r.error && (
+                        <div className="mt-1 max-w-xs text-[11px] text-red-600" title={r.error}>
+                          {r.error}
+                        </div>
+                      )}
+                    </td>
+                    <td className="max-w-sm px-3 py-2 text-xs text-slate-600">
+                      <div className="line-clamp-2" title={r.body}>
+                        {r.body}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

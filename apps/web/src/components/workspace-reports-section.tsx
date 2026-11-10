@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { getApiBaseUrl } from "@/lib/config";
 import {
+  fetchWorkspaceAssessment,
   fetchWorkspaceReport,
   formatLeadSourceLabel,
   formatStatusLabel,
+  type AssessmentFinding,
+  type AssessmentState,
   type ReportCounts,
   type ReportState,
   type WorkspaceReport,
@@ -89,8 +93,7 @@ function LeadFunnel({ counts }: { counts: ReportCounts }) {
           Total: <span className="font-bold text-slate-900">{total}</span>
         </span>
         <span className="font-medium text-slate-600">
-          Win rate:{" "}
-          <span className="font-bold text-emerald-700">{pct(won, total - lost)}</span>
+          Win rate: <span className="font-bold text-emerald-700">{pct(won, total - lost)}</span>
         </span>
         {lost > 0 && (
           <span className="font-medium text-slate-600">
@@ -148,8 +151,7 @@ function ContentPipeline({ counts }: { counts: ReportCounts }) {
             <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
               <span className="text-slate-700">{formatStatusLabel(status)}</span>
               <span className="font-semibold tabular-nums text-slate-800">
-                {n}{" "}
-                <span className="font-normal text-slate-400">({widthPct}%)</span>
+                {n} <span className="font-normal text-slate-400">({widthPct}%)</span>
               </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
@@ -291,6 +293,89 @@ function CampaignStatus({ counts }: { counts: ReportCounts }) {
 
 // ─── Main section ─────────────────────────────────────────────────────────────
 
+const SOURCE_LABELS: Record<AssessmentFinding["source"], string> = {
+  provided: "Provided",
+  missing: "Missing",
+  derived: "Derived",
+};
+
+function AssessmentPanel({ workspaceId }: Readonly<{ workspaceId: string }>) {
+  const [state, setState] = useState<AssessmentState>({ kind: "loading" });
+  const apiBaseUrl = getApiBaseUrl();
+
+  useEffect(() => {
+    let active = true;
+    void fetchWorkspaceAssessment(apiBaseUrl, workspaceId).then((next) => {
+      if (active) setState(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [apiBaseUrl, workspaceId]);
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-100 bg-white px-5 py-4 shadow-sm">
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
+        Business Assessment
+      </h3>
+      <p className="mb-4 max-w-prose text-xs text-slate-500">
+        Prioritized gaps from your stored brand profile and workspace data. Each item shows whether
+        it was provided, is missing, or was derived from stored records. Nothing is estimated.
+      </p>
+      {state.kind === "loading" && <p className="text-sm text-slate-500">Assessing…</p>}
+      {state.kind === "unavailable" && (
+        <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+          {state.message}
+        </p>
+      )}
+      {state.kind === "missing" && (
+        <p className="text-sm text-slate-500">This workspace no longer exists.</p>
+      )}
+      {state.kind === "loaded" && (
+        <ul className="divide-y divide-slate-100">
+          {state.findings.map((f) => (
+            <li key={`${f.area}-${f.priority}`} className="py-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium text-slate-800">{f.area}</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                  {SOURCE_LABELS[f.source]}
+                </span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-xs ${
+                    f.status === "attention"
+                      ? "bg-amber-50 text-amber-800"
+                      : f.status === "ok"
+                        ? "bg-emerald-50 text-emerald-800"
+                        : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {f.status === "attention"
+                    ? "Needs attention"
+                    : f.status === "ok"
+                      ? "OK"
+                      : "Unknown"}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">{f.summary}</p>
+              {f.recommendation && (
+                <p className="mt-1 text-sm text-slate-800">Next: {f.recommendation}</p>
+              )}
+              {f.actionSegment && (
+                <Link
+                  href={`/workspaces/${workspaceId}${f.actionSegment}`}
+                  className="mt-1 inline-block text-xs font-semibold text-indigo-700 hover:underline"
+                >
+                  Open {f.area.toLowerCase()} →
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId: string }>) {
   const [state, setState] = useState<ReportState>({ kind: "loading" });
   const [since, setSince] = useState("");
@@ -352,9 +437,7 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
               <p className="mt-0.5 text-xs text-slate-400">
                 Generated{" "}
                 {new Date(report.generatedAt).toISOString().replace("T", " ").slice(0, 16)} UTC
-                {report.range.since || report.range.until
-                  ? " · custom range"
-                  : " · full history"}
+                {report.range.since || report.range.until ? " · custom range" : " · full history"}
               </p>
             )}
           </div>
@@ -410,8 +493,8 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
 
       <div className="px-4 py-5 sm:px-5">
         <p className="mb-5 max-w-prose text-xs text-slate-500">
-          Current-state counts describe what is stored now. Publishing counts follow the chosen
-          date range. Figures are only as reliable as what your integrations report — no invented
+          Current-state counts describe what is stored now. Publishing counts follow the chosen date
+          range. Figures are only as reliable as what your integrations report — no invented
           numbers.
         </p>
 
@@ -429,6 +512,8 @@ export function WorkspaceReportsSection({ workspaceId }: Readonly<{ workspaceId:
         {state.kind === "missing" && (
           <p className="text-sm text-slate-500">This workspace no longer exists.</p>
         )}
+
+        <AssessmentPanel workspaceId={workspaceId} />
 
         {report && (
           <div className="grid gap-6 lg:grid-cols-2">

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchWorkspaceAssessment,
   fetchWorkspaceReport,
   formatLeadSourceLabel,
   formatStatusLabel,
@@ -164,5 +165,56 @@ describe("fetchWorkspaceReport", () => {
     if (state.kind === "unavailable") {
       expect(state.message).toBe("offline");
     }
+  });
+});
+
+describe("fetchWorkspaceAssessment", () => {
+  it("loads findings and keeps their provided/missing/derived source", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          workspaceId: WS,
+          findings: [
+            {
+              area: "Services",
+              source: "missing",
+              status: "attention",
+              priority: 1,
+              summary: "No services is recorded yet.",
+              recommendation: "List the services.",
+            },
+            {
+              area: "Content",
+              source: "derived",
+              status: "ok",
+              priority: 9,
+              summary: "3 content item(s); 1 published.",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const state = await fetchWorkspaceAssessment(BASE, WS, fetchImpl);
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${BASE}/api/v1/workspaces/${WS}/assessment`);
+    expect(state.kind).toBe("loaded");
+    if (state.kind === "loaded") {
+      expect(state.findings).toHaveLength(2);
+      expect(state.findings[0].source).toBe("missing");
+      expect(state.findings[1].recommendation).toBeUndefined();
+    }
+  });
+
+  it("rejects a finding with an unknown source instead of showing it", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          findings: [{ area: "X", source: "guessed", status: "ok", priority: 1, summary: "s" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const state = await fetchWorkspaceAssessment(BASE, WS, fetchImpl);
+    expect(state.kind).toBe("unavailable");
   });
 });

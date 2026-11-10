@@ -11,6 +11,8 @@ import {
   updateWorkspaceFacts,
   validateWorkspaceFacts,
   type DeleteWorkspaceResult,
+  scanBrandWebsite,
+  type BrandScanResult,
   type SaveBrandResult,
   type WorkspaceDetailState,
   type WorkspaceFactsInput,
@@ -93,6 +95,11 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
   const [defaultSenderName, setDefaultSenderName] = useState("");
   const [defaultSenderEmail, setDefaultSenderEmail] = useState("");
   const [primaryChannel, setPrimaryChannel] = useState<"whatsapp" | "email" | "omnichannel">("whatsapp");
+
+  // Website scan (read-only): shown for review, never saved automatically.
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<BrandScanResult | null>(null);
 
   // Brand saving state
   const [brandSaving, setBrandSaving] = useState(false);
@@ -194,6 +201,19 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
     },
     [apiBaseUrl, workspaceId, state, name, websiteUrl, status],
   );
+
+  const scanWebsite = useCallback(async () => {
+    setScanning(true);
+    setScanError(null);
+    setScanResult(null);
+    const result = await scanBrandWebsite(apiBaseUrl, workspaceId);
+    setScanning(false);
+    if (result.kind === "scanned") {
+      setScanResult(result.scan);
+    } else {
+      setScanError(result.kind === "rejected" ? result.message : result.reason);
+    }
+  }, [apiBaseUrl, workspaceId]);
 
   const saveBrand = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -809,6 +829,32 @@ export function WorkspaceDetailPanel({ workspaceId }: Readonly<{ workspaceId: st
                 />
                 <p className={hintClasses}>Priority search queries for content gap and SEO analysis.</p>
               </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className={labelClasses}>Website scan</p>
+                  <p className={hintClasses}>Reads the saved website and shows the page text for review. Nothing is saved; copy what you approve into the fields above.</p>
+                </div>
+                <button type="button" onClick={scanWebsite} disabled={scanning} className={PRIMARY_BUTTON}>
+                  {scanning ? "Scanning…" : "Scan website"}
+                </button>
+              </div>
+              {scanError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
+                  {scanError}
+                </div>
+              )}
+              {scanResult && (
+                <div className="space-y-2 text-xs text-slate-700">
+                  <p><span className="font-semibold">Source:</span> {scanResult.url} (scraped, unverified)</p>
+                  {scanResult.title && <p><span className="font-semibold">Title:</span> {scanResult.title}</p>}
+                  {scanResult.description && <p><span className="font-semibold">Description:</span> {scanResult.description}</p>}
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs text-slate-800">{scanResult.excerpt}</pre>
+                  {scanResult.truncated && <p className={hintClasses}>Excerpt shortened to the first 4,000 characters.</p>}
+                </div>
+              )}
             </div>
 
             {brandError && (

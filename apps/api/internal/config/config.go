@@ -66,6 +66,10 @@ type Config struct {
 	PublishWorkerBaseDelay   time.Duration
 	PublishWorkerMaxDelay    time.Duration
 
+	// FirecrawlAPIKey enables the brand website scan. Empty leaves the scan
+	// endpoint answering 501. Secret; never log it.
+	FirecrawlAPIKey string
+
 	// EmailBase overrides the outbound email provider host for local
 	// end-to-end runs against a mock. Like SanityOpsBase it is rejected in
 	// production, so a real deployment always talks to the real provider.
@@ -210,6 +214,8 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		add("AI_PROVIDER must be stub or openrouter (openrouter also needs OPENROUTER_API_KEY)")
 	}
+
+	cfg.FirecrawlAPIKey = strings.TrimSpace(getenv("FIRECRAWL_API_KEY"))
 
 	if cfg.Env == EnvProduction && cfg.AIProvider == "stub" {
 		add("a real AI provider is required when APP_ENV=production (set OPENROUTER_API_KEY)")

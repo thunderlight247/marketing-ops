@@ -41,7 +41,9 @@ export function exportLeadEngineLeadsToCsv(leads: LeadEngineLead[], workspaceSlu
     lead.city,
     lead.address,
     lead.rating ?? "",
-    lead.reviewCount,
+    // A source without ratings (OpenStreetMap) has no review count to report;
+    // exporting 0 would look like a real "no reviews" measurement.
+    lead.rating === null ? "" : lead.reviewCount,
     lead.websiteUrl,
     lead.status,
     lead.pitch,
@@ -69,7 +71,11 @@ export function exportLeadEngineLeadsToCsv(leads: LeadEngineLead[], workspaceSlu
 /**
  * Exports an array of leads to a downloadable CSV file in the browser.
  */
-export function exportLeadsToCsv(leads: Lead[], campaigns: Campaign[], workspaceSlug = "workspace") {
+export function exportLeadsToCsv(
+  leads: Lead[],
+  campaigns: Campaign[],
+  workspaceSlug = "workspace",
+) {
   const headers = [
     "ID",
     "Contact Name",
@@ -137,7 +143,12 @@ export function parseLeadsCsv(text: string): ParsedCsvLead[] {
   const lines = parseCsvLines(text);
   if (lines.length < 2) return [];
 
-  const rawHeaders = lines[0].map((h) => h.toLowerCase().trim().replace(/[\s_-]+/g, ""));
+  const rawHeaders = lines[0].map((h) =>
+    h
+      .toLowerCase()
+      .trim()
+      .replace(/[\s_-]+/g, ""),
+  );
   const headerIdx: Record<string, number> = {};
 
   rawHeaders.forEach((h, idx) => {
@@ -159,8 +170,10 @@ export function parseLeadsCsv(text: string): ParsedCsvLead[] {
     const contactPhone = headerIdx.phone !== undefined ? row[headerIdx.phone]?.trim() : undefined;
     const contactEmail = headerIdx.email !== undefined ? row[headerIdx.email]?.trim() : undefined;
     const message = headerIdx.message !== undefined ? row[headerIdx.message]?.trim() : undefined;
-    const sourceDetail = headerIdx.detail !== undefined ? row[headerIdx.detail]?.trim() : "CSV import";
-    const followUpAt = headerIdx.followUp !== undefined ? row[headerIdx.followUp]?.trim() : undefined;
+    const sourceDetail =
+      headerIdx.detail !== undefined ? row[headerIdx.detail]?.trim() : "CSV import";
+    const followUpAt =
+      headerIdx.followUp !== undefined ? row[headerIdx.followUp]?.trim() : undefined;
 
     // Must have at least a name, phone, or email to be considered a lead
     if (contactName || contactPhone || contactEmail) {
@@ -247,7 +260,12 @@ export function parseLeadEngineCsv(text: string): ParsedLeadEngineCsvItem[] {
   const lines = parseCsvLines(text);
   if (lines.length < 2) return [];
 
-  const rawHeaders = lines[0].map((h) => h.toLowerCase().trim().replace(/[\s_-]+/g, ""));
+  const rawHeaders = lines[0].map((h) =>
+    h
+      .toLowerCase()
+      .trim()
+      .replace(/[\s_-]+/g, ""),
+  );
   const headerIdx: Record<string, number> = {};
 
   rawHeaders.forEach((h, idx) => {
@@ -280,7 +298,8 @@ export function parseLeadEngineCsv(text: string): ParsedLeadEngineCsvItem[] {
     const phone = headerIdx.phone !== undefined ? row[headerIdx.phone]?.trim() : "";
     if (!phone) continue; // Phone is mandatory for WhatsApp outreach
 
-    const name = headerIdx.name !== undefined ? row[headerIdx.name]?.trim() : "Prospective Business";
+    const name =
+      headerIdx.name !== undefined ? row[headerIdx.name]?.trim() : "Prospective Business";
     const category = headerIdx.category !== undefined ? row[headerIdx.category]?.trim() : "";
     const city = headerIdx.city !== undefined ? row[headerIdx.city]?.trim() : "";
     const address = headerIdx.address !== undefined ? row[headerIdx.address]?.trim() : "";

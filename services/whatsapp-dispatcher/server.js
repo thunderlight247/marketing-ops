@@ -20,6 +20,8 @@ const { Client, LocalAuth } = wwebjs;
 import qrcode from 'qrcode';
 import fs from 'node:fs';
 import path from 'node:path';
+import { cleanupFailedClient, clearStaleAuthLocks } from './session-lifecycle.js';
+import { createReconnectSupervisor } from './session-reconnect.js';
 
 // Node 24 kills the whole process on any unhandled promise rejection. The
 // whatsapp-web.js library has one internally — its own 'framenavigated'
@@ -55,6 +57,10 @@ const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8081';
 // workspace moves to its own business number.
 const SHARED_KEY = 'shared';
 const OWN_MARKER = 'OWN_NUMBER';
+
+// WhatsApp revokes the linked device on logout/unpair; retrying cannot help and
+// would only loop against an invalidated session.
+const TERMINAL_DISCONNECT_REASON = /log\s*out|logout|unpair/i;
 
 function sessionDir(key) {
   return path.join(SESSIONS_DIR, `session-${key}`);
@@ -129,6 +135,8 @@ function makeState() {
   return {
     client: null,
     status: 'disconnected',
+    // Set by an explicit disconnect so nothing reconnects behind the operator.
+    suppressReconnect: false,
     qrDataUrl: null,
     phone: '',
     pairingPhone: '',
@@ -184,6 +192,9 @@ function sessionPayload(key, state) {
   if (state.pairingPhone) out.pairingPhone = state.pairingPhone;
   if (state.pairingCode) out.pairingCode = state.pairingCode;
   if (state.pairingError) out.pairingError = state.pairingError;
+  // A scheduled background retry, so the dashboard can count down to it.
+  const retry = reconnectSupervisor?.snapshot(key);
+  if (retry) out.retry = retry;
   return out;
 }
 
@@ -192,11 +203,42 @@ function getStateOf(key) {
   return sessions.get(key);
 }
 
+// Saves the operator from re-scanning after a temporary failure: only sessions
+// whose pairing still exists on disk are retried, and only while unattended.
+const reconnectSupervisor = createReconnectSupervisor({
+  canReconnect: (key) => {
+    const state = sessions.get(key);
+    if (!state || state.client || state.suppressReconnect) return false;
+    if (!savedAuthExists(key)) return false;
+    return key === SHARED_KEY || isClaimed(key);
+  },
+  reconnect: (key, { attempt } = {}) => {
+    console.log(`[${key}] restarting saved WhatsApp session (attempt ${attempt || 1})`);
+    createClient(key);
+  },
+});
+
+function scheduleSavedReconnect(clientKey, reason) {
+  if (reconnectSupervisor.schedule(clientKey, reason)) {
+    console.log(`[${clientKey}] will retry saved session (${reason})`);
+  }
+}
+
 /**
  * Create and wire up a WhatsApp client for a workspace.
  * If the session already has persisted auth (LocalAuth), it reconnects without a QR.
  */
 function createClient(clientKey, options = {}) {
+  // A pending retry would otherwise start a second Chromium on this profile.
+  reconnectSupervisor.cancel(clientKey);
+
+  if (!sessions.get(clientKey)?.client) {
+    const cleared = clearStaleAuthLocks(sessionDir(clientKey));
+    if (cleared > 0) {
+      console.log(`[${clientKey}] cleared ${cleared} stale Chromium lock file(s)`);
+    }
+  }
+
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: clientKey,
@@ -221,6 +263,8 @@ function createClient(clientKey, options = {}) {
   const state = getStateOf(clientKey);
   state.client = client;
   state.status = 'initializing';
+  state.failedClient = null;
+  state.suppressReconnect = false;
   if (options.pairingPhone) {
     state.pairingPhone = normalizePairingPhone(options.pairingPhone);
     state.pairingCode = null;
@@ -294,6 +338,8 @@ function createClient(clientKey, options = {}) {
       const info = client.info;
       state.phone = info?.wid?.user ? '+' + info.wid.user : '';
     } catch (_) {}
+    // A confirmed connection clears the retry backoff for this session.
+    reconnectSupervisor.reset(clientKey);
     // A workspace-keyed session that reaches "connected" is this workspace's
     // own number from now on — it never falls back to the shared account again.
     claimOwnNumber(clientKey, state.phone);
@@ -301,6 +347,11 @@ function createClient(clientKey, options = {}) {
   });
 
   client.on('disconnected', (reason) => {
+    // Failed initialization teardown owns this client until destroy() settles.
+    // Keep the session non-retryable so another Chromium cannot take its lock.
+    if (state.failedClient === client) return;
+    // A newer client already owns this session; its state must win.
+    if (state.client && state.client !== client) return;
     state.status = 'disconnected';
     state.qrDataUrl = null;
     state.phone = '';
@@ -310,9 +361,17 @@ function createClient(clientKey, options = {}) {
     state.pairingRequested = false;
     state.pairingError = null;
     console.log(`[${clientKey}] Disconnected:`, reason);
+    // A network blip or crashed browser is recoverable from saved auth; a
+    // logout means WhatsApp revoked the pairing and a new scan is required.
+    if (!state.suppressReconnect && !TERMINAL_DISCONNECT_REASON.test(String(reason || ''))) {
+      scheduleSavedReconnect(clientKey, `disconnected: ${reason || 'unknown'}`);
+    }
   });
 
   client.on('auth_failure', (msg) => {
+    // Retrying invalid credentials only burns CPU; the operator must re-pair.
+    if (state.client && state.client !== client) return;
+    reconnectSupervisor.cancel(clientKey);
     state.status = 'auth_failure';
     state.pairingPhone = '';
     state.pairingCode = null;
@@ -360,9 +419,12 @@ function createClient(clientKey, options = {}) {
     }
   });
 
-  client.initialize().catch((err) => {
-    state.status = 'error';
+  client.initialize().catch(async (err) => {
     console.error(`[${clientKey}] Init error:`, err.message);
+    const released = await cleanupFailedClient(state, client, clientKey);
+    // The pairing stays on disk, so a transient Chromium/network failure is
+    // retried in the background instead of waiting for a QR scan.
+    if (released) scheduleSavedReconnect(clientKey, `init failed: ${err.message}`);
   });
 
   return client;
@@ -500,8 +562,15 @@ app.get('/sessions/:workspaceId/status', (req, res) => {
   const key = resolveKey(workspaceId);
   const state = getStateOf(key);
   // A saved pairing revives itself instead of showing "disconnected": a
-  // one-time scan must stay one-time, even after a dispatcher restart.
-  if (!state.client && (state.status === 'disconnected' || state.status === 'error') && savedAuthExists(key)) {
+  // one-time scan must stay one-time, even after a dispatcher restart. When a
+  // retry is already queued, leave it in charge so the dashboard countdown is
+  // accurate instead of polling kicking off a competing attempt.
+  if (
+    !state.client &&
+    !reconnectSupervisor.isScheduled(key) &&
+    (state.status === 'disconnected' || state.status === 'error') &&
+    savedAuthExists(key)
+  ) {
     console.log(`[${key}] restoring saved session for status check (no QR needed)`);
     createClient(key);
   }
@@ -627,6 +696,10 @@ app.post('/sessions/:workspaceId/disconnect', async (req, res) => {
   const { workspaceId } = req.params;
   const key = resolveKey(workspaceId);
   const state = getStateOf(key);
+  // An explicit disconnect must stay disconnected: cancel the pending retry and
+  // ignore the disconnect event that destroy() is about to emit.
+  reconnectSupervisor.cancel(key);
+  state.suppressReconnect = true;
   if (state.client) {
     try {
       await state.client.destroy();
@@ -645,6 +718,7 @@ app.post('/sessions/:workspaceId/disconnect', async (req, res) => {
 // ─── graceful shutdown ────────────────────────────────────────────────────────
 async function shutdown() {
   console.log('Shutting down gracefully — destroying active sessions…');
+  reconnectSupervisor.cancelAll();
   for (const [id, state] of sessions.entries()) {
     if (state.client) {
       try { await state.client.destroy(); } catch (e) {

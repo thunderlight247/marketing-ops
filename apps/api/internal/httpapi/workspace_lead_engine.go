@@ -498,21 +498,39 @@ func listWhatsAppSessionsHandler(ws WorkspaceStore) http.HandlerFunc {
 // ─── leads ────────────────────────────────────────────────────────────────────
 
 type leadEngineLeadJSON struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Phone          string   `json:"phone"`
-	Category       string   `json:"category"`
-	City           string   `json:"city"`
-	Address        string   `json:"address"`
-	Rating         *float64 `json:"rating"`
-	ReviewCount    int      `json:"reviewCount"`
-	WebsiteURL     string   `json:"websiteUrl"`
-	Pitch          string   `json:"pitch"`
-	Status         string   `json:"status"`
-	PlaceID        *string  `json:"placeId"`
-	SequenceStep   int      `json:"sequenceStep"`
-	NextFollowUpAt *string  `json:"nextFollowupAt,omitempty"`
-	CreatedAt      string   `json:"createdAt"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Phone    string   `json:"phone"`
+	Category string   `json:"category"`
+	City     string   `json:"city"`
+	Address  string   `json:"address"`
+	Rating   *float64 `json:"rating"`
+	// ReviewCount is 0 for sources that have no reviews (OpenStreetMap). Read
+	// it together with SourceDetail: Rating being null is the reliable signal
+	// that the business was never rated, not that it was rated badly.
+	ReviewCount int     `json:"reviewCount"`
+	WebsiteURL  string  `json:"websiteUrl"`
+	Pitch       string  `json:"pitch"`
+	Status      string  `json:"status"`
+	PlaceID     *string `json:"placeId"`
+	// SourceDetail is where this lead was discovered ("google_places",
+	// "openstreetmap", "csv_import"), so the list can show provenance instead
+	// of implying every lead came from the same directory.
+	SourceDetail   string  `json:"sourceDetail"`
+	SequenceStep   int     `json:"sequenceStep"`
+	NextFollowUpAt *string `json:"nextFollowupAt,omitempty"`
+	CreatedAt      string  `json:"createdAt"`
+	// SkipReason explains why the most recent dispatch did not message this
+	// lead (already contacted, opt-out, safety check unavailable, daily cap).
+	SkipReason string `json:"skipReason,omitempty"`
+	// LastSend* describe the lead's latest outbound attempt as recorded in the
+	// outreach log: "sent" means the dispatcher accepted the message, "failed"
+	// means it did not go out (LastSendError says why), "sending" means the
+	// outcome was never confirmed. Unlike Status, these come from the send
+	// log, so the dashboard can prove whether a message left.
+	LastSendStatus string `json:"lastSendStatus,omitempty"`
+	LastSendAt     string `json:"lastSendAt,omitempty"`
+	LastSendError  string `json:"lastSendError,omitempty"`
 }
 
 func toLeadEngineLeadJSON(l store.Lead) leadEngineLeadJSON {
@@ -544,6 +562,7 @@ func toLeadEngineLeadJSON(l store.Lead) leadEngineLeadJSON {
 		PlaceID:        l.PlaceID,
 		SequenceStep:   l.SequenceStep,
 		NextFollowUpAt: nextFollowUp,
+		SourceDetail:   l.SourceDetail,
 		CreatedAt:      l.CreatedAt.Format(time.RFC3339),
 	}
 }
@@ -560,9 +579,23 @@ func listLeadEngineLeadsHandler(ws WorkspaceStore) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "failed to list leads")
 			return
 		}
+		report, _ := leadengine.LastDispatchReport(workspaceID)
+		lastByLead, err := ws.ListLatestOutboundByLead(r.Context(), workspaceID)
+		if err != nil {
+			// The send confirmation is informational: a lookup failure must not
+			// take the whole lead list down with it.
+			slog.Default().Warn("could not load last send outcomes", "workspace_id", workspaceID, "error", err)
+			lastByLead = nil
+		}
 		out := make([]leadEngineLeadJSON, len(leads))
 		for i, l := range leads {
 			out[i] = toLeadEngineLeadJSON(l)
+			out[i].SkipReason = report.Skips[l.ID]
+			if last, ok := lastByLead[l.ID]; ok {
+				out[i].LastSendStatus = last.Status
+				out[i].LastSendAt = last.CreatedAt.Format(time.RFC3339)
+				out[i].LastSendError = last.Error
+			}
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -623,19 +656,25 @@ func importLeadEngineLeadsHandler(ws WorkspaceStore) http.HandlerFunc {
 			address := strings.TrimSpace(item.Address)
 			websiteURL := strings.TrimSpace(item.WebsiteURL)
 
-			_, err := ws.SaveDiscoveredLead(
-				r.Context(),
-				workspaceID,
-				"", // no google place_id for manual CSV import
-				name,
-				phone,
-				category,
-				city,
-				address,
-				item.Rating,
-				0,
-				websiteURL,
-			)
+			// An empty Rating cell arrives as 0, and no directory rates a
+			// business 0 (the scale starts at 1), so 0 means "not rated" and is
+			// stored as NULL.
+			var rating *float64
+			if item.Rating > 0 {
+				rated := item.Rating
+				rating = &rated
+			}
+			_, err := ws.SaveDiscoveredLead(r.Context(), store.DiscoveredLead{
+				WorkspaceID: workspaceID,
+				Source:      "csv_import",
+				Name:        name,
+				Phone:       phone,
+				Category:    category,
+				City:        city,
+				Address:     address,
+				Rating:      rating,
+				WebsiteURL:  websiteURL,
+			})
 			if err != nil {
 				if errors.Is(err, store.ErrAlreadyContacted) {
 					duplicates++
@@ -1032,7 +1071,18 @@ func triggerDispatchHandler(ws WorkspaceStore, credKey []byte) http.HandlerFunc 
 			if err != nil {
 				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", "Dispatch run ended with error: "+err.Error())
 			} else {
-				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", "Outreach dispatch completed")
+				msg := "Outreach dispatch completed"
+				if report, ok := leadengine.LastDispatchReport(workspaceID); ok {
+					msg = fmt.Sprintf("Outreach dispatch completed: %d sent, %d failed (%d unconfirmed), %d not sent — reasons are shown on each lead",
+						report.Sent, report.Failed, report.Unconfirmed, len(report.Skips))
+					if report.Unconfirmed > 0 {
+						msg += "; unconfirmed sends are listed in Daily Activity"
+					}
+					if report.Halted != "" {
+						msg += " — " + report.Halted
+					}
+				}
+				events.DefaultHub.Publish(workspaceID, "pitch_dispatched", msg)
 			}
 		}()
 

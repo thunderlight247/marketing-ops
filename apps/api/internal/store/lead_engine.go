@@ -251,6 +251,19 @@ func (s *Store) SaveOutreachLog(ctx context.Context, l LeadOutreachLog) (LeadOut
 	return l, err
 }
 
+// UpdateOutreachLog records the final outcome of an attempt whose row was
+// written before the message was handed to WhatsApp. Writing the attempt first
+// makes duplicate suppression crash-safe: a process that dies mid-send still
+// leaves evidence that the number may already have been contacted.
+func (s *Store) UpdateOutreachLog(ctx context.Context, workspaceID, logID, status, errorText string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE lead_outreach_logs
+		 SET status = $1, error = $2
+		 WHERE id = $3 AND workspace_id = $4`,
+		status, errorText, logID, workspaceID)
+	return err
+}
+
 // HasRecentOutboundAttemptByPhone reports whether ANY lead in the workspace
 // with the given phone had an outbound attempt within the window. Dedupe must
 // be phone-based, not lead-based: the same business can be saved as several
@@ -428,10 +441,38 @@ func (s *Store) CountOutboundSentToday(ctx context.Context, workspaceID string) 
 	var n int
 	err := s.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM lead_outreach_logs
-		 WHERE workspace_id = $1 AND direction = 'outbound' AND status = 'sent'
+		 WHERE workspace_id = $1 AND direction = 'outbound'
+		   AND status IN ('sent', 'sending')
 		   AND created_at >= date_trunc('day', now())`,
 		workspaceID).Scan(&n)
 	return n, err
+}
+
+// ListLatestOutboundByLead returns the most recent outbound attempt per lead,
+// keyed by lead ID. The dashboard uses it to show whether a message was
+// actually handed to WhatsApp ("sent") or refused ("failed" plus the reason):
+// the lead's status alone cannot explain a send that never left.
+func (s *Store) ListLatestOutboundByLead(ctx context.Context, workspaceID string) (map[string]LeadOutreachLog, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT ON (lead_id)
+		        id, workspace_id, lead_id, direction, message_id, body, status, ack, error, created_at
+		 FROM lead_outreach_logs
+		 WHERE workspace_id = $1 AND direction = 'outbound'
+		 ORDER BY lead_id, created_at DESC`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]LeadOutreachLog{}
+	for rows.Next() {
+		var l LeadOutreachLog
+		if err := rows.Scan(&l.ID, &l.WorkspaceID, &l.LeadID, &l.Direction, &l.MessageID,
+			&l.Body, &l.Status, &l.Ack, &l.Error, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		out[l.LeadID] = l
+	}
+	return out, rows.Err()
 }
 
 // HasRecentOutboundAttempt reports whether an outbound WhatsApp attempt was
@@ -560,19 +601,49 @@ func (s *Store) WasSearchedToday(ctx context.Context, workspaceID, dayKey, categ
 
 // ─── lead engine lead helpers ─────────────────────────────────────────────────
 
+// DiscoveredLead is one business a discovery source found, ready to be queued.
+// It is a struct rather than a long positional argument list because every
+// field but the rating is a string: in a twelve-argument call the compiler
+// cannot tell "name" from "source", and a swap would mislabel a lead's
+// provenance silently.
+type DiscoveredLead struct {
+	WorkspaceID string
+	PlaceID     string
+	// Source is the discovery source's name ("google_places",
+	// "openstreetmap"), stored as the lead's immutable source_detail.
+	Source   string
+	Name     string
+	Phone    string
+	Category string
+	City     string
+	Address  string
+	// Rating is nil when the source has no rating data at all — OpenStreetMap
+	// records carry none. The column stays NULL rather than 0 so nothing
+	// downstream reports "rated zero" for a business nobody ever rated.
+	Rating      *float64
+	ReviewCount int
+	WebsiteURL  string
+}
+
 // SaveDiscoveredLead inserts a newly scraped business as a lead (idempotent by
 // place_id, and by phone). A phone that already has a lead row in this
 // workspace is never inserted again: that is the legacy "INSERT OR IGNORE on a
 // UNIQUE phone_number" rule, and it is what stops the same business — which can
 // surface under several Google place_ids — from entering the send queue twice.
-func (s *Store) SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (Lead, error) {
-	if key := PhoneKey(phone); key != "" {
+func (s *Store) SaveDiscoveredLead(ctx context.Context, in DiscoveredLead) (Lead, error) {
+	source := strings.TrimSpace(in.Source)
+	if source == "" {
+		// Never leave provenance blank: an untraceable lead is worse than one
+		// that admits it does not know where it came from.
+		source = "unknown"
+	}
+	if key := PhoneKey(in.Phone); key != "" {
 		var exists bool
 		if err := s.pool.QueryRow(ctx,
 			`SELECT EXISTS (
 			   SELECT 1 FROM leads
 			   WHERE workspace_id = $1 AND source_kind = 'lead_engine' AND phone_key = $2
-			 )`, workspaceID, key).Scan(&exists); err != nil {
+			 )`, in.WorkspaceID, key).Scan(&exists); err != nil {
 			return Lead{}, err
 		}
 		if exists {
@@ -583,13 +654,13 @@ func (s *Store) SaveDiscoveredLead(ctx context.Context, workspaceID, placeID, na
 		`INSERT INTO leads
 			(workspace_id, source_kind, source_detail, contact_name, contact_phone,
 			 place_id, category, city, address, rating, review_count, website_url, status, notes)
-		 VALUES ($1,'lead_engine','google_places',$2,$3,$4,$5,$6,$7,$8,$9,$10,'discovered','')
+		 VALUES ($1,'lead_engine',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'discovered','')
 		 ON CONFLICT (workspace_id, place_id) WHERE place_id IS NOT NULL DO UPDATE SET
 			status     = CASE WHEN leads.status = 'discovered' THEN 'discovered' ELSE leads.status END,
 			updated_at = now()
 		 RETURNING `+leadColumns,
-		workspaceID, name, phone,
-		placeID, category, city, address, rating, reviewCount, websiteURL,
+		in.WorkspaceID, source, in.Name, in.Phone,
+		in.PlaceID, in.Category, in.City, in.Address, in.Rating, in.ReviewCount, in.WebsiteURL,
 	))
 	// A concurrent discovery run can slip past the check above; the unique
 	// index is the real guard, so translate its violation into the same

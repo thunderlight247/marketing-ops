@@ -57,8 +57,17 @@ export interface LeadEngineLead {
   category: string;
   city: string;
   address: string;
+  /**
+   * Null when the discovery source has no ratings at all (OpenStreetMap), which
+   * is different from being rated zero. Render "not rated", never 0 stars.
+   */
   rating: number | null;
   reviewCount: number;
+  /**
+   * Where this lead was discovered: "google_places", "openstreetmap" or
+   * "csv_import". Shown so an operator can weigh how much to trust a row.
+   */
+  sourceDetail?: string;
   websiteUrl: string;
   pitch: string;
   status: string;
@@ -66,6 +75,16 @@ export interface LeadEngineLead {
   sequenceStep?: number;
   nextFollowupAt?: string | null;
   createdAt: string;
+  /** Why the last dispatch skipped this lead (already contacted, opt-out, safety check, daily cap). */
+  skipReason?: string;
+  /**
+   * Outcome of the lead's latest outbound attempt, from the send log.
+   * "sent" = the dispatcher accepted the message; "failed" = it did not go out
+   * (see lastSendError); "sending" = the outcome was never confirmed.
+   */
+  lastSendStatus?: "sent" | "failed" | "sending" | string;
+  lastSendAt?: string;
+  lastSendError?: string;
 }
 
 export interface OutreachLog {
@@ -116,8 +135,18 @@ export interface WhatsAppSession {
   connected: boolean;
 }
 
+// A dispatched background reconnect for a session whose pairing is still on
+// disk, so the dashboard can show a countdown instead of a bare error.
+export interface WhatsAppRetry {
+  scheduled: boolean;
+  attempt: number;
+  retryInMs: number;
+  reason?: string;
+}
+
 export type WhatsAppConnectResult = {
   source?: "own" | "shared";
+  retry?: WhatsAppRetry;
   /** The number a pairing code was requested for, when one is pending. */
   pairingPhone?: string;
   /** The 8-character code WhatsApp issued; the QR remains usable too. */
@@ -242,6 +271,8 @@ export function getWhatsAppStatus(
   return apiFetch<WhatsAppConnectResult>(
     base,
     `/api/v1/workspaces/${workspaceId}/lead-engine/whatsapp/status`,
+    // The QR rotates and a cached copy would pair an expired code.
+    { cache: "no-store" },
   );
 }
 

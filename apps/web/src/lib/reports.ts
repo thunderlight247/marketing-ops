@@ -199,6 +199,83 @@ function parseReport(raw: unknown): WorkspaceReport | null {
   };
 }
 
+// ─── Business assessment ──────────────────────────────────────────────────────
+
+export type AssessmentFinding = {
+  area: string;
+  source: "provided" | "missing" | "derived";
+  status: "ok" | "attention" | "unknown";
+  priority: number;
+  summary: string;
+  recommendation?: string;
+  actionSegment?: string;
+};
+
+export type AssessmentState =
+  | { kind: "loading" }
+  | { kind: "loaded"; findings: AssessmentFinding[] }
+  | { kind: "missing"; message: string }
+  | { kind: "unavailable"; message: string };
+
+function parseFinding(raw: unknown): AssessmentFinding | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Record<string, unknown>;
+  if (
+    typeof f.area !== "string" ||
+    typeof f.summary !== "string" ||
+    typeof f.priority !== "number" ||
+    (f.source !== "provided" && f.source !== "missing" && f.source !== "derived") ||
+    (f.status !== "ok" && f.status !== "attention" && f.status !== "unknown")
+  ) {
+    return null;
+  }
+  return {
+    area: f.area,
+    source: f.source,
+    status: f.status,
+    priority: f.priority,
+    summary: f.summary,
+    recommendation: typeof f.recommendation === "string" ? f.recommendation : undefined,
+    actionSegment: typeof f.actionSegment === "string" ? f.actionSegment : undefined,
+  };
+}
+
+export async function fetchWorkspaceAssessment(
+  baseUrl: string,
+  workspaceId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AssessmentState> {
+  const root = baseUrl.replace(/\/+$/, "");
+  const url = `${root}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/assessment`;
+  try {
+    const res = await fetchImpl(url, { headers: { Accept: "application/json" } });
+    if (res.status === 404) {
+      return { kind: "missing", message: "Workspace not found." };
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        kind: "unavailable",
+        message: body?.error ?? `The server answered with status ${res.status}.`,
+      };
+    }
+    const body = (await res.json().catch(() => null)) as { findings?: unknown } | null;
+    if (!body || !Array.isArray(body.findings)) {
+      return { kind: "unavailable", message: "Server returned malformed assessment data." };
+    }
+    const findings = body.findings.map(parseFinding);
+    if (findings.some((f) => f === null)) {
+      return { kind: "unavailable", message: "Server returned malformed assessment data." };
+    }
+    return { kind: "loaded", findings: findings as AssessmentFinding[] };
+  } catch (err) {
+    return {
+      kind: "unavailable",
+      message: err instanceof Error ? err.message : "Network request failed.",
+    };
+  }
+}
+
 export async function fetchWorkspaceReport(
   baseUrl: string,
   workspaceId: string,

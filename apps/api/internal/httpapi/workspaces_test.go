@@ -1098,6 +1098,9 @@ func (f *fakeWorkspaceStore) ListLeadEngineLeads(_ context.Context, workspaceID 
 func (f *fakeWorkspaceStore) ListOutreachLogs(_ context.Context, workspaceID, leadID string) ([]store.LeadOutreachLog, error) {
 	return nil, nil
 }
+func (f *fakeWorkspaceStore) ListLatestOutboundByLead(_ context.Context, workspaceID string) (map[string]store.LeadOutreachLog, error) {
+	return nil, nil
+}
 func (f *fakeWorkspaceStore) AddToBlacklist(_ context.Context, workspaceID, phone, reason string) error {
 	return nil
 }
@@ -1113,7 +1116,7 @@ func (f *fakeWorkspaceStore) RecordDiscoverySearch(_ context.Context, s store.Le
 func (f *fakeWorkspaceStore) WasSearchedToday(_ context.Context, workspaceID, dayKey, category, city string) (bool, error) {
 	return false, nil
 }
-func (f *fakeWorkspaceStore) SaveDiscoveredLead(_ context.Context, workspaceID, placeID, name, phone, category, city, address string, rating float64, reviewCount int, websiteURL string) (store.Lead, error) {
+func (f *fakeWorkspaceStore) SaveDiscoveredLead(_ context.Context, in store.DiscoveredLead) (store.Lead, error) {
 	return store.Lead{}, nil
 }
 func (f *fakeWorkspaceStore) UpdateLeadPitch(_ context.Context, workspaceID, leadID, pitch string) error {
@@ -1137,6 +1140,10 @@ func (f *fakeWorkspaceStore) HasRecentOutboundAttempt(_ context.Context, _ strin
 func (f *fakeWorkspaceStore) HasRecentOutboundAttemptByPhone(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
 	return false, nil
 }
+func (f *fakeWorkspaceStore) UpdateOutreachLog(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
 func (f *fakeWorkspaceStore) HasOutboundAttemptByPhone(_ context.Context, _ string, _ string) (bool, error) {
 	return false, nil
 }
