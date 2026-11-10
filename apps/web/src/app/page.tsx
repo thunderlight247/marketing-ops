@@ -5,8 +5,8 @@ import { BatchPublishPanel } from "@/components/batch-publish-panel";
 export default function OverviewPage() {
   return (
     <>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 md:text-2xl">Overview</h1>
         <p className="mt-1 text-sm text-slate-500">
           Platform status and your managed workspaces at a glance.
         </p>
@@ -45,7 +45,7 @@ export default function OverviewPage() {
               },
             ].map((item) => (
               <li key={item.step} className="flex gap-4 px-5 py-5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
                   {item.step}
                 </span>
                 <div>

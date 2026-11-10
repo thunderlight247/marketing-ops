@@ -126,7 +126,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
       {/* Mobile top bar */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm md:hidden">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-white">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
@@ -154,16 +154,14 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
         {/* Logo / wordmark */}
         <div className="hidden px-5 pt-6 pb-5 md:block">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
             </span>
             <div>
               <p className="text-sm font-bold leading-tight text-slate-900">Marketing Ops</p>
-              <p className="text-[11px] leading-tight text-slate-400 font-medium tracking-wide uppercase">
-                Operator
-              </p>
+              <p className="text-[11px] leading-tight font-medium text-slate-500">Operator console</p>
             </div>
           </div>
         </div>
@@ -185,11 +183,11 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
                     onClick={() => setMenuOpen(false)}
                     className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${focusRing} ${
                       active
-                        ? "bg-indigo-50 font-semibold text-indigo-700"
+                        ? "bg-blue-50 font-semibold text-blue-700"
                         : "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
-                    <span className={`shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`}>
+                    <span className={`shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`}>
                       {Icon ? <Icon active={active} /> : null}
                     </span>
                     {item.label}
@@ -212,7 +210,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
         tabIndex={-1}
         className="min-w-0 px-4 py-6 focus:outline-none md:px-10 md:py-10"
       >
-        <div className="mx-auto max-w-6xl">{children}</div>
+        <div className="mx-auto max-w-7xl">{children}</div>
       </main>
     </div>
   );
